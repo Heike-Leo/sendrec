@@ -254,7 +254,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getByText("Abdeckung 2")).toHaveStyle({ left: "0%", width: "25%" });
 
     fireEvent.click(screen.getByText("Abdeckung 2"));
-    await user.click(screen.getByRole("button", { name: "Löschen" }));
+    await user.click(screen.getByRole("button", { name: "Abdeckung löschen" }));
 
     expect(screen.getByTestId("video-editor-cover-overlay-cover-saved-1")).toBeInTheDocument();
     expect(screen.queryByTestId("video-editor-cover-overlay-cover-saved-2")).not.toBeInTheDocument();
@@ -295,7 +295,7 @@ describe("VideoEditorModal multi-source preview", () => {
     });
 
     fireEvent.click(screen.getByText("Abdeckung 2"));
-    await user.click(screen.getByRole("button", { name: "Löschen" }));
+    await user.click(screen.getByRole("button", { name: "Abdeckung löschen" }));
 
     expect(screen.getByTestId("video-editor-overlay-row-cover-first")).toBeInTheDocument();
     expect(screen.queryByTestId("video-editor-overlay-row-cover-second")).not.toBeInTheDocument();
@@ -360,6 +360,190 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getAllByTestId(/video-editor-overlay-row-/)).toHaveLength(5);
     expect(overlayScroll).not.toContainElement(clipTrack);
     expect(overlayScroll.nextElementSibling).toBe(clipTrack);
+  });
+
+  it("switches the selected overlay reliably across scrolled rows", async () => {
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: Array.from({ length: 6 }, (_, index) => ({
+          id: `cover-${index + 1}`,
+          x: 10,
+          y: 10,
+          width: 20,
+          height: 20,
+          start: index * 5,
+          end: index * 5 + 10,
+        })),
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByText("Abdeckung 5"));
+    expect(screen.getByTestId("video-editor-overlay-row-cover-5")).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+
+    fireEvent.click(screen.getByText("Abdeckung 3"));
+    expect(screen.getByTestId("video-editor-overlay-row-cover-3")).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+    expect(screen.getByTestId("video-editor-overlay-row-cover-5")).toHaveAttribute(
+      "data-selected",
+      "false",
+    );
+
+    fireEvent.click(screen.getByText("Abdeckung 6"));
+    expect(screen.getByTestId("video-editor-overlay-row-cover-6")).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+    expect(screen.getByTestId("video-editor-overlay-row-cover-3")).toHaveAttribute(
+      "data-selected",
+      "false",
+    );
+  });
+
+  it("clears the selected overlay on free timeline space without deleting it", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: Array.from({ length: 6 }, (_, index) => ({
+          id: `cover-${index + 1}`,
+          x: 10,
+          y: 10,
+          width: 20,
+          height: 20,
+          start: index * 5,
+          end: index * 5 + 10,
+        })),
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+
+    const actionsSlot = screen.getByTestId("video-editor-cover-actions");
+    await user.click(await screen.findByText("Abdeckung 5"));
+    expect(screen.getByTestId("video-editor-overlay-row-cover-5")).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+
+    await user.click(screen.getByTestId("video-editor-timeline"));
+    expect(screen.getByTestId("video-editor-cover-actions")).toBe(actionsSlot);
+    for (const row of screen.getAllByTestId(/video-editor-overlay-row-/)) {
+      expect(row).toHaveAttribute("data-selected", "false");
+    }
+    expect(screen.getAllByTestId(/video-editor-overlay-row-/)).toHaveLength(6);
+    expect(screen.queryByRole("button", { name: "Abdeckung löschen" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Abdeckung 3"));
+    expect(screen.getByTestId("video-editor-overlay-row-cover-3")).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+  });
+
+  it("selects lower overlay rows directly after each deselection", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: Array.from({ length: 6 }, (_, index) => ({
+          id: `cover-${index + 1}`,
+          x: 10,
+          y: 10,
+          width: 20,
+          height: 20,
+          start: index * 5,
+          end: index * 5 + 10,
+        })),
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    const timeline = await screen.findByTestId("video-editor-timeline");
+
+    await user.click(screen.getByText("Abdeckung 6"));
+    await user.click(timeline);
+    await user.click(screen.getByText("Abdeckung 5"));
+    expect(screen.getByTestId("video-editor-overlay-row-cover-5")).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+
+    await user.click(timeline);
+    await user.click(screen.getByText("Abdeckung 6"));
+    expect(screen.getByTestId("video-editor-overlay-row-cover-6")).toHaveAttribute(
+      "data-selected",
+      "true",
+    );
+  });
+
+  it("selects overlays in arbitrary order with and without deselection", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: Array.from({ length: 6 }, (_, index) => ({
+          id: `cover-${index + 1}`,
+          x: 10,
+          y: 10,
+          width: 20,
+          height: 20,
+          start: index * 5,
+          end: index * 5 + 10,
+        })),
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    const timeline = await screen.findByTestId("video-editor-timeline");
+
+    for (const overlayNumber of [6, 2, 5, 1, 4, 3, 6]) {
+      await user.click(screen.getByText(`Abdeckung ${overlayNumber}`));
+      expect(screen.getByTestId(`video-editor-overlay-row-cover-${overlayNumber}`)).toHaveAttribute(
+        "data-selected",
+        "true",
+      );
+    }
+
+    for (const overlayNumber of [2, 6, 1, 5, 3, 4]) {
+      await user.click(timeline);
+      await user.click(screen.getByText(`Abdeckung ${overlayNumber}`));
+      expect(screen.getByTestId(`video-editor-overlay-row-cover-${overlayNumber}`)).toHaveAttribute(
+        "data-selected",
+        "true",
+      );
+    }
   });
 
   it("autosaves added, changed, copied and deleted cover overlays", async () => {
@@ -428,15 +612,15 @@ describe("VideoEditorModal multi-source preview", () => {
         width: 50, height: 40, start: 2.4, end: 60,
       });
 
-      fireEvent.click(screen.getByRole("button", { name: "Kopieren" }));
-      fireEvent.click(screen.getByRole("button", { name: "Einfügen" }));
+      fireEvent.click(screen.getByRole("button", { name: "Abdeckung kopieren" }));
+      fireEvent.click(screen.getByRole("button", { name: "Abdeckung einfügen" }));
       await vi.advanceTimersByTimeAsync(400);
       const copiedSave = mockApiFetch.mock.calls.filter(
         ([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT",
       ).at(-1);
       expect(JSON.parse((copiedSave?.[1] as RequestInit).body as string).overlays).toHaveLength(2);
 
-      fireEvent.click(screen.getByRole("button", { name: "Löschen" }));
+      fireEvent.click(screen.getByRole("button", { name: "Abdeckung löschen" }));
       await vi.advanceTimersByTimeAsync(400);
       const deletedSave = mockApiFetch.mock.calls.filter(
         ([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT",
@@ -479,15 +663,25 @@ describe("VideoEditorModal multi-source preview", () => {
     render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
 
     fireEvent.click(await screen.findByText("Abdeckung 1"));
-    await user.click(screen.getByRole("button", { name: "Kopieren" }));
-    await user.click(screen.getByRole("button", { name: "Einfügen" }));
+    const copyButton = screen.getByRole("button", { name: "Abdeckung kopieren" });
+    const pasteButton = screen.getByRole("button", { name: "Abdeckung einfügen" });
+    expect(screen.getByRole("spinbutton", { name: /Start/ })).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: /Ende/ })).toBeInTheDocument();
+    expect(pasteButton).toBeDisabled();
+    expect(screen.getByText("Abdeckung kopieren")).toHaveAttribute("role", "tooltip");
+    expect(screen.getByText("Abdeckung einfügen")).toHaveAttribute("role", "tooltip");
+    expect(screen.getByText("Abdeckung löschen")).toHaveAttribute("role", "tooltip");
+
+    await user.click(copyButton);
+    expect(pasteButton).toBeEnabled();
+    await user.click(pasteButton);
     expect(screen.getAllByText(/Abdeckung \d/)).toHaveLength(3);
 
     await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
     expect(screen.getAllByText(/Abdeckung \d/)).toHaveLength(2);
 
     fireEvent.click(screen.getByText("Abdeckung 2"));
-    await user.click(screen.getByRole("button", { name: "Löschen" }));
+    await user.click(screen.getByRole("button", { name: "Abdeckung löschen" }));
     expect(screen.getAllByText(/Abdeckung \d/)).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
@@ -717,11 +911,11 @@ describe("VideoEditorModal multi-source preview", () => {
     await user.click(screen.getByRole("button", { name: "+ Abdeckung" }));
 
     fireEvent.click(screen.getByText("Abdeckung 1"));
-    await user.click(screen.getByRole("button", { name: "Löschen" }));
+    await user.click(screen.getByRole("button", { name: "Abdeckung löschen" }));
 
     expect(screen.queryByText("Abdeckung 2")).not.toBeInTheDocument();
     expect(screen.getAllByText("Abdeckung 1")).toHaveLength(1);
-    expect(screen.queryByRole("button", { name: "Löschen" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Abdeckung löschen" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
     await waitFor(() => {

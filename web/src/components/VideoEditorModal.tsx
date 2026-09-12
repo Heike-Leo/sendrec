@@ -71,7 +71,7 @@ function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[]) 
   });
 }
 
-function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" }) {
+function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" }) {
   const paths = {
     trim: <><circle cx="3.5" cy="4" r="1.5" /><circle cx="3.5" cy="12" r="1.5" /><path d="m4.8 5 7.7 6.5M4.8 11l7.7-6.5" /></>,
     split: <><rect x="1.5" y="3" width="5" height="10" rx="1" /><rect x="9.5" y="3" width="5" height="10" rx="1" /><path d="M8 2.5v11" /></>,
@@ -81,6 +81,9 @@ function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" 
     fit: <><path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4" /></>,
     minus: <path d="M3 8h10" />,
     plus: <path d="M8 3v10M3 8h10" />,
+    copy: <><rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11H2.5A1.5 1.5 0 0 1 1 9.5v-7A1.5 1.5 0 0 1 2.5 1h7A1.5 1.5 0 0 1 11 2.5V3" /></>,
+    paste: <><path d="M5 3.5h6A1.5 1.5 0 0 1 12.5 5v8A1.5 1.5 0 0 1 11 14.5H5A1.5 1.5 0 0 1 3.5 13V5A1.5 1.5 0 0 1 5 3.5Z" /><path d="M6 3.5V2.25h4V3.5M6 7h4M6 10h4" /></>,
+    delete: <><path d="M3 4.5h10M6 2h4l.5 2.5M4.5 4.5l.75 9h5.5l.75-9M6.5 7v4M9.5 7v4" /></>,
   };
 
   return (
@@ -1739,21 +1742,12 @@ export function VideoEditorModal({
           </span>
         </div>
 
-      {selectedCoverOverlay && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            marginBottom: 12,
-            padding: "10px 12px",
-            border: "1px solid var(--color-border)",
-            borderRadius: 8,
-          }}
-        >
-          <strong>Abdeckung:</strong>
+        <div className="video-editor-cover-actions" data-testid="video-editor-cover-actions">
+        {selectedCoverOverlay && (
+          <>
+          <strong className="video-editor-cover-actions-label">Abdeckung:</strong>
 
-          <label>
+          <label className="video-editor-cover-time-label">
             Start{" "}
             <input
               type="number"
@@ -1778,12 +1772,12 @@ export function VideoEditorModal({
                   ),
                 );
               }}
-              style={{ width: 80, marginLeft: 6 }}
+              className="video-editor-cover-time-input"
             />
             {" s"}
           </label>
 
-          <label>
+          <label className="video-editor-cover-time-label">
             Ende{" "}
             <input
               type="number"
@@ -1808,62 +1802,59 @@ export function VideoEditorModal({
                   ),
                 );
               }}
-              style={{ width: 80, marginLeft: 6 }}
+              className="video-editor-cover-time-input"
             />
             {" s"}
           </label>
 
-          <button
-            type="button"
-            onClick={handleCopyCoverOverlay}
-            style={{
-              border: "1px solid var(--color-border)",
-              borderRadius: 7,
-              padding: "6px 10px",
-              background: "#FFFFFF",
-              color: "#0F172A",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Kopieren
-          </button>
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              onClick={handleCopyCoverOverlay}
+              className="video-editor-tool-button"
+              aria-label="Abdeckung kopieren"
+              aria-describedby="video-editor-tooltip-copy-cover"
+            >
+              <EditorToolIcon name="copy" />
+            </button>
+            <span id="video-editor-tooltip-copy-cover" role="tooltip" className="video-editor-tool-tooltip">
+              Abdeckung kopieren
+            </span>
+          </span>
 
-          <button
-            type="button"
-            onClick={handlePasteCoverOverlay}
-            disabled={!copiedCoverOverlay}
-            style={{
-              border: "1px solid var(--color-border)",
-              borderRadius: 7,
-              padding: "6px 10px",
-              background: "#FFFFFF",
-              color: "#0F172A",
-              fontWeight: 600,
-              cursor: copiedCoverOverlay ? "pointer" : "default",
-              opacity: copiedCoverOverlay ? 1 : 0.45,
-            }}
-          >
-            Einfügen
-          </button>
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              onClick={handlePasteCoverOverlay}
+              disabled={!copiedCoverOverlay}
+              className="video-editor-tool-button"
+              aria-label="Abdeckung einfügen"
+              aria-describedby="video-editor-tooltip-paste-cover"
+            >
+              <EditorToolIcon name="paste" />
+            </button>
+            <span id="video-editor-tooltip-paste-cover" role="tooltip" className="video-editor-tool-tooltip">
+              Abdeckung einfügen
+            </span>
+          </span>
 
-          <button
-            type="button"
-            onClick={handleDeleteSelectedCoverOverlay}
-            style={{
-              border: "1px solid #DC2626",
-              borderRadius: 7,
-              padding: "6px 10px",
-              background: "#FFFFFF",
-              color: "#DC2626",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Löschen
-          </button>
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              onClick={handleDeleteSelectedCoverOverlay}
+              className="video-editor-tool-button video-editor-tool-button--destructive"
+              aria-label="Abdeckung löschen"
+              aria-describedby="video-editor-tooltip-delete-cover"
+            >
+              <EditorToolIcon name="delete" />
+            </button>
+            <span id="video-editor-tooltip-delete-cover" role="tooltip" className="video-editor-tool-tooltip">
+              Abdeckung löschen
+            </span>
+          </span>
+          </>
+        )}
         </div>
-      )}
 
         {showInsertPicker && (
           <div
@@ -2183,6 +2174,7 @@ export function VideoEditorModal({
         </div>
         <div
           data-testid="video-editor-overlay-scroll"
+          onClick={() => setSelectedCoverOverlayId(null)}
           style={{
             width: `${timelineZoom * 100}%`,
             minWidth: "100%",
@@ -2244,6 +2236,7 @@ export function VideoEditorModal({
               <div
                 key={overlay.id}
                 data-testid={`video-editor-overlay-row-${overlay.id}`}
+                data-selected={selected ? "true" : "false"}
                 style={{
                   position: "relative",
                   height: 38,
@@ -2329,7 +2322,10 @@ export function VideoEditorModal({
             ref={timelineRef}
             data-testid="video-editor-timeline"
             data-zoom={timelineZoom}
-            onClick={handleTimelineClick}
+            onClick={(e) => {
+              setSelectedCoverOverlayId(null);
+              handleTimelineClick(e);
+            }}
             style={{
               position: "relative",
               height: 64,
@@ -2579,19 +2575,6 @@ export function VideoEditorModal({
             Render abgeschlossen. <a href={`/videos/${renderedVideoId}`}>Bearbeitetes Video öffnen</a>
           </div>
         )}
-      <div
-        style={{
-          position: "absolute",
-          right: 18,
-          bottom: 8,
-          fontSize: 11,
-          color: "var(--color-text-secondary)",
-          pointerEvents: "none",
-          userSelect: "none",
-        }}
-      >
-        ↘ Größe ändern
-      </div>
       </div>
     </div>
   );

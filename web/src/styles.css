@@ -4697,6 +4697,16 @@ textarea.form-input {
   opacity: 0.7;
 }
 
+.video-editor-tool-button--destructive {
+  color: #b91c1c;
+}
+
+.video-editor-tool-button--destructive:hover:not(:disabled) {
+  border-color: #fca5a5;
+  background: #fff7f7;
+  color: #991b1b;
+}
+
 .video-editor-tool-tooltip {
   position: absolute;
   top: calc(100% + 7px);
@@ -4726,6 +4736,47 @@ textarea.form-input {
 .video-editor-tool:focus-within .video-editor-tool-tooltip {
   opacity: 1;
   visibility: visible;
+}
+
+.video-editor-cover-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 50px;
+  box-sizing: border-box;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.video-editor-cover-actions-label {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.video-editor-cover-time-label {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.video-editor-cover-time-input {
+  width: 72px;
+  height: 30px;
+  margin-left: 5px;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--color-text);
+  font: inherit;
+}
+
+.video-editor-cover-time-input:focus {
+  border-color: #94a3b8;
+  outline: 2px solid rgba(252, 38, 103, 0.2);
+  outline-offset: 1px;
 }
 
 .video-editor-zoom-slider {
