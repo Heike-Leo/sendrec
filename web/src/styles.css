@@ -4717,8 +4717,47 @@ textarea.form-input {
   transition: opacity 100ms ease;
 }
 
+.video-editor-tool-tooltip--left-edge {
+  left: 0;
+  transform: none;
+}
+
 .video-editor-tool:hover .video-editor-tool-tooltip,
 .video-editor-tool:focus-within .video-editor-tool-tooltip {
   opacity: 1;
   visibility: visible;
+}
+
+.video-editor-zoom-slider {
+  width: 150px;
+  height: 16px;
+  margin: 0 2px;
+  accent-color: #64748b;
+  cursor: pointer;
+}
+
+.video-editor-zoom-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+.video-editor-zoom-slider::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+}
+
+.video-editor-zoom-slider::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+
+.video-editor-zoom-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: #64748b;
 }

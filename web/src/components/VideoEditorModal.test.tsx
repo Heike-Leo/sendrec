@@ -629,17 +629,34 @@ describe("VideoEditorModal multi-source preview", () => {
 
     const timeline = await screen.findByTestId("video-editor-timeline");
     const slider = screen.getByRole("slider", { name: "Timeline-Zoom" });
+    const fitButton = screen.getByRole("button", { name: "Ansicht einpassen" });
+    const zoomOutButton = screen.getByRole("button", { name: "Verkleinern" });
+    const zoomInButton = screen.getByRole("button", { name: "Vergrößern" });
+
+    for (const button of [fitButton, zoomOutButton, zoomInButton]) {
+      expect(button).toHaveClass("video-editor-tool-button");
+      expect(button.querySelector("svg")).not.toBeNull();
+      expect(button).toHaveAttribute("aria-describedby");
+    }
+    expect(screen.getByText("Ansicht einpassen")).toHaveClass(
+      "video-editor-tool-tooltip--left-edge",
+    );
+    expect(screen.getByText("Verkleinern")).toHaveAttribute("role", "tooltip");
+    expect(screen.getByText("Vergrößern")).toHaveAttribute("role", "tooltip");
 
     expect(timeline).toHaveAttribute("data-zoom", "1");
-    await user.click(screen.getByRole("button", { name: "+" }));
+    expect(zoomOutButton).toBeDisabled();
+    await user.click(zoomInButton);
     expect(timeline).toHaveAttribute("data-zoom", "2");
-    await user.click(screen.getByRole("button", { name: "+" }));
+    await user.click(zoomInButton);
     expect(timeline).toHaveAttribute("data-zoom", "5");
-    await user.click(screen.getByRole("button", { name: "+" }));
+    await user.click(zoomInButton);
     expect(timeline).toHaveAttribute("data-zoom", "10");
     expect(slider).toHaveValue("3");
 
-    await user.click(screen.getByRole("button", { name: "Fit" }));
+    await user.click(zoomOutButton);
+    expect(timeline).toHaveAttribute("data-zoom", "5");
+    await user.click(fitButton);
     expect(timeline).toHaveAttribute("data-zoom", "1");
     expect(screen.getAllByText("2:00")).not.toHaveLength(0);
   });
@@ -673,6 +690,9 @@ describe("VideoEditorModal multi-source preview", () => {
       "Abdeckung hinzufügen",
       "Video einfügen",
       "Rückgängig",
+      "Ansicht einpassen",
+      "Verkleinern",
+      "Vergrößern",
     ]);
     expect(toolbarButtons[4]).toBeDisabled();
 
@@ -721,11 +741,11 @@ describe("VideoEditorModal multi-source preview", () => {
     const ruler = await screen.findByTestId("video-editor-timeline-ruler");
     expect(ruler).toHaveAttribute("data-tick-step", "1");
 
-    await user.click(screen.getByRole("button", { name: "+" }));
+    await user.click(screen.getByRole("button", { name: "Vergrößern" }));
     expect(ruler).toHaveAttribute("data-tick-step", "0.5");
-    await user.click(screen.getByRole("button", { name: "+" }));
+    await user.click(screen.getByRole("button", { name: "Vergrößern" }));
     expect(ruler).toHaveAttribute("data-tick-step", "0.5");
-    await user.click(screen.getByRole("button", { name: "+" }));
+    await user.click(screen.getByRole("button", { name: "Vergrößern" }));
     expect(ruler).toHaveAttribute("data-tick-step", "0.1");
   });
 
@@ -735,7 +755,7 @@ describe("VideoEditorModal multi-source preview", () => {
       <VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />,
     );
     const timeline = await screen.findByTestId("video-editor-timeline");
-    await user.click(screen.getByRole("button", { name: "+" }));
+    await user.click(screen.getByRole("button", { name: "Vergrößern" }));
     vi.spyOn(timeline, "getBoundingClientRect").mockReturnValue({
       x: -250,
       y: 0,
@@ -759,7 +779,7 @@ describe("VideoEditorModal multi-source preview", () => {
     render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
     const timeline = await screen.findByTestId("video-editor-timeline");
     for (let index = 0; index < 3; index += 1) {
-      await user.click(screen.getByRole("button", { name: "+" }));
+      await user.click(screen.getByRole("button", { name: "Vergrößern" }));
     }
     vi.spyOn(timeline, "getBoundingClientRect").mockReturnValue({
       x: 0, y: 0, left: 0, top: 0, right: 10000, bottom: 64,
@@ -778,7 +798,7 @@ describe("VideoEditorModal multi-source preview", () => {
     render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
     const timeline = await screen.findByTestId("video-editor-timeline");
     for (let index = 0; index < 3; index += 1) {
-      await user.click(screen.getByRole("button", { name: "+" }));
+      await user.click(screen.getByRole("button", { name: "Vergrößern" }));
     }
     vi.spyOn(timeline, "getBoundingClientRect").mockReturnValue({
       x: 0, y: 0, left: 0, top: 0, right: 10000, bottom: 64,

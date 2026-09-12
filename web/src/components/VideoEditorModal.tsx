@@ -71,13 +71,16 @@ function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[]) 
   });
 }
 
-function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" }) {
+function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" }) {
   const paths = {
     trim: <><circle cx="3.5" cy="4" r="1.5" /><circle cx="3.5" cy="12" r="1.5" /><path d="m4.8 5 7.7 6.5M4.8 11l7.7-6.5" /></>,
     split: <><rect x="1.5" y="3" width="5" height="10" rx="1" /><rect x="9.5" y="3" width="5" height="10" rx="1" /><path d="M8 2.5v11" /></>,
     cover: <rect x="2" y="3" width="12" height="10" rx="1.5" />,
     insert: <><rect x="1.5" y="3.5" width="9" height="9" rx="1.25" /><path d="m10.5 6.5 4-1.7v6.4l-4-1.7M4 8h4M6 6v4" /></>,
     undo: <><path d="M6 4 2.5 7.5 6 11" /><path d="M3 7.5h6a4 4 0 0 1 4 4" /></>,
+    fit: <><path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4" /></>,
+    minus: <path d="M3 8h10" />,
+    plus: <path d="M8 3v10M3 8h10" />,
   };
 
   return (
@@ -2012,34 +2015,45 @@ export function VideoEditorModal({
             marginBottom: 12,
           }}
         >
-          <button
-            type="button"
-            onClick={() => setTimelineZoom(1)}
-            style={{
-              border: "1px solid var(--color-border)",
-              borderRadius: 7,
-              padding: "5px 10px",
-              background: "#FFFFFF",
-              color: "#0F172A",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Fit
-          </button>
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              onClick={() => setTimelineZoom(1)}
+              className="video-editor-tool-button"
+              aria-label="Ansicht einpassen"
+              aria-describedby="video-editor-tooltip-fit"
+            >
+              <EditorToolIcon name="fit" />
+            </button>
+            <span
+              id="video-editor-tooltip-fit"
+              role="tooltip"
+              className="video-editor-tool-tooltip video-editor-tool-tooltip--left-edge"
+            >
+              Ansicht einpassen
+            </span>
+          </span>
 
-          <button
-            type="button"
-            onClick={() => {
-              const index = TIMELINE_ZOOM_LEVELS.indexOf(
-                timelineZoom as (typeof TIMELINE_ZOOM_LEVELS)[number],
-              );
-              setTimelineZoom(TIMELINE_ZOOM_LEVELS[Math.max(0, index - 1)]);
-            }}
-            disabled={timelineZoom <= 1}
-          >
-            −
-          </button>
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              onClick={() => {
+                const index = TIMELINE_ZOOM_LEVELS.indexOf(
+                  timelineZoom as (typeof TIMELINE_ZOOM_LEVELS)[number],
+                );
+                setTimelineZoom(TIMELINE_ZOOM_LEVELS[Math.max(0, index - 1)]);
+              }}
+              disabled={timelineZoom <= 1}
+              className="video-editor-tool-button"
+              aria-label="Verkleinern"
+              aria-describedby="video-editor-tooltip-zoom-out"
+            >
+              <EditorToolIcon name="minus" />
+            </button>
+            <span id="video-editor-tooltip-zoom-out" role="tooltip" className="video-editor-tool-tooltip">
+              Verkleinern
+            </span>
+          </span>
 
           <input
             type="range"
@@ -2053,25 +2067,33 @@ export function VideoEditorModal({
               setTimelineZoom(TIMELINE_ZOOM_LEVELS[Number(e.currentTarget.value)])
             }
             aria-label="Timeline-Zoom"
-            style={{ width: 190 }}
+            className="video-editor-zoom-slider"
           />
 
-          <button
-            type="button"
-            onClick={() => {
-              const index = TIMELINE_ZOOM_LEVELS.indexOf(
-                timelineZoom as (typeof TIMELINE_ZOOM_LEVELS)[number],
-              );
-              setTimelineZoom(
-                TIMELINE_ZOOM_LEVELS[Math.min(TIMELINE_ZOOM_LEVELS.length - 1, index + 1)],
-              );
-            }}
-            disabled={
-              timelineZoom >= TIMELINE_ZOOM_LEVELS[TIMELINE_ZOOM_LEVELS.length - 1]
-            }
-          >
-            +
-          </button>
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              onClick={() => {
+                const index = TIMELINE_ZOOM_LEVELS.indexOf(
+                  timelineZoom as (typeof TIMELINE_ZOOM_LEVELS)[number],
+                );
+                setTimelineZoom(
+                  TIMELINE_ZOOM_LEVELS[Math.min(TIMELINE_ZOOM_LEVELS.length - 1, index + 1)],
+                );
+              }}
+              disabled={
+                timelineZoom >= TIMELINE_ZOOM_LEVELS[TIMELINE_ZOOM_LEVELS.length - 1]
+              }
+              className="video-editor-tool-button"
+              aria-label="Vergrößern"
+              aria-describedby="video-editor-tooltip-zoom-in"
+            >
+              <EditorToolIcon name="plus" />
+            </button>
+            <span id="video-editor-tooltip-zoom-in" role="tooltip" className="video-editor-tool-tooltip">
+              Vergrößern
+            </span>
+          </span>
 
           <span
             style={{
