@@ -71,6 +71,33 @@ function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[]) 
   });
 }
 
+function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" }) {
+  const paths = {
+    trim: <><circle cx="3.5" cy="4" r="1.5" /><circle cx="3.5" cy="12" r="1.5" /><path d="m4.8 5 7.7 6.5M4.8 11l7.7-6.5" /></>,
+    split: <><rect x="1.5" y="3" width="5" height="10" rx="1" /><rect x="9.5" y="3" width="5" height="10" rx="1" /><path d="M8 2.5v11" /></>,
+    cover: <rect x="2" y="3" width="12" height="10" rx="1.5" />,
+    insert: <><rect x="1.5" y="3.5" width="9" height="9" rx="1.25" /><path d="m10.5 6.5 4-1.7v6.4l-4-1.7M4 8h4M6 6v4" /></>,
+    undo: <><path d="M6 4 2.5 7.5 6 11" /><path d="M3 7.5h6a4 4 0 0 1 4 4" /></>,
+  };
+
+  return (
+    <svg
+      aria-hidden="true"
+      data-testid={`video-editor-tool-icon-${name}`}
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {paths[name]}
+    </svg>
+  );
+}
+
 export function VideoEditorModal({
   videoId,
   duration,
@@ -1598,56 +1625,54 @@ export function VideoEditorModal({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 12,
+            gap: 8,
             marginBottom: 12,
           }}
         >
-          <button
-            type="button"
-            style={{
-              border: "none",
-              borderRadius: 8,
-              padding: "8px 14px",
-              background: "#0F172A",
-              color: "#FFFFFF",
-              fontWeight: 600,
-              cursor: "default",
-            }}
-          >
-            ✂ Trimmen
-          </button>
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              className="video-editor-tool-button"
+              aria-label="Trimmen"
+              aria-describedby="video-editor-tooltip-trim"
+              style={{ cursor: "default" }}
+            >
+              <EditorToolIcon name="trim" />
+            </button>
+            <span id="video-editor-tooltip-trim" role="tooltip" className="video-editor-tool-tooltip">
+              Trimmen
+            </span>
+          </span>
 
-          <button
-            type="button"
-            onClick={handleSplit}
-            style={{
-              border: "1px solid var(--color-border)",
-              borderRadius: 8,
-              padding: "8px 14px",
-              background: "#0F172A",
-              color: "#FFFFFF",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Teilen
-          </button>
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              onClick={handleSplit}
+              className="video-editor-tool-button"
+              aria-label="Teilen"
+              aria-describedby="video-editor-tooltip-split"
+            >
+              <EditorToolIcon name="split" />
+            </button>
+            <span id="video-editor-tooltip-split" role="tooltip" className="video-editor-tool-tooltip">
+              Teilen
+            </span>
+          </span>
 
-          <button
-            type="button"
-            onClick={handleAddCoverOverlay}
-            style={{
-              border: "1px solid var(--color-border)",
-              borderRadius: 8,
-              padding: "8px 14px",
-              background: "#0F172A",
-              color: "#FFFFFF",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            + Abdeckung
-          </button>
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              onClick={handleAddCoverOverlay}
+              className="video-editor-tool-button"
+              aria-label="+ Abdeckung"
+              aria-describedby="video-editor-tooltip-cover"
+            >
+              <EditorToolIcon name="cover" />
+            </button>
+            <span id="video-editor-tooltip-cover" role="tooltip" className="video-editor-tool-tooltip">
+              Abdeckung hinzufügen
+            </span>
+          </span>
 
           {selectedClipId && (
             <button
@@ -1670,43 +1695,36 @@ export function VideoEditorModal({
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={handleOpenInsertPicker}
-            style={{
-              border: "1px solid var(--color-border)",
-              borderRadius: 8,
-              padding: "8px 14px",
-              background: "#0F172A",
-              color: "#FFFFFF",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            + Video einfügen
-          </button>
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              onClick={handleOpenInsertPicker}
+              className="video-editor-tool-button"
+              aria-label="Video einfügen"
+              aria-describedby="video-editor-tooltip-insert"
+            >
+              <EditorToolIcon name="insert" />
+            </button>
+            <span id="video-editor-tooltip-insert" role="tooltip" className="video-editor-tool-tooltip">
+              Video einfügen
+            </span>
+          </span>
 
-          <button
-            type="button"
-            onClick={handleUndo}
-            disabled={editorHistory.length === 0}
-            style={{
-              border: "1px solid var(--color-border)",
-              borderRadius: 8,
-              padding: "8px 14px",
-              background: "#FFFFFF",
-              color: "#0F172A",
-              fontWeight: 600,
-              cursor:
-                editorHistory.length === 0
-                  ? "default"
-                  : "pointer",
-              opacity:
-                editorHistory.length === 0 ? 0.45 : 1,
-            }}
-          >
-            ↶ Rückgängig
-          </button>
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              onClick={handleUndo}
+              disabled={editorHistory.length === 0}
+              className="video-editor-tool-button"
+              aria-label="↶ Rückgängig"
+              aria-describedby="video-editor-tooltip-undo"
+            >
+              <EditorToolIcon name="undo" />
+            </button>
+            <span id="video-editor-tooltip-undo" role="tooltip" className="video-editor-tool-tooltip">
+              Rückgängig
+            </span>
+          </span>
 
           <span
             style={{

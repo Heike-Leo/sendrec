@@ -4658,3 +4658,67 @@ textarea.form-input {
   right: 64px;
   z-index: 2;
 }
+
+.video-editor-tool {
+  position: relative;
+  display: inline-flex;
+}
+
+.video-editor-tool-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.video-editor-tool-button:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f2744;
+}
+
+.video-editor-tool-button:focus-visible {
+  outline: 2px solid rgba(252, 38, 103, 0.35);
+  outline-offset: 2px;
+}
+
+.video-editor-tool-button:disabled {
+  color: #94a3b8;
+  background: #f8fafc;
+  cursor: default;
+  opacity: 0.7;
+}
+
+.video-editor-tool-tooltip {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  z-index: 100;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: #0f2744;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%);
+  transition: opacity 100ms ease;
+}
+
+.video-editor-tool:hover .video-editor-tool-tooltip,
+.video-editor-tool:focus-within .video-editor-tool-tooltip {
+  opacity: 1;
+  visibility: visible;
+}

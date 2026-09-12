@@ -644,6 +644,44 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getAllByText("2:00")).not.toHaveLength(0);
   });
 
+  it("keeps all five icon toolbar actions accessible with tooltips", async () => {
+    const user = userEvent.setup();
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+
+    await screen.findByTestId("video-editor-timeline");
+    const toolbarButtons = [
+      screen.getByRole("button", { name: "Trimmen" }),
+      screen.getByRole("button", { name: "Teilen" }),
+      screen.getByRole("button", { name: "+ Abdeckung" }),
+      screen.getByRole("button", { name: "Video einfügen" }),
+      screen.getByRole("button", { name: "↶ Rückgängig" }),
+    ];
+
+    for (const button of toolbarButtons) {
+      expect(button).toHaveClass("video-editor-tool-button");
+      const icon = button.querySelector("svg");
+      expect(icon).toHaveAttribute("width", "16");
+      expect(icon).toHaveAttribute("height", "16");
+      expect(icon).toHaveAttribute("viewBox", "0 0 16 16");
+      expect(icon).toHaveAttribute("fill", "none");
+      expect(icon).toHaveAttribute("stroke", "currentColor");
+    }
+    expect(toolbarButtons.every((button) => button.textContent === "")).toBe(true);
+    expect(screen.getAllByRole("tooltip", { hidden: true }).map((tooltip) => tooltip.textContent?.trim())).toEqual([
+      "Trimmen",
+      "Teilen",
+      "Abdeckung hinzufügen",
+      "Video einfügen",
+      "Rückgängig",
+    ]);
+    expect(toolbarButtons[4]).toBeDisabled();
+
+    await user.click(toolbarButtons[2]);
+    expect(toolbarButtons[4]).toBeEnabled();
+    await user.click(toolbarButtons[4]);
+    expect(screen.queryByText("Abdeckung 1")).not.toBeInTheDocument();
+  });
+
   it("deletes only the selected cover overlay", async () => {
     const user = userEvent.setup();
     render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
