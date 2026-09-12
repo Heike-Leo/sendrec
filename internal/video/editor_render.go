@@ -17,6 +17,7 @@ import (
 )
 
 const editTimelineVersion = 1
+const editorBlurSigma = 12
 
 type editClip struct {
 	ID          string  `json:"id"`
@@ -309,10 +310,58 @@ func buildTimelineRenderArgs(inputs []string, clips []editClip, sourceIndexes ma
 	} else {
 		filters = append(filters, fmt.Sprintf("%sconcat=n=%d:v=1:a=1[vbase][aout]", concatInputs.String(), len(clips)))
 
+		blurOverlays := make([]editorCoverOverlay, 0, len(overlays))
+		coverOverlays := make([]editorCoverOverlay, 0, len(overlays))
+		for _, overlay := range overlays {
+			if overlay.Mode == "blur" {
+				blurOverlays = append(blurOverlays, overlay)
+			} else {
+				coverOverlays = append(coverOverlays, overlay)
+			}
+		}
+
 		previousLabel := "vbase"
-		for i, overlay := range overlays {
-			nextLabel := fmt.Sprintf("voverlay%d", i)
-			if i == len(overlays)-1 {
+		operationIndex := 0
+		for _, overlay := range blurOverlays {
+			nextLabel := fmt.Sprintf("voverlay%d", operationIndex)
+			if operationIndex == len(overlays)-1 {
+				nextLabel = "vout"
+			}
+			baseLabel := fmt.Sprintf("vblurbase%d", operationIndex)
+			cropLabel := fmt.Sprintf("vblurcrop%d", operationIndex)
+			blurredLabel := fmt.Sprintf("vblurred%d", operationIndex)
+
+			filters = append(filters,
+				fmt.Sprintf("[%s]split=2[%s][%s]", previousLabel, baseLabel, cropLabel),
+				fmt.Sprintf(
+					"[%s]crop=w=iw*%.6f:h=ih*%.6f:x=iw*%.6f:y=ih*%.6f,gblur=sigma=%d:steps=2[%s]",
+					cropLabel,
+					overlay.Width/100,
+					overlay.Height/100,
+					overlay.X/100,
+					overlay.Y/100,
+					editorBlurSigma,
+					blurredLabel,
+				),
+				fmt.Sprintf(
+					"[%s][%s]overlay=x=main_w*%.6f:y=main_h*%.6f:enable='between(t,%.3f,%.3f)'[%s]",
+					baseLabel,
+					blurredLabel,
+					overlay.X/100,
+					overlay.Y/100,
+					overlay.Start,
+					overlay.End,
+					nextLabel,
+				),
+			)
+
+			previousLabel = nextLabel
+			operationIndex++
+		}
+
+		for _, overlay := range coverOverlays {
+			nextLabel := fmt.Sprintf("voverlay%d", operationIndex)
+			if operationIndex == len(overlays)-1 {
 				nextLabel = "vout"
 			}
 
@@ -329,6 +378,7 @@ func buildTimelineRenderArgs(inputs []string, clips []editClip, sourceIndexes ma
 			))
 
 			previousLabel = nextLabel
+			operationIndex++
 		}
 	}
 	args = append(args, "-filter_complex", strings.Join(filters, ";"), "-map", "[vout]", "-map", "[aout]",

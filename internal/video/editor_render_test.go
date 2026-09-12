@@ -167,6 +167,50 @@ func TestBuildTimelineRenderArgsIncludesTimedCoverOverlay(t *testing.T) {
 	}
 }
 
+func TestBuildTimelineRenderArgsIncludesTimedScaledBlurOverlays(t *testing.T) {
+	clips := []editClip{{ID: "clip-1", SourceID: "original", SourceStart: 0, SourceEnd: 12, Duration: 12}}
+	sources := map[string]sourceVideo{"original": {ID: "original", HasAudio: true}}
+	overlays := []editorCoverOverlay{
+		{ID: "blur-1", X: 25, Y: 10, Width: 40, Height: 20, Start: 3.5, End: 8.25, Mode: "blur"},
+		{ID: "blur-2", X: 5, Y: 60, Width: 15, Height: 25, Start: 1, End: 11, Mode: "blur"},
+	}
+
+	joined := strings.Join(buildTimelineRenderArgs(
+		[]string{"original.mp4"}, clips, map[string]int{"original": 0}, sources, "output.mp4", overlays,
+	), " ")
+	want := []string{
+		"crop=w=iw*0.400000:h=ih*0.200000:x=iw*0.250000:y=ih*0.100000,gblur=sigma=12:steps=2",
+		"overlay=x=main_w*0.250000:y=main_h*0.100000:enable='between(t,3.500,8.250)'",
+		"crop=w=iw*0.150000:h=ih*0.250000:x=iw*0.050000:y=ih*0.600000,gblur=sigma=12:steps=2",
+		"overlay=x=main_w*0.050000:y=main_h*0.600000:enable='between(t,1.000,11.000)'",
+	}
+	for _, fragment := range want {
+		if !strings.Contains(joined, fragment) {
+			t.Fatalf("render args missing blur fragment %q in %s", fragment, joined)
+		}
+	}
+}
+
+func TestBuildTimelineRenderArgsAppliesCoverAfterBlur(t *testing.T) {
+	clips := []editClip{{ID: "clip-1", SourceID: "original", SourceStart: 0, SourceEnd: 12, Duration: 12}}
+	sources := map[string]sourceVideo{"original": {ID: "original", HasAudio: true}}
+	overlays := []editorCoverOverlay{
+		{ID: "legacy-cover", X: 10, Y: 10, Width: 40, Height: 40, Start: 0, End: 10},
+		{ID: "blur", X: 10, Y: 10, Width: 40, Height: 40, Start: 0, End: 10, Mode: "blur"},
+		{ID: "cover", X: 20, Y: 20, Width: 20, Height: 20, Start: 2, End: 8, Mode: "cover"},
+	}
+
+	joined := strings.Join(buildTimelineRenderArgs(
+		[]string{"original.mp4"}, clips, map[string]int{"original": 0}, sources, "output.mp4", overlays,
+	), " ")
+	blurPosition := strings.Index(joined, "gblur=sigma=12:steps=2")
+	legacyCoverPosition := strings.Index(joined, "drawbox=x=iw*0.100000:y=ih*0.100000")
+	explicitCoverPosition := strings.Index(joined, "drawbox=x=iw*0.200000:y=ih*0.200000")
+	if blurPosition < 0 || legacyCoverPosition <= blurPosition || explicitCoverPosition <= legacyCoverPosition {
+		t.Fatalf("blur must render before legacy and explicit covers: %s", joined)
+	}
+}
+
 func TestRenderEditorTimelineSavesTimelineAndQueuesResolvedSources(t *testing.T) {
 	mock, err := pgxmock.NewPool()
 	if err != nil {
@@ -480,4 +524,73 @@ func TestTimelineRenderFFmpegIntegration(t *testing.T) {
 	assertDominantColor("0.25", 0)
 	assertDominantColor("0.75", 2)
 	assertDominantColor("1.25", 0)
+}
+
+func TestTimelineBlurRenderFFmpegIntegration(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if out, err := exec.Command("ffmpeg", "-hide_banner", "-encoders").CombinedOutput(); err != nil || !strings.Contains(string(out), "libx264") {
+		t.Skip("ffmpeg libx264 encoder not available")
+	}
+
+	dir := t.TempDir()
+	input := filepath.Join(dir, "pattern.mp4")
+	fixture := exec.Command("ffmpeg", "-f", "lavfi", "-i",
+		"nullsrc=s=320x180:d=2,geq=lum='mod(floor(X/8)+floor(Y/8),2)*255':cb=128:cr=128",
+		"-c:v", "libx264", "-pix_fmt", "yuv420p", "-y", input)
+	if output, err := fixture.CombinedOutput(); err != nil {
+		t.Fatalf("create blur fixture: %v: %s", err, output)
+	}
+
+	output := filepath.Join(dir, "blurred.mp4")
+	clips := []editClip{{ID: "clip", SourceID: "pattern", SourceStart: 0, SourceEnd: 2, Duration: 2}}
+	sources := map[string]sourceVideo{"pattern": {ID: "pattern", HasAudio: false}}
+	overlays := []editorCoverOverlay{
+		{ID: "blur", X: 10, Y: 10, Width: 80, Height: 80, Start: .5, End: 1.5, Mode: "blur"},
+		{ID: "cover", X: 45, Y: 45, Width: 10, Height: 10, Start: .5, End: 1.5, Mode: "cover"},
+	}
+	cmd := exec.Command("ffmpeg", buildTimelineRenderArgs(
+		[]string{input}, clips, map[string]int{"pattern": 0}, sources, output, overlays,
+	)...)
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("render blur fixture: %v: %s", err, combined)
+	}
+
+	readBlurSample := func(at string) []byte {
+		t.Helper()
+		sample := exec.Command("ffmpeg", "-v", "error", "-ss", at, "-i", output,
+			"-vf", "crop=384:216:384:216,scale=64:36", "-frames:v", "1",
+			"-f", "rawvideo", "-pix_fmt", "gray", "pipe:1")
+		pixels, err := sample.Output()
+		if err != nil || len(pixels) == 0 {
+			t.Fatalf("sample blur frame at %s: %v", at, err)
+		}
+		return pixels
+	}
+	variance := func(pixels []byte) float64 {
+		var sum, sumSquares float64
+		for _, pixel := range pixels {
+			value := float64(pixel)
+			sum += value
+			sumSquares += value * value
+		}
+		mean := sum / float64(len(pixels))
+		return sumSquares/float64(len(pixels)) - mean*mean
+	}
+	outsideVariance := variance(readBlurSample("0.250"))
+	insideVariance := variance(readBlurSample("1.000"))
+	if insideVariance >= outsideVariance*.5 {
+		t.Fatalf("blur did not sufficiently reduce image variance: outside=%f inside=%f", outsideVariance, insideVariance)
+	}
+
+	coverSample := exec.Command("ffmpeg", "-v", "error", "-ss", "1.000", "-i", output,
+		"-vf", "crop=2:2:960:540,scale=1:1", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
+	pixel, err := coverSample.Output()
+	if err != nil || len(pixel) < 3 {
+		t.Fatalf("sample covered pixel: %v (%v)", err, pixel)
+	}
+	if pixel[0] > 10 || pixel[1] > 10 || pixel[2] > 10 {
+		t.Fatalf("cover over blur is not black: rgb=%v", pixel[:3])
+	}
 }
