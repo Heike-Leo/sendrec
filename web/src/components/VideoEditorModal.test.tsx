@@ -31,6 +31,7 @@ let editorState: typeof emptyEditorState | {
         height: number;
         start: number;
         end: number;
+        mode?: "cover" | "blur";
       }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
@@ -260,6 +261,115 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.queryByTestId("video-editor-cover-overlay-cover-saved-2")).not.toBeInTheDocument();
   });
 
+  it("treats legacy overlays as cover and toggles mode without changing identity or geometry", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          { id: "legacy-cover", x: 12, y: 18, width: 32, height: 24, start: 0, end: 19 },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    const overlay = await screen.findByTestId("video-editor-cover-overlay-legacy-cover");
+    await user.click(screen.getByTestId("video-editor-cover-badge-legacy-cover"));
+    const mode = screen.getByRole("combobox", { name: "Abdeckungstyp" });
+    const originalGeometry = {
+      left: overlay.style.left,
+      top: overlay.style.top,
+      width: overlay.style.width,
+      height: overlay.style.height,
+    };
+
+    expect(mode).toHaveValue("cover");
+    expect(overlay).toHaveStyle({ background: "#000" });
+    expect(screen.getByText("Abdeckung 1")).toBeInTheDocument();
+    expect(screen.getByTestId("video-editor-cover-badge-legacy-cover")).toHaveTextContent("1");
+
+    await user.selectOptions(mode, "blur");
+    expect(mode).toHaveValue("blur");
+    expect(overlay.style.backdropFilter).toBe("blur(12px)");
+    expect({
+      left: overlay.style.left,
+      top: overlay.style.top,
+      width: overlay.style.width,
+      height: overlay.style.height,
+    }).toEqual(originalGeometry);
+    expect(screen.getByRole("spinbutton", { name: /Start/ })).toHaveValue(0);
+    expect(screen.getByRole("spinbutton", { name: /Ende/ })).toHaveValue(19);
+    expect(screen.getByTestId("video-editor-overlay-row-legacy-cover")).toHaveAttribute("data-selected", "true");
+
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    await user.click(screen.getByTestId("video-editor-cover-badge-legacy-cover"));
+    expect(screen.getByRole("combobox", { name: "Abdeckungstyp" })).toHaveValue("cover");
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "blur");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "cover");
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    await user.click(screen.getByTestId("video-editor-cover-badge-legacy-cover"));
+    expect(screen.getByRole("combobox", { name: "Abdeckungstyp" })).toHaveValue("blur");
+  });
+
+  it("persists, restores and copies blur mode through the existing overlay timeline", async () => {
+    vi.useFakeTimers();
+    try {
+      editorState = {
+        timeline: {
+          version: 1,
+          clips: [
+            { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+          ],
+          overlays: [
+            { id: "blur-saved", x: 8, y: 9, width: 30, height: 25, start: 0, end: 20, mode: "blur" },
+          ],
+        },
+        renderStatus: "none",
+        renderError: null,
+        renderedVideoId: null,
+      };
+
+      const firstRender = render(
+        <VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />,
+      );
+      await vi.waitFor(() => expect(screen.getByTestId("video-editor-cover-overlay-blur-saved")).toBeInTheDocument());
+      expect(screen.getByTestId("video-editor-cover-overlay-blur-saved").style.backdropFilter).toBe("blur(12px)");
+      fireEvent.click(screen.getByTestId("video-editor-cover-badge-blur-saved"));
+      fireEvent.click(screen.getByRole("button", { name: "Abdeckung kopieren" }));
+      fireEvent.click(screen.getByRole("button", { name: "Abdeckung einfügen" }));
+      await vi.advanceTimersByTimeAsync(400);
+
+      const saveCall = mockApiFetch.mock.calls.filter(
+        ([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT",
+      ).at(-1);
+      const savedTimeline = JSON.parse((saveCall?.[1] as RequestInit).body as string);
+      expect(savedTimeline.overlays).toHaveLength(2);
+      expect(savedTimeline.overlays.map((overlay: { mode: string }) => overlay.mode)).toEqual(["blur", "blur"]);
+
+      firstRender.unmount();
+      editorState = {
+        timeline: savedTimeline,
+        renderStatus: "none",
+        renderError: null,
+        renderedVideoId: null,
+      };
+      render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+      await vi.waitFor(() => expect(screen.getAllByTestId(/video-editor-cover-overlay-/)).toHaveLength(2));
+      for (const restoredOverlay of screen.getAllByTestId(/video-editor-cover-overlay-/)) {
+        expect(restoredOverlay.style.backdropFilter).toBe("blur(12px)");
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps video badges aligned with timeline numbering after delete and copy", async () => {
     const user = userEvent.setup();
     editorState = {
@@ -361,7 +471,7 @@ describe("VideoEditorModal multi-source preview", () => {
             start: 30,
             end: 40,
           })),
-          { id: "cover-4", x: 10, y: 10, width: 40, height: 40, start: 0, end: 20 },
+          { id: "cover-4", x: 10, y: 10, width: 40, height: 40, start: 0, end: 20, mode: "blur" },
           { id: "cover-5", x: 10, y: 10, width: 40, height: 40, start: 0, end: 20 },
         ],
       },
@@ -383,6 +493,7 @@ describe("VideoEditorModal multi-source preview", () => {
         .map((overlay) => overlay.dataset.testid);
 
     expect(badge4).toHaveTextContent("4");
+    expect(screen.getByTestId("video-editor-cover-overlay-cover-4").style.backdropFilter).toBe("blur(12px)");
     expect(badge5).toHaveTextContent("5");
     expect(surfaceOrder()).toEqual([
       "video-editor-cover-overlay-cover-4",

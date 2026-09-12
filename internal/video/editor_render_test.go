@@ -58,6 +58,34 @@ func TestValidateEditTimeline(t *testing.T) {
 	}
 }
 
+func TestValidateEditTimelineNormalizesAndValidatesOverlayMode(t *testing.T) {
+	legacy := validTimeline(editClip{ID: "one", SourceID: "source-a", SourceStart: 0, SourceEnd: 10})
+	legacy.Overlays = []editorCoverOverlay{{
+		ID: "legacy", X: 10, Y: 10, Width: 20, Height: 20, Start: 0, End: 5,
+	}}
+	if err := validateEditTimeline(&legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Overlays[0].Mode != "cover" {
+		t.Fatalf("legacy overlay mode = %q, want cover", legacy.Overlays[0].Mode)
+	}
+
+	blur := validTimeline(editClip{ID: "one", SourceID: "source-a", SourceStart: 0, SourceEnd: 10})
+	blur.Overlays = []editorCoverOverlay{{
+		ID: "blur", X: 10, Y: 10, Width: 20, Height: 20, Start: 0, End: 5, Mode: "blur",
+	}}
+	if err := validateEditTimeline(&blur); err != nil {
+		t.Fatalf("blur overlay rejected: %v", err)
+	}
+
+	invalid := blur
+	invalid.Overlays = append([]editorCoverOverlay(nil), blur.Overlays...)
+	invalid.Overlays[0].Mode = "pixelate"
+	if err := validateEditTimeline(&invalid); err == nil {
+		t.Fatal("invalid overlay mode was accepted")
+	}
+}
+
 func TestBuildTimelineRenderArgsPreservesClipOrderAndRanges(t *testing.T) {
 	clips := []editClip{
 		{ID: "first", SourceID: "original", SourceStart: 4.2, SourceEnd: 11.8, Duration: 7.6},
@@ -316,7 +344,7 @@ func TestSaveEditorTimelinePersistsOverlaysWithoutStartingRender(t *testing.T) {
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
 	body := `{"version":1,"clips":[{"id":"a","sourceId":"video-main","sourceStart":0,"sourceEnd":20}],` +
-		`"overlays":[{"id":"cover-1","x":10,"y":20,"width":30,"height":40,"start":2,"end":8}]}`
+		`"overlays":[{"id":"cover-1","x":10,"y":20,"width":30,"height":40,"start":2,"end":8,"mode":"blur"}]}`
 	router := chi.NewRouter()
 	router.With(newAuthMiddleware()).Put("/api/videos/{id}/editor", handler.SaveEditorTimeline)
 	recorder := httptest.NewRecorder()

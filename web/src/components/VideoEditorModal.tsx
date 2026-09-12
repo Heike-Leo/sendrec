@@ -19,6 +19,7 @@ interface EditorCoverOverlay {
   height: number;
   start: number;
   end: number;
+  mode?: "cover" | "blur";
 }
 
 interface EditorHistoryEntry {
@@ -401,7 +402,10 @@ export function VideoEditorModal({
             end: clip.sourceEnd,
           }));
           setClips(restoredClips);
-          restoredOverlays = state.timeline.overlays ?? [];
+          restoredOverlays = (state.timeline.overlays ?? []).map((overlay) => ({
+            ...overlay,
+            mode: overlay.mode === "blur" ? "blur" : "cover",
+          }));
           setCoverOverlays(restoredOverlays);
           setSelectedCoverOverlayId(null);
           activeClipIdRef.current = restoredClips[0].id;
@@ -1264,6 +1268,18 @@ export function VideoEditorModal({
     setError(null);
   }
 
+  function handleCoverOverlayModeChange(mode: "cover" | "blur") {
+    if (!selectedCoverOverlay || selectedCoverOverlay.mode === mode) return;
+
+    rememberEditorState();
+    setCoverOverlays((previous) =>
+      previous.map((overlay) =>
+        overlay.id === selectedCoverOverlay.id ? { ...overlay, mode } : overlay,
+      ),
+    );
+    setError(null);
+  }
+
   function handleDeleteSelectedCoverOverlay() {
     if (!selectedCoverOverlayId) return;
 
@@ -1318,6 +1334,7 @@ export function VideoEditorModal({
       height: 20,
       start,
       end,
+      mode: "cover",
     };
 
     rememberEditorState();
@@ -1450,6 +1467,7 @@ export function VideoEditorModal({
             height: overlay.height,
             start: overlay.start,
             end: overlay.end,
+            mode: overlay.mode ?? "cover",
           })),
         }),
       });
@@ -1670,7 +1688,9 @@ export function VideoEditorModal({
                     top: `${overlay.y}%`,
                     width: `${overlay.width}%`,
                     height: `${overlay.height}%`,
-                    background: "#000",
+                    background: (overlay.mode ?? "cover") === "blur" ? "rgba(255, 255, 255, 0.01)" : "#000",
+                    backdropFilter: (overlay.mode ?? "cover") === "blur" ? "blur(12px)" : undefined,
+                    WebkitBackdropFilter: (overlay.mode ?? "cover") === "blur" ? "blur(12px)" : undefined,
                     zIndex: 2,
                     pointerEvents: "auto",
                     cursor: "move",
@@ -1899,6 +1919,19 @@ export function VideoEditorModal({
         {selectedCoverOverlay && (
           <>
           <strong className="video-editor-cover-actions-label">Abdeckung:</strong>
+
+          <label className="video-editor-cover-time-label">
+            Typ{" "}
+            <select
+              aria-label="Abdeckungstyp"
+              value={selectedCoverOverlay.mode ?? "cover"}
+              onChange={(e) => handleCoverOverlayModeChange(e.target.value as "cover" | "blur")}
+              className="video-editor-cover-time-input"
+            >
+              <option value="cover">Abdecken</option>
+              <option value="blur">Blur</option>
+            </select>
+          </label>
 
           <label className="video-editor-cover-time-label">
             Start{" "}

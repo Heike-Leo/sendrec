@@ -34,6 +34,7 @@ type editorCoverOverlay struct {
 	Height float64 `json:"height"`
 	Start  float64 `json:"start"`
 	End    float64 `json:"end"`
+	Mode   string  `json:"mode,omitempty"`
 }
 
 type editTimeline struct {
@@ -115,6 +116,12 @@ func validateEditTimeline(timeline *editTimeline) error {
 	overlayIDs := make(map[string]struct{}, len(timeline.Overlays))
 	for i := range timeline.Overlays {
 		overlay := &timeline.Overlays[i]
+		if overlay.Mode == "" {
+			overlay.Mode = "cover"
+		}
+		if overlay.Mode != "cover" && overlay.Mode != "blur" {
+			return fmt.Errorf("overlay mode must be cover or blur")
+		}
 
 		if strings.TrimSpace(overlay.ID) == "" {
 			return fmt.Errorf("overlay id is required")
@@ -165,6 +172,11 @@ func (h *Handler) GetEditorState(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(raw, &timeline); err != nil {
 			httputil.WriteError(w, http.StatusInternalServerError, "stored timeline is invalid")
 			return
+		}
+		for i := range timeline.Overlays {
+			if timeline.Overlays[i].Mode == "" {
+				timeline.Overlays[i].Mode = "cover"
+			}
 		}
 	}
 	httputil.WriteJSON(w, http.StatusOK, editorStateResponse{
