@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { VideoEditorModal } from "./VideoEditorModal";
 
@@ -258,6 +258,104 @@ describe("VideoEditorModal multi-source preview", () => {
 
     expect(screen.getByTestId("video-editor-cover-overlay-cover-saved-1")).toBeInTheDocument();
     expect(screen.queryByTestId("video-editor-cover-overlay-cover-saved-2")).not.toBeInTheDocument();
+  });
+
+  it("fits the overlay layer to the visible video frame and updates it on resize", async () => {
+    let resizeCallback: ResizeObserverCallback = () => undefined;
+    class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          { id: "cover-frame", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20 },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    try {
+      const { container } = render(
+        <VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />,
+      );
+      await waitFor(() => expect(container.querySelector("video")).not.toBeNull());
+      const video = container.querySelector("video")!;
+      const preview = screen.getByTestId("video-editor-preview");
+      Object.defineProperty(video, "videoWidth", { configurable: true, value: 1920 });
+      Object.defineProperty(video, "videoHeight", { configurable: true, value: 1080 });
+      vi.spyOn(preview, "getBoundingClientRect").mockReturnValue({
+        x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 600,
+        width: 1000, height: 600, toJSON: () => ({}),
+      });
+      const videoRect = vi.spyOn(video, "getBoundingClientRect").mockReturnValue({
+        x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 600,
+        width: 1000, height: 600, toJSON: () => ({}),
+      });
+
+      fireEvent.loadedMetadata(video);
+      const frame = screen.getByTestId("video-editor-overlay-frame");
+      expect(frame).toHaveStyle({ left: "0px", top: "18.75px", width: "1000px", height: "562.5px" });
+      expect(screen.getByTestId("video-editor-cover-overlay-cover-frame")).toHaveStyle({
+        left: "80%", top: "80%", width: "20%", height: "20%",
+      });
+
+      videoRect.mockReturnValue({
+        x: 0, y: 0, left: 0, top: 0, right: 600, bottom: 600,
+        width: 600, height: 600, toJSON: () => ({}),
+      });
+      act(() => resizeCallback([], {} as ResizeObserver));
+      expect(frame).toHaveStyle({ left: "0px", top: "131.25px", width: "600px", height: "337.5px" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps overlay dragging and resizing within the measured video frame", async () => {
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          { id: "cover-bounds", x: 60, y: 60, width: 20, height: 20, start: 0, end: 20 },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    const overlay = await screen.findByTestId("video-editor-cover-overlay-cover-bounds");
+    const frame = overlay.parentElement!;
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 500,
+      width: 1000, height: 500, toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(overlay, { clientX: 600, clientY: 300 });
+    fireEvent.pointerMove(document, { clientX: 1600, clientY: 800 });
+    fireEvent.pointerUp(document);
+    expect(overlay).toHaveStyle({ left: "80%", top: "80%" });
+
+    const resizeHandle = overlay.firstElementChild as HTMLElement;
+    fireEvent.pointerDown(resizeHandle, { clientX: 800, clientY: 400 });
+    fireEvent.pointerMove(document, { clientX: 1800, clientY: 900 });
+    fireEvent.pointerUp(document);
+    expect(overlay).toHaveStyle({ width: "20%", height: "20%" });
   });
 
   it("renders identical cover overlays in stable separate selectable rows", async () => {

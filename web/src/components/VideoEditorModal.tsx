@@ -129,6 +129,7 @@ export function VideoEditorModal({
   const [coverOverlays, setCoverOverlays] = useState<EditorCoverOverlay[]>([]);
   const [selectedCoverOverlayId, setSelectedCoverOverlayId] = useState<string | null>(null);
   const [copiedCoverOverlay, setCopiedCoverOverlay] = useState<EditorCoverOverlay | null>(null);
+  const [videoFrameRect, setVideoFrameRect] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const [clips, setClips] = useState<EditorClip[]>([
     {
       id: "clip-1",
@@ -140,6 +141,7 @@ export function VideoEditorModal({
   const [error, setError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
   const nextClipIdRef = useRef(2);
   const timelineRef = useRef<HTMLDivElement>(null);
   const draggingTrimRef = useRef<"start" | "end" | null>(null);
@@ -155,6 +157,41 @@ export function VideoEditorModal({
   const latestTimelinePayloadRef = useRef<string | null>(null);
   const lastSavedTimelinePayloadRef = useRef<string | null>(null);
   const timelineSavePendingRef = useRef(false);
+
+  function updateVisibleVideoFrame() {
+    const video = videoRef.current;
+    const container = previewContainerRef.current;
+    if (!video || !container) return;
+
+    const videoRect = video.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    if (videoRect.width <= 0 || videoRect.height <= 0) return;
+
+    const intrinsicWidth = video.videoWidth;
+    const intrinsicHeight = video.videoHeight;
+    const scale =
+      intrinsicWidth > 0 && intrinsicHeight > 0
+        ? Math.min(videoRect.width / intrinsicWidth, videoRect.height / intrinsicHeight)
+        : 1;
+    const width = intrinsicWidth > 0 ? intrinsicWidth * scale : videoRect.width;
+    const height = intrinsicHeight > 0 ? intrinsicHeight * scale : videoRect.height;
+    const normalizeZero = (value: number) => Math.abs(value) < 1e-9 ? 0 : value;
+    const nextRect = {
+      left: normalizeZero(videoRect.left - containerRect.left + (videoRect.width - width) / 2),
+      top: normalizeZero(videoRect.top - containerRect.top + (videoRect.height - height) / 2),
+      width,
+      height,
+    };
+
+    setVideoFrameRect((current) =>
+      current.left === nextRect.left &&
+      current.top === nextRect.top &&
+      current.width === nextRect.width &&
+      current.height === nextRect.height
+        ? current
+        : nextRect,
+    );
+  }
 
   async function loadVideoUrl(sourceVideoId: string) {
     if (videoUrlsRef.current[sourceVideoId]) {
@@ -290,6 +327,18 @@ export function VideoEditorModal({
         false,
       );
     }
+  }, [videoUrl]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    updateVisibleVideoFrame();
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(updateVisibleVideoFrame);
+    observer.observe(video);
+    return () => observer.disconnect();
   }, [videoUrl]);
 
   useEffect(() => {
@@ -1534,10 +1583,15 @@ export function VideoEditorModal({
         )}
 
         {videoUrl && (
-          <div style={{ position: "relative", width: "100%" }}>
+          <div
+            ref={previewContainerRef}
+            data-testid="video-editor-preview"
+            style={{ position: "relative", width: "100%", marginBottom: 16 }}
+          >
             <video
               ref={videoRef}
               controls
+              onLoadedMetadata={updateVisibleVideoFrame}
               onTimeUpdate={(e) => {
                 const sourceTime = e.currentTarget.currentTime;
                 const activeClip = clips.find(
@@ -1572,13 +1626,27 @@ export function VideoEditorModal({
               style={{
                 width: "100%",
                 maxHeight: "min(48vh, 560px)",
+                display: "block",
+                objectFit: "contain",
                 background: "#000",
                 borderRadius: 8,
-                marginBottom: 16,
               }}
             />
 
-            {coverOverlays
+            <div
+              data-testid="video-editor-overlay-frame"
+              style={{
+                position: "absolute",
+                left: videoFrameRect.left,
+                top: videoFrameRect.top,
+                width: videoFrameRect.width,
+                height: videoFrameRect.height,
+                overflow: "hidden",
+                borderRadius: 8,
+                pointerEvents: "none",
+              }}
+            >
+              {coverOverlays
               .filter(
                 (overlay) =>
                   timelinePlayheadTime >= overlay.start &&
@@ -1624,6 +1692,7 @@ export function VideoEditorModal({
                   />
                 </div>
               ))}
+            </div>
           </div>
         )}
 
