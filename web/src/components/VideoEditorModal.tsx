@@ -1495,6 +1495,17 @@ export function VideoEditorModal({
     };
   });
 
+  const visibleCoverOverlays = coverOverlays
+    .map((overlay, index) => ({ overlay, index }))
+    .filter(
+      ({ overlay }) =>
+        timelinePlayheadTime >= overlay.start &&
+        timelinePlayheadTime <= overlay.end,
+    );
+  const selectedVisibleCoverOverlay = visibleCoverOverlays.find(
+    ({ overlay }) => overlay.id === selectedCoverOverlayId,
+  )?.overlay;
+
   const hasDeletedTime =
     timelineDuration < duration - 0.001 ||
     clips.some((clip) => clip.sourceVideoId !== videoId);
@@ -1646,13 +1657,7 @@ export function VideoEditorModal({
                 pointerEvents: "none",
               }}
             >
-              {coverOverlays
-              .filter(
-                (overlay) =>
-                  timelinePlayheadTime >= overlay.start &&
-                  timelinePlayheadTime <= overlay.end,
-              )
-              .map((overlay) => (
+              {visibleCoverOverlays.map(({ overlay }) => (
                 <div
                   key={overlay.id}
                   data-testid={`video-editor-cover-overlay-${overlay.id}`}
@@ -1672,9 +1677,32 @@ export function VideoEditorModal({
                     touchAction: "none",
                   }}
                 >
+                </div>
+              ))}
+              {selectedVisibleCoverOverlay && (
+                <div
+                  data-testid={`video-editor-cover-interaction-${selectedVisibleCoverOverlay.id}`}
+                  onPointerDown={(e) =>
+                    handleCoverOverlayPointerDown(e, selectedVisibleCoverOverlay.id)
+                  }
+                  style={{
+                    position: "absolute",
+                    left: `${selectedVisibleCoverOverlay.x}%`,
+                    top: `${selectedVisibleCoverOverlay.y}%`,
+                    width: `${selectedVisibleCoverOverlay.width}%`,
+                    height: `${selectedVisibleCoverOverlay.height}%`,
+                    zIndex: 4,
+                    border: "1px solid #FC2667",
+                    boxSizing: "border-box",
+                    pointerEvents: "auto",
+                    cursor: "move",
+                    touchAction: "none",
+                  }}
+                >
                   <div
+                    data-testid={`video-editor-cover-resize-${selectedVisibleCoverOverlay.id}`}
                     onPointerDown={(e) =>
-                      handleCoverOverlayResizePointerDown(e, overlay.id)
+                      handleCoverOverlayResizePointerDown(e, selectedVisibleCoverOverlay.id)
                     }
                     style={{
                       position: "absolute",
@@ -1691,7 +1719,63 @@ export function VideoEditorModal({
                     }}
                   />
                 </div>
-              ))}
+              )}
+              <div
+                data-testid="video-editor-cover-badge-layer"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  zIndex: 5,
+                  pointerEvents: "none",
+                }}
+              >
+                {visibleCoverOverlays.map(({ overlay, index }, badgeIndex) => {
+                  const collisionIndex = visibleCoverOverlays
+                    .slice(0, badgeIndex)
+                    .filter(
+                      ({ overlay: previous }) =>
+                        previous.x === overlay.x && previous.y === overlay.y,
+                    ).length;
+                  const horizontalOffset = collisionIndex * 20 * (overlay.x > 50 ? -1 : 1);
+                  const translateX = overlay.x > 80 ? "-100%" : "0";
+                  const translateY = overlay.y > 80 ? "-100%" : "0";
+
+                  return (
+                    <span
+                      key={overlay.id}
+                      data-testid={`video-editor-cover-badge-${overlay.id}`}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedCoverOverlayId(overlay.id);
+                      }}
+                      style={{
+                        position: "absolute",
+                        top: `${overlay.y}%`,
+                        left: `${overlay.x}%`,
+                        transform: `translate(${translateX}, ${translateY}) translateX(${horizontalOffset}px)`,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 18,
+                        height: 18,
+                        boxSizing: "border-box",
+                        overflow: "hidden",
+                        borderRadius: 5,
+                        background: "#FC2667",
+                        color: "#FFFFFF",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        lineHeight: 1,
+                        pointerEvents: "auto",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {index + 1}
+                    </span>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
