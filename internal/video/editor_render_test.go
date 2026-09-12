@@ -303,6 +303,33 @@ func TestGetEditorStateReturnsStoredTimeline(t *testing.T) {
 	}
 }
 
+func TestSaveEditorTimelinePersistsOverlaysWithoutStartingRender(t *testing.T) {
+	mock, err := pgxmock.NewPool()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mock.Close()
+	handler := NewHandler(mock, &mockStorage{}, testBaseURL, 0, 0, 0, 0, testJWTSecret, true)
+
+	mock.ExpectExec(`UPDATE videos SET edit_timeline = \$1, updated_at = now\(\)`).
+		WithArgs(pgxmock.AnyArg(), "video-main", testUserID).
+		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+	body := `{"version":1,"clips":[{"id":"a","sourceId":"video-main","sourceStart":0,"sourceEnd":20}],` +
+		`"overlays":[{"id":"cover-1","x":10,"y":20,"width":30,"height":40,"start":2,"end":8}]}`
+	router := chi.NewRouter()
+	router.With(newAuthMiddleware()).Put("/api/videos/{id}/editor", handler.SaveEditorTimeline)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, authenticatedRequest(t, http.MethodPut, "/api/videos/video-main/editor", []byte(body)))
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRenderTimelineFailureOnlyMarksEditFailed(t *testing.T) {
 	mock, err := pgxmock.NewPool()
 	if err != nil {

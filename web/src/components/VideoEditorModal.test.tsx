@@ -16,13 +16,22 @@ let libraryVideos: unknown[];
 let editorState: typeof emptyEditorState | {
   timeline: {
     version: number;
-    clips: Array<{
-      id: string;
-      sourceId: string;
-      sourceStart: number;
-      sourceEnd: number;
-      duration: number;
-    }>;
+      clips: Array<{
+        id: string;
+        sourceId: string;
+        sourceStart: number;
+        sourceEnd: number;
+        duration: number;
+      }>;
+      overlays?: Array<{
+        id: string;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        start: number;
+        end: number;
+      }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
   renderError: string | null;
@@ -45,6 +54,7 @@ describe("VideoEditorModal multi-source preview", () => {
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     mockApiFetch.mockImplementation((path: string, options?: RequestInit) => {
       if (path === "/api/videos/original/editor" && !options) return Promise.resolve(editorState);
+      if (path === "/api/videos/original/editor" && options?.method === "PUT") return Promise.resolve(undefined);
       if (path === "/api/videos/original/editor/render") return Promise.resolve(undefined);
       if (path === "/api/videos") return Promise.resolve(libraryVideos);
       if (path === "/api/videos/original/download") {
@@ -213,6 +223,377 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(await screen.findByTestId("video-editor-clip-clip-7")).toBeInTheDocument();
     expect(screen.getByTestId("video-editor-clip-clip-8")).toBeInTheDocument();
     expect(screen.getByText("0:13")).toBeInTheDocument();
+  });
+
+  it("restores all persisted cover overlays and keeps deletion working", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          { id: "cover-saved-1", x: 5, y: 10, width: 25, height: 20, start: 0, end: 15 },
+          { id: "cover-saved-2", x: 45, y: 30, width: 35, height: 40, start: 0, end: 30 },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+
+    const firstOverlay = await screen.findByTestId("video-editor-cover-overlay-cover-saved-1");
+    const secondOverlay = screen.getByTestId("video-editor-cover-overlay-cover-saved-2");
+    expect(firstOverlay).toHaveStyle({ left: "5%", top: "10%", width: "25%", height: "20%" });
+    expect(secondOverlay).toHaveStyle({ left: "45%", top: "30%", width: "35%", height: "40%" });
+
+    expect(screen.getByText("Abdeckung 1")).toHaveStyle({ left: "0%", width: "12.5%" });
+    expect(screen.getByText("Abdeckung 2")).toHaveStyle({ left: "0%", width: "25%" });
+
+    fireEvent.click(screen.getByText("Abdeckung 2"));
+    await user.click(screen.getByRole("button", { name: "Löschen" }));
+
+    expect(screen.getByTestId("video-editor-cover-overlay-cover-saved-1")).toBeInTheDocument();
+    expect(screen.queryByTestId("video-editor-cover-overlay-cover-saved-2")).not.toBeInTheDocument();
+  });
+
+  it("renders identical cover overlays in stable separate selectable rows", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          { id: "cover-first", x: 5, y: 5, width: 20, height: 20, start: 10, end: 30 },
+          { id: "cover-second", x: 50, y: 50, width: 20, height: 20, start: 10, end: 30 },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+
+    const track = await screen.findByTestId("video-editor-overlay-track");
+    expect(Array.from(track.children).map((row) => row.getAttribute("data-testid"))).toEqual([
+      "video-editor-overlay-row-cover-first",
+      "video-editor-overlay-row-cover-second",
+    ]);
+    expect(screen.getByText("Abdeckung 1")).toHaveStyle({
+      left: "8.333333333333332%",
+      width: "16.666666666666664%",
+    });
+    expect(screen.getByText("Abdeckung 2")).toHaveStyle({
+      left: "8.333333333333332%",
+      width: "16.666666666666664%",
+    });
+
+    fireEvent.click(screen.getByText("Abdeckung 2"));
+    await user.click(screen.getByRole("button", { name: "Löschen" }));
+
+    expect(screen.getByTestId("video-editor-overlay-row-cover-first")).toBeInTheDocument();
+    expect(screen.queryByTestId("video-editor-overlay-row-cover-second")).not.toBeInTheDocument();
+  });
+
+  it("shows up to four cover overlay rows without vertical scrolling", async () => {
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: Array.from({ length: 4 }, (_, index) => ({
+          id: `cover-${index + 1}`,
+          x: 10,
+          y: 10,
+          width: 20,
+          height: 20,
+          start: index * 5,
+          end: index * 5 + 10,
+        })),
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+
+    const overlayScroll = await screen.findByTestId("video-editor-overlay-scroll");
+    expect(overlayScroll).toHaveStyle({ maxHeight: "164px", overflowY: "visible" });
+    expect(screen.getAllByTestId(/video-editor-overlay-row-/)).toHaveLength(4);
+  });
+
+  it("scrolls only the cover overlay rows from the fifth overlay onward", async () => {
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: Array.from({ length: 5 }, (_, index) => ({
+          id: `cover-${index + 1}`,
+          x: 10,
+          y: 10,
+          width: 20,
+          height: 20,
+          start: index * 5,
+          end: index * 5 + 10,
+        })),
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+
+    const overlayScroll = await screen.findByTestId("video-editor-overlay-scroll");
+    const clipTrack = screen.getByTestId("video-editor-timeline");
+    expect(overlayScroll).toHaveStyle({ maxHeight: "164px", overflowY: "auto" });
+    expect(screen.getAllByTestId(/video-editor-overlay-row-/)).toHaveLength(5);
+    expect(overlayScroll).not.toContainElement(clipTrack);
+    expect(overlayScroll.nextElementSibling).toBe(clipTrack);
+  });
+
+  it("autosaves added, changed, copied and deleted cover overlays", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+      await vi.waitFor(() => {
+        expect(mockApiFetch).toHaveBeenCalledWith("/api/videos/original/editor");
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "+ Abdeckung" }));
+      await vi.advanceTimersByTimeAsync(400);
+
+      const addedSave = mockApiFetch.mock.calls.filter(
+        ([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT",
+      ).at(-1);
+      expect(addedSave).toBeDefined();
+      const addedPayload = JSON.parse((addedSave?.[1] as RequestInit).body as string);
+      expect(addedPayload.overlays).toHaveLength(1);
+      expect(addedPayload.overlays[0]).toMatchObject({
+        x: 30, y: 30, width: 40, height: 20, start: 0, end: 5,
+      });
+
+      const overlay = screen.getByTestId(`video-editor-cover-overlay-${addedPayload.overlays[0].id}`);
+      const preview = overlay.parentElement!;
+      vi.spyOn(preview, "getBoundingClientRect").mockReturnValue({
+        x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 500,
+        width: 1000, height: 500, toJSON: () => ({}),
+      });
+      fireEvent.pointerDown(overlay, { clientX: 300, clientY: 150 });
+      fireEvent.pointerMove(document, { clientX: 400, clientY: 250 });
+      fireEvent.pointerUp(document);
+      await vi.advanceTimersByTimeAsync(400);
+
+      const movedSave = mockApiFetch.mock.calls.filter(
+        ([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT",
+      ).at(-1);
+      const movedPayload = JSON.parse((movedSave?.[1] as RequestInit).body as string);
+      expect(movedPayload.overlays[0]).toMatchObject({ x: 40, y: 50 });
+
+      const resizeHandle = overlay.firstElementChild as HTMLElement;
+      fireEvent.pointerDown(resizeHandle, { clientX: 400, clientY: 250 });
+      fireEvent.pointerMove(document, { clientX: 500, clientY: 350 });
+      fireEvent.pointerUp(document);
+
+      const overlayTrack = screen.getByTestId(
+        `video-editor-overlay-row-${addedPayload.overlays[0].id}`,
+      );
+      vi.spyOn(overlayTrack, "getBoundingClientRect").mockReturnValue({
+        x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 38,
+        width: 1000, height: 38, toJSON: () => ({}),
+      });
+      fireEvent.pointerDown(screen.getByTitle("Start der Abdeckung ziehen"), { clientX: 0 });
+      fireEvent.pointerMove(document, { clientX: 20 });
+      fireEvent.pointerUp(document);
+      fireEvent.pointerDown(screen.getByTitle("Ende der Abdeckung ziehen"), { clientX: 40 });
+      fireEvent.pointerMove(document, { clientX: 500 });
+      fireEvent.pointerUp(document);
+      await vi.advanceTimersByTimeAsync(400);
+
+      const resizedSave = mockApiFetch.mock.calls.filter(
+        ([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT",
+      ).at(-1);
+      const resizedPayload = JSON.parse((resizedSave?.[1] as RequestInit).body as string);
+      expect(resizedPayload.overlays[0]).toMatchObject({
+        width: 50, height: 40, start: 2.4, end: 60,
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Kopieren" }));
+      fireEvent.click(screen.getByRole("button", { name: "Einfügen" }));
+      await vi.advanceTimersByTimeAsync(400);
+      const copiedSave = mockApiFetch.mock.calls.filter(
+        ([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT",
+      ).at(-1);
+      expect(JSON.parse((copiedSave?.[1] as RequestInit).body as string).overlays).toHaveLength(2);
+
+      fireEvent.click(screen.getByRole("button", { name: "Löschen" }));
+      await vi.advanceTimersByTimeAsync(400);
+      const deletedSave = mockApiFetch.mock.calls.filter(
+        ([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT",
+      ).at(-1);
+      expect(JSON.parse((deletedSave?.[1] as RequestInit).body as string).overlays).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("undoes creating a cover overlay", async () => {
+    const user = userEvent.setup();
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+
+    await screen.findByTestId("video-editor-timeline");
+    await user.click(screen.getByRole("button", { name: "+ Abdeckung" }));
+    expect(screen.getByText("Abdeckung 1")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.queryByText("Abdeckung 1")).not.toBeInTheDocument();
+  });
+
+  it("undoes copying and deleting among multiple cover overlays", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          { id: "cover-a", x: 10, y: 10, width: 20, height: 20, start: 0, end: 20 },
+          { id: "cover-b", x: 50, y: 50, width: 30, height: 30, start: 30, end: 50 },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByText("Abdeckung 1"));
+    await user.click(screen.getByRole("button", { name: "Kopieren" }));
+    await user.click(screen.getByRole("button", { name: "Einfügen" }));
+    expect(screen.getAllByText(/Abdeckung \d/)).toHaveLength(3);
+
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getAllByText(/Abdeckung \d/)).toHaveLength(2);
+
+    fireEvent.click(screen.getByText("Abdeckung 2"));
+    await user.click(screen.getByRole("button", { name: "Löschen" }));
+    expect(screen.getAllByText(/Abdeckung \d/)).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getAllByText(/Abdeckung \d/)).toHaveLength(2);
+    expect(screen.getByTestId("video-editor-cover-overlay-cover-a")).toBeInTheDocument();
+  });
+
+  it("undoes overlay position, size, start and end changes independently", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          { id: "cover-a", x: 10, y: 10, width: 20, height: 20, start: 0, end: 20 },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+
+    const overlay = await screen.findByTestId("video-editor-cover-overlay-cover-a");
+    const preview = overlay.parentElement!;
+    vi.spyOn(preview, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 500,
+      width: 1000, height: 500, toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(overlay, { clientX: 100, clientY: 50 });
+    fireEvent.pointerMove(document, { clientX: 200, clientY: 100 });
+    fireEvent.pointerUp(document);
+    expect(overlay).toHaveStyle({ left: "20%", top: "20%" });
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(overlay).toHaveStyle({ left: "10%", top: "10%" });
+
+    const resizeHandle = overlay.firstElementChild as HTMLElement;
+    fireEvent.pointerDown(resizeHandle, { clientX: 300, clientY: 150 });
+    fireEvent.pointerMove(document, { clientX: 400, clientY: 250 });
+    fireEvent.pointerUp(document);
+    expect(overlay).toHaveStyle({ width: "30%", height: "40%" });
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(overlay).toHaveStyle({ width: "20%", height: "20%" });
+
+    const track = screen.getByTestId("video-editor-overlay-row-cover-a");
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 1200, bottom: 38,
+      width: 1200, height: 38, toJSON: () => ({}),
+    });
+    const timelineOverlay = screen.getByText("Abdeckung 1");
+
+    fireEvent.pointerDown(timelineOverlay, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 100 });
+    fireEvent.pointerUp(document);
+    expect(timelineOverlay).toHaveStyle({ left: "8.333333333333332%" });
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(timelineOverlay).toHaveStyle({ left: "0%", width: "16.666666666666664%" });
+
+    fireEvent.pointerDown(screen.getByTitle("Start der Abdeckung ziehen"), { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 50 });
+    fireEvent.pointerUp(document);
+    expect(timelineOverlay).toHaveStyle({ left: "4.166666666666666%" });
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(timelineOverlay).toHaveStyle({ left: "0%" });
+
+    fireEvent.pointerDown(screen.getByTitle("Ende der Abdeckung ziehen"), { clientX: 200 });
+    fireEvent.pointerMove(document, { clientX: 300 });
+    fireEvent.pointerUp(document);
+    expect(timelineOverlay).toHaveStyle({ width: "25%" });
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(timelineOverlay).toHaveStyle({ width: "16.666666666666664%" });
+  });
+
+  it("keeps overlays intact when undoing an existing clip action", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          { id: "cover-a", x: 10, y: 10, width: 20, height: 20, start: 0, end: 20 },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+    libraryVideos = [
+      { id: "inserted", title: "Inserted source", status: "ready", duration: 30 },
+    ];
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+
+    await screen.findByTestId("video-editor-cover-overlay-cover-a");
+    await user.click(screen.getByRole("button", { name: /Video einfügen/ }));
+    await user.click(await screen.findByRole("button", { name: /Inserted source/ }));
+    await user.click(screen.getByRole("button", { name: "Hier einfügen" }));
+    expect(screen.getByText("Eingefügt: Inserted source")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.queryByText("Eingefügt: Inserted source")).not.toBeInTheDocument();
+    expect(screen.getByTestId("video-editor-cover-overlay-cover-a")).toBeInTheDocument();
   });
 
   it("sends the complete ordered timeline when rendering starts", async () => {

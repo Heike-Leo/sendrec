@@ -21,6 +21,11 @@ interface EditorCoverOverlay {
   end: number;
 }
 
+interface EditorHistoryEntry {
+  clips: EditorClip[];
+  coverOverlays: EditorCoverOverlay[];
+}
+
 interface StoredEditorState {
   timeline: {
     version: number;
@@ -31,6 +36,7 @@ interface StoredEditorState {
       sourceEnd: number;
       duration: number;
     }>;
+    overlays?: EditorCoverOverlay[];
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
   renderError: string | null;
@@ -46,6 +52,24 @@ interface VideoEditorModalProps {
 
 const TIMELINE_ZOOM_LEVELS = [1, 2, 5, 10] as const;
 const TIMELINE_TICK_STEPS = [0.1, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+const OVERLAY_SAVE_DEBOUNCE_MS = 400;
+const VISIBLE_OVERLAY_TRACKS = 4;
+const OVERLAY_TRACK_HEIGHT = 38;
+const OVERLAY_TRACK_GAP = 4;
+
+function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[]) {
+  return JSON.stringify({
+    version: 1,
+    clips: clips.map((clip) => ({
+      id: clip.id,
+      sourceId: clip.sourceVideoId,
+      sourceStart: clip.start,
+      sourceEnd: clip.end,
+      duration: clip.end - clip.start,
+    })),
+    overlays,
+  });
+}
 
 export function VideoEditorModal({
   videoId,
@@ -68,7 +92,7 @@ export function VideoEditorModal({
   const [renderStatus, setRenderStatus] = useState<StoredEditorState["renderStatus"]>("none");
   const [renderedVideoId, setRenderedVideoId] = useState<string | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
-  const [clipHistory, setClipHistory] = useState<EditorClip[][]>([]);
+  const [editorHistory, setEditorHistory] = useState<EditorHistoryEntry[]>([]);
   const [coverOverlays, setCoverOverlays] = useState<EditorCoverOverlay[]>([]);
   const [selectedCoverOverlayId, setSelectedCoverOverlayId] = useState<string | null>(null);
   const [copiedCoverOverlay, setCopiedCoverOverlay] = useState<EditorCoverOverlay | null>(null);
@@ -93,6 +117,11 @@ export function VideoEditorModal({
   const sourceTransitionPendingRef = useRef(false);
   const cancelPendingSourceLoadRef = useRef<(() => void) | null>(null);
   const pendingRestoredPreviewRef = useRef<EditorClip | null>(null);
+  const editorStateLoadedRef = useRef(false);
+  const overlaySaveTimerRef = useRef<number | null>(null);
+  const latestTimelinePayloadRef = useRef<string | null>(null);
+  const lastSavedTimelinePayloadRef = useRef<string | null>(null);
+  const timelineSavePendingRef = useRef(false);
 
   async function loadVideoUrl(sourceVideoId: string) {
     if (videoUrlsRef.current[sourceVideoId]) {
@@ -231,6 +260,14 @@ export function VideoEditorModal({
   }, [videoUrl]);
 
   useEffect(() => {
+    editorStateLoadedRef.current = false;
+    latestTimelinePayloadRef.current = null;
+    lastSavedTimelinePayloadRef.current = null;
+    timelineSavePendingRef.current = false;
+    if (overlaySaveTimerRef.current !== null) {
+      window.clearTimeout(overlaySaveTimerRef.current);
+      overlaySaveTimerRef.current = null;
+    }
     setTrimEnd(duration);
     setClips([
       {
@@ -242,7 +279,9 @@ export function VideoEditorModal({
     ]);
     nextClipIdRef.current = 2;
     setSelectedClipId(null);
-    setClipHistory([]);
+    setEditorHistory([]);
+    setCoverOverlays([]);
+    setSelectedCoverOverlayId(null);
     setTimelinePlayheadTime(0);
     activeSourceVideoIdRef.current = videoId;
     activeClipIdRef.current = "clip-1";
@@ -265,14 +304,24 @@ export function VideoEditorModal({
           setError(state.renderError);
         }
 
+        let restoredClips: EditorClip[] = [{
+          id: "clip-1",
+          sourceVideoId: videoId,
+          start: 0,
+          end: duration,
+        }];
+        let restoredOverlays: EditorCoverOverlay[] = [];
         if (state.timeline?.version === 1 && state.timeline.clips.length > 0) {
-          const restoredClips = state.timeline.clips.map((clip) => ({
+          restoredClips = state.timeline.clips.map((clip) => ({
             id: clip.id,
             sourceVideoId: clip.sourceId,
             start: clip.sourceStart,
             end: clip.sourceEnd,
           }));
           setClips(restoredClips);
+          restoredOverlays = state.timeline.overlays ?? [];
+          setCoverOverlays(restoredOverlays);
+          setSelectedCoverOverlayId(null);
           activeClipIdRef.current = restoredClips[0].id;
           activeSourceVideoIdRef.current = restoredClips[0].sourceVideoId;
           const maxClipNumber = restoredClips.reduce((max, clip) => {
@@ -293,6 +342,10 @@ export function VideoEditorModal({
             pendingRestoredPreviewRef.current = restoredClips[0];
           }
         }
+        const restoredPayload = serializeTimeline(restoredClips, restoredOverlays);
+        latestTimelinePayloadRef.current = restoredPayload;
+        lastSavedTimelinePayloadRef.current = restoredPayload;
+        editorStateLoadedRef.current = true;
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Editorstand konnte nicht geladen werden.");
@@ -346,6 +399,45 @@ export function VideoEditorModal({
     (sum, clip) => sum + Math.max(0, clip.end - clip.start),
     0,
   );
+
+  useEffect(() => {
+    const payload = serializeTimeline(clips, coverOverlays);
+    latestTimelinePayloadRef.current = payload;
+
+    if (!editorStateLoadedRef.current) return;
+    if (payload === lastSavedTimelinePayloadRef.current) return;
+
+    timelineSavePendingRef.current = true;
+    if (overlaySaveTimerRef.current !== null) {
+      window.clearTimeout(overlaySaveTimerRef.current);
+    }
+    overlaySaveTimerRef.current = window.setTimeout(() => {
+      overlaySaveTimerRef.current = null;
+      void apiFetch(`/api/videos/${videoId}/editor`, {
+        method: "PUT",
+        body: payload,
+      }).then(() => {
+        lastSavedTimelinePayloadRef.current = payload;
+        timelineSavePendingRef.current = latestTimelinePayloadRef.current !== payload;
+      }).catch((err) => {
+        setError(err instanceof Error ? err.message : "Editorstand konnte nicht gespeichert werden.");
+      });
+    }, OVERLAY_SAVE_DEBOUNCE_MS);
+  }, [clips, coverOverlays, videoId]);
+
+  useEffect(() => () => {
+    if (overlaySaveTimerRef.current !== null) {
+      window.clearTimeout(overlaySaveTimerRef.current);
+    }
+    const payload = latestTimelinePayloadRef.current;
+    if (timelineSavePendingRef.current && payload) {
+      void apiFetch(`/api/videos/${videoId}/editor`, {
+        method: "PUT",
+        body: payload,
+        keepalive: true,
+      });
+    }
+  }, [videoId]);
 
   const selectedCoverOverlay =
     coverOverlays.find((overlay) => overlay.id === selectedCoverOverlayId) ?? null;
@@ -650,7 +742,7 @@ export function VideoEditorModal({
       end: selectedInsertVideo.duration,
     };
 
-    rememberClipState();
+    rememberEditorState();
 
     setClips((previousClips) => {
       if (!position) {
@@ -720,24 +812,30 @@ export function VideoEditorModal({
     setError(null);
   }
 
-  function rememberClipState() {
-    setClipHistory((history) => [
+  function rememberEditorState() {
+    setEditorHistory((history) => [
       ...history.slice(-49),
-      clips.map((clip) => ({ ...clip })),
+      {
+        clips: clips.map((clip) => ({ ...clip })),
+        coverOverlays: coverOverlays.map((overlay) => ({ ...overlay })),
+      },
     ]);
   }
 
   function handleUndo() {
-    if (clipHistory.length === 0) return;
+    if (editorHistory.length === 0) return;
 
-    const previousClips =
-      clipHistory[clipHistory.length - 1];
+    const previousState = editorHistory[editorHistory.length - 1];
+    const clipsChanged = serializeTimeline(previousState.clips, coverOverlays) !==
+      serializeTimeline(clips, coverOverlays);
 
-    setClips(previousClips);
-    setClipHistory((history) => history.slice(0, -1));
+    setClips(previousState.clips);
+    setCoverOverlays(previousState.coverOverlays);
+    setEditorHistory((history) => history.slice(0, -1));
     setSelectedClipId(null);
-    const firstClip = previousClips[0];
-    if (firstClip) {
+    setSelectedCoverOverlayId(null);
+    const firstClip = previousState.clips[0];
+    if (clipsChanged && firstClip) {
       setTimelinePlayheadTime(0);
       setCurrentTime(firstClip.start);
       void switchPreviewSource(
@@ -773,7 +871,7 @@ export function VideoEditorModal({
       return;
     }
 
-    rememberClipState();
+    rememberEditorState();
 
     const leftClip: EditorClip = {
       ...clip,
@@ -822,8 +920,13 @@ export function VideoEditorModal({
     const startY = overlay.y;
     const overlayWidth = overlay.width;
     const overlayHeight = overlay.height;
+    let historyCaptured = false;
 
     function onMove(ev: PointerEvent) {
+      if (!historyCaptured) {
+        rememberEditorState();
+        historyCaptured = true;
+      }
       const deltaX = ((ev.clientX - startClientX) / rect.width) * 100;
       const deltaY = ((ev.clientY - startClientY) / rect.height) * 100;
 
@@ -873,8 +976,13 @@ export function VideoEditorModal({
     const startHeight = overlay.height;
     const overlayX = overlay.x;
     const overlayY = overlay.y;
+    let historyCaptured = false;
 
     function onMove(ev: PointerEvent) {
+      if (!historyCaptured) {
+        rememberEditorState();
+        historyCaptured = true;
+      }
       const deltaX = ((ev.clientX - startClientX) / rect.width) * 100;
       const deltaY = ((ev.clientY - startClientY) / rect.height) * 100;
 
@@ -922,8 +1030,13 @@ export function VideoEditorModal({
     const startClientX = e.clientX;
     const originalStart = overlay.start;
     const overlayDuration = overlay.end - overlay.start;
+    let historyCaptured = false;
 
     function onMove(ev: PointerEvent) {
+      if (!historyCaptured) {
+        rememberEditorState();
+        historyCaptured = true;
+      }
       const deltaTime =
         ((ev.clientX - startClientX) / rect.width) * timelineDuration;
 
@@ -971,8 +1084,13 @@ export function VideoEditorModal({
     const rect = track.getBoundingClientRect();
     const minimumGap = 0.1;
     const overlayEnd = overlay.end;
+    let historyCaptured = false;
 
     function onMove(ev: PointerEvent) {
+      if (!historyCaptured) {
+        rememberEditorState();
+        historyCaptured = true;
+      }
       const x = Math.max(
         0,
         Math.min(ev.clientX - rect.left, rect.width),
@@ -1018,8 +1136,13 @@ export function VideoEditorModal({
     const rect = track.getBoundingClientRect();
     const minimumGap = 0.1;
     const overlayStart = overlay.start;
+    let historyCaptured = false;
 
     function onMove(ev: PointerEvent) {
+      if (!historyCaptured) {
+        rememberEditorState();
+        historyCaptured = true;
+      }
       const x = Math.max(
         0,
         Math.min(ev.clientX - rect.left, rect.width),
@@ -1062,6 +1185,7 @@ export function VideoEditorModal({
   function handleDeleteSelectedCoverOverlay() {
     if (!selectedCoverOverlayId) return;
 
+    rememberEditorState();
     setCoverOverlays((previous) =>
       previous.filter((overlay) => overlay.id !== selectedCoverOverlayId),
     );
@@ -1089,6 +1213,7 @@ export function VideoEditorModal({
       end,
     };
 
+    rememberEditorState();
     setCoverOverlays((previous) => [...previous, pastedOverlay]);
     setSelectedCoverOverlayId(pastedOverlay.id);
     setError(null);
@@ -1113,6 +1238,7 @@ export function VideoEditorModal({
       end,
     };
 
+    rememberEditorState();
     setCoverOverlays((previous) => [...previous, overlay]);
     setSelectedCoverOverlayId(overlay.id);
     setError(null);
@@ -1135,7 +1261,7 @@ export function VideoEditorModal({
 
     if (!selectedClip) return;
 
-    rememberClipState();
+    rememberEditorState();
 
     setClips((previousClips) =>
       previousClips.filter(
@@ -1428,6 +1554,7 @@ export function VideoEditorModal({
               .map((overlay) => (
                 <div
                   key={overlay.id}
+                  data-testid={`video-editor-cover-overlay-${overlay.id}`}
                   onPointerDown={(e) =>
                     handleCoverOverlayPointerDown(e, overlay.id)
                   }
@@ -1562,7 +1689,7 @@ export function VideoEditorModal({
           <button
             type="button"
             onClick={handleUndo}
-            disabled={clipHistory.length === 0}
+            disabled={editorHistory.length === 0}
             style={{
               border: "1px solid var(--color-border)",
               borderRadius: 8,
@@ -1571,11 +1698,11 @@ export function VideoEditorModal({
               color: "#0F172A",
               fontWeight: 600,
               cursor:
-                clipHistory.length === 0
+                editorHistory.length === 0
                   ? "default"
                   : "pointer",
               opacity:
-                clipHistory.length === 0 ? 0.45 : 1,
+                editorHistory.length === 0 ? 0.45 : 1,
             }}
           >
             ↶ Rückgängig
@@ -2015,31 +2142,49 @@ export function VideoEditorModal({
           )}
         </div>
         <div
-          data-testid="video-editor-overlay-track"
+          data-testid="video-editor-overlay-scroll"
           style={{
-            position: "relative",
-            height: 38,
             width: `${timelineZoom * 100}%`,
             minWidth: "100%",
+            maxHeight:
+              VISIBLE_OVERLAY_TRACKS * OVERLAY_TRACK_HEIGHT +
+              (VISIBLE_OVERLAY_TRACKS - 1) * OVERLAY_TRACK_GAP,
+            overflowY: coverOverlays.length > VISIBLE_OVERLAY_TRACKS ? "auto" : "visible",
             marginBottom: 4,
-            border: "1px solid var(--color-border)",
-            borderRadius: 8,
-            background: "#F8FAFC",
-            overflow: "hidden",
+          }}
+        >
+        <div
+          data-testid="video-editor-overlay-track"
+          style={{
+            width: "100%",
+            display: "flex",
+            flexDirection: "column",
+            gap: OVERLAY_TRACK_GAP,
           }}
         >
           {coverOverlays.length === 0 && (
-            <span
+            <div
               style={{
-                position: "absolute",
-                left: 10,
-                top: 9,
-                fontSize: 12,
-                color: "var(--color-text-secondary)",
+                position: "relative",
+                height: 38,
+                border: "1px solid var(--color-border)",
+                borderRadius: 8,
+                background: "#F8FAFC",
+                overflow: "hidden",
               }}
             >
-              Abdeckungen
-            </span>
+              <span
+                style={{
+                  position: "absolute",
+                  left: 10,
+                  top: 9,
+                  fontSize: 12,
+                  color: "var(--color-text-secondary)",
+                }}
+              >
+                Abdeckungen
+              </span>
+            </div>
           )}
 
           {coverOverlays.map((overlay, index) => {
@@ -2058,73 +2203,86 @@ export function VideoEditorModal({
             return (
               <div
                 key={overlay.id}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSelectedCoverOverlayId(overlay.id);
-                }}
-                onPointerDown={(e) =>
-                  handleCoverOverlayTimelineMovePointerDown(e, overlay.id)
-                }
+                data-testid={`video-editor-overlay-row-${overlay.id}`}
                 style={{
-                  position: "absolute",
-                  top: 4,
-                  bottom: 4,
-                  left: `${left}%`,
-                  width: `${width}%`,
-                  minWidth: 4,
-                  borderRadius: 5,
-                  background: selected ? "#FC2667" : "#F7C2D2",
-                  border: "1px solid #FC2667",
-                  color: selected ? "#FFFFFF" : "#0F172A",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  padding: "5px 7px",
-                  boxSizing: "border-box",
+                  position: "relative",
+                  height: 38,
+                  border: "1px solid var(--color-border)",
+                  borderRadius: 8,
+                  background: "#F8FAFC",
                   overflow: "hidden",
-                  whiteSpace: "nowrap",
-                  cursor: "pointer",
                 }}
               >
-                Abdeckung {index + 1}
-
                 <div
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedCoverOverlayId(overlay.id);
+                  }}
                   onPointerDown={(e) =>
-                    handleCoverOverlayTimelineStartPointerDown(e, overlay.id)
+                    handleCoverOverlayTimelineMovePointerDown(e, overlay.id)
                   }
                   style={{
                     position: "absolute",
-                    top: 0,
-                    left: 0,
-                    bottom: 0,
-                    width: 12,
-                    borderRight: "2px solid #FFFFFF",
-                    background: "rgba(255,255,255,0.22)",
-                    cursor: "ew-resize",
-                    touchAction: "none",
+                    top: 4,
+                    bottom: 4,
+                    left: `${left}%`,
+                    width: `${width}%`,
+                    minWidth: 4,
+                    borderRadius: 5,
+                    background: selected ? "#FC2667" : "#F7C2D2",
+                    border: "1px solid #FC2667",
+                    color: selected ? "#FFFFFF" : "#0F172A",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    padding: "5px 7px",
+                    boxSizing: "border-box",
+                    overflow: "hidden",
+                    whiteSpace: "nowrap",
+                    cursor: "pointer",
                   }}
-                  title="Start der Abdeckung ziehen"
-                />
+                >
+                  Abdeckung {index + 1}
 
-                <div
-                  onPointerDown={(e) =>
-                    handleCoverOverlayTimelineEndPointerDown(e, overlay.id)
-                  }
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    right: 0,
-                    bottom: 0,
-                    width: 12,
-                    borderLeft: "2px solid #FFFFFF",
-                    background: "rgba(255,255,255,0.22)",
-                    cursor: "ew-resize",
-                    touchAction: "none",
-                  }}
-                  title="Ende der Abdeckung ziehen"
-                />
+                  <div
+                    onPointerDown={(e) =>
+                      handleCoverOverlayTimelineStartPointerDown(e, overlay.id)
+                    }
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      bottom: 0,
+                      width: 12,
+                      borderRight: "2px solid #FFFFFF",
+                      background: "rgba(255,255,255,0.22)",
+                      cursor: "ew-resize",
+                      touchAction: "none",
+                    }}
+                    title="Start der Abdeckung ziehen"
+                  />
+
+                  <div
+                    onPointerDown={(e) =>
+                      handleCoverOverlayTimelineEndPointerDown(e, overlay.id)
+                    }
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      right: 0,
+                      bottom: 0,
+                      width: 12,
+                      borderLeft: "2px solid #FFFFFF",
+                      background: "rgba(255,255,255,0.22)",
+                      cursor: "ew-resize",
+                      touchAction: "none",
+                    }}
+                    title="Ende der Abdeckung ziehen"
+                  />
+                </div>
               </div>
             );
           })}
+        </div>
         </div>
 
           <div

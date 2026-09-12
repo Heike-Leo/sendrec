@@ -172,6 +172,37 @@ func (h *Handler) GetEditorState(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) SaveEditorTimeline(w http.ResponseWriter, r *http.Request) {
+	videoID := chi.URLParam(r, "id")
+	var timeline editTimeline
+	if err := json.NewDecoder(r.Body).Decode(&timeline); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := validateEditTimeline(&timeline); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	raw, err := json.Marshal(timeline)
+	if err != nil {
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to save timeline")
+		return
+	}
+	where, args := orgVideoFilter(r.Context(), videoID, []any{json.RawMessage(raw)}, "AND status != 'deleted'")
+	tag, err := h.db.Exec(r.Context(), `UPDATE videos SET edit_timeline = $1, updated_at = now() WHERE `+where, args...)
+	if err != nil {
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to save timeline")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		httputil.WriteError(w, http.StatusNotFound, "video not found")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) RenderEditorTimeline(w http.ResponseWriter, r *http.Request) {
 	videoID := chi.URLParam(r, "id")
 	var timeline editTimeline

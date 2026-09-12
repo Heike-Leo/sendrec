@@ -428,6 +428,7 @@ func (s *Server) routes() {
 					r.Put("/{id}/folder", s.videoHandler.SetVideoFolder)
 					r.Put("/{id}/tags", s.videoHandler.SetVideoTags)
 					r.Post("/{id}/remove-segments", s.videoHandler.RemoveSegments)
+					r.Put("/{id}/editor", s.videoHandler.SaveEditorTimeline)
 					r.Post("/{id}/editor/render", s.videoHandler.RenderEditorTimeline)
 					r.Post("/{id}/detect-silence", s.videoHandler.DetectSilence)
 					r.Put("/{id}/dismiss-title", s.videoHandler.DismissTitle)
