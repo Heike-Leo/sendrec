@@ -34,6 +34,7 @@ let editorState: typeof emptyEditorState | {
         mode?: "cover" | "blur";
         color?: string;
         opacity?: number;
+        text?: string;
       }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
@@ -411,6 +412,78 @@ describe("VideoEditorModal multi-source preview", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "cover");
     expect(screen.getByLabelText("Cover-Farbe")).toHaveValue("#123456");
     expect(overlay).toHaveStyle({ background: "#123456" });
+  });
+
+  it("edits cover text as one undo step and hides it only in blur mode", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      renderStatus: "none", renderError: null, renderedVideoId: null,
+      timeline: {
+        version: 1,
+        clips: [{ id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 }],
+        overlays: [{ id: "text-cover", x: 10, y: 10, width: 20, height: 20, start: 0, end: 20, color: "#ff0000", opacity: 0.4 }],
+      },
+    };
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await user.click(await screen.findByTestId("video-editor-cover-badge-text-cover"));
+    expect(screen.queryByTestId("video-editor-cover-text-text-cover")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Cover-Text")).toHaveAttribute("maxlength", "120");
+    await user.type(screen.getByLabelText("Cover-Text"), "Hier klicken");
+    const text = screen.getByTestId("video-editor-cover-text-text-cover");
+    expect(text).toHaveTextContent("Hier klicken");
+    expect(text).toHaveStyle({ opacity: "1", pointerEvents: "none", overflow: "hidden", left: "10%", width: "20%" });
+    expect(screen.getByTestId("video-editor-cover-overlay-text-cover")).toHaveStyle({ opacity: "0.4" });
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.queryByTestId("video-editor-cover-text-text-cover")).not.toBeInTheDocument();
+    await user.click(screen.getByTestId("video-editor-cover-badge-text-cover"));
+    await user.type(screen.getByLabelText("Cover-Text"), "Nur intern");
+    await user.selectOptions(screen.getByLabelText("Abdeckungstyp"), "blur");
+    expect(screen.queryByLabelText("Cover-Text")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("video-editor-cover-text-text-cover")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Abdeckungstyp"), "cover");
+    expect(screen.getByLabelText("Cover-Text")).toHaveValue("Nur intern");
+    expect(screen.getByTestId("video-editor-cover-text-text-cover")).toHaveTextContent("Nur intern");
+  });
+
+  it("saves edited text, copies it after deselection and restores both independent covers", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      renderStatus: "none", renderError: null, renderedVideoId: null,
+      timeline: {
+        version: 1,
+        clips: [{ id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 }],
+        overlays: [{ id: "text-cover", x: 10, y: 10, width: 20, height: 20, start: 0, end: 20, color: "#ff0000", opacity: 0.4 }],
+      },
+    };
+    const first = render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await user.click(await screen.findByTestId("video-editor-cover-badge-text-cover"));
+    await user.type(screen.getByLabelText("Cover-Text"), "Schritt 2");
+    await user.click(screen.getByRole("button", { name: "Abdeckung kopieren" }));
+    await user.click(screen.getByTestId("video-editor-overlay-scroll"));
+    await user.click(screen.getByRole("button", { name: "Abdeckung einfügen" }));
+    await waitFor(() => {
+      const saves = mockApiFetch.mock.calls.filter(([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT");
+      const saved = JSON.parse(saves.at(-1)?.[1].body ?? "{}");
+      expect(saved.overlays).toHaveLength(2);
+    });
+    const saved = JSON.parse(mockApiFetch.mock.calls.filter(([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT").at(-1)![1].body);
+    expect(saved.overlays[0].id).not.toBe(saved.overlays[1].id);
+    for (const overlay of saved.overlays) expect(overlay).toMatchObject({ text: "Schritt 2", color: "#ff0000", opacity: 0.4, mode: "cover" });
+    first.unmount();
+    editorState = { ...emptyEditorState, timeline: saved };
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getAllByTestId(/video-editor-cover-text-/)).toHaveLength(2));
+    await user.click(screen.getByTestId("video-editor-cover-badge-text-cover"));
+    const frame = screen.getByTestId("video-editor-overlay-frame");
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 500, width: 1000, height: 500, toJSON: () => ({}) });
+    fireEvent.pointerDown(screen.getByTestId("video-editor-cover-interaction-text-cover"), { clientX: 100, clientY: 50 });
+    fireEvent.pointerMove(document, { clientX: 200, clientY: 100 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByTestId("video-editor-cover-text-text-cover")).toHaveStyle({ left: "20%", top: "20%" });
+    fireEvent.pointerDown(screen.getByTestId("video-editor-cover-resize-text-cover"), { clientX: 400, clientY: 200 });
+    fireEvent.pointerMove(document, { clientX: 500, clientY: 250 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByTestId("video-editor-cover-text-text-cover")).toHaveStyle({ width: "30%", height: "30%" });
   });
 
   it("defaults legacy covers to full opacity and preserves opacity across blur and undo", async () => {
@@ -917,6 +990,46 @@ describe("VideoEditorModal multi-source preview", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("reserves badge and resize space for text and hides text when the cover becomes too small", async () => {
+    editorState = {
+      renderStatus: "none", renderError: null, renderedVideoId: null,
+      timeline: {
+        version: 1,
+        clips: [{ id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 }],
+        overlays: [
+          { id: "large", x: 0, y: 0, width: 40, height: 30, start: 0, end: 20, text: "Hallo" },
+          { id: "small", x: 50, y: 50, width: 6, height: 6, start: 0, end: 20, text: "Hallo langer Text" },
+          { id: "tiny", x: 70, y: 70, width: 3, height: 3, start: 0, end: 20, text: "Hallo" },
+        ],
+      },
+    };
+    const { container } = render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-cover-text-large");
+    const video = container.querySelector("video")!;
+    const rect = { x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 500, width: 1000, height: 500, toJSON: () => ({}) };
+    vi.spyOn(video, "getBoundingClientRect").mockReturnValue(rect);
+    vi.spyOn(screen.getByTestId("video-editor-preview"), "getBoundingClientRect").mockReturnValue(rect);
+    fireEvent.loadedMetadata(video);
+    for (const id of ["large", "small"]) {
+      const content = screen.getByTestId(`video-editor-text-content-${id}`);
+      expect(content).toHaveStyle({ left: "22px", right: "12px", top: "4px", bottom: "4px", visibility: "visible", overflow: "hidden" });
+      expect(content.firstChild).toHaveStyle({ textOverflow: "ellipsis", whiteSpace: "nowrap" });
+      expect(screen.getByTestId(`video-editor-cover-text-${id}`)).toHaveStyle({ pointerEvents: "none", opacity: "1" });
+    }
+    expect(screen.getByTestId("video-editor-text-content-tiny")).toHaveStyle({ visibility: "hidden" });
+    fireEvent.click(screen.getByTestId("video-editor-cover-badge-small"));
+    const frame = screen.getByTestId("video-editor-overlay-frame");
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue(rect);
+    fireEvent.pointerDown(screen.getByTestId("video-editor-cover-interaction-small"), { clientX: 500, clientY: 250 });
+    fireEvent.pointerMove(document, { clientX: 510, clientY: 255 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByTestId("video-editor-cover-text-small")).toHaveStyle({ left: "51%", top: "51%" });
+    fireEvent.pointerDown(screen.getByTestId("video-editor-cover-resize-small"), { clientX: 570, clientY: 285 });
+    fireEvent.pointerMove(document, { clientX: 540, clientY: 270 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByTestId("video-editor-text-content-small")).toHaveStyle({ visibility: "hidden" });
   });
 
   it("keeps overlay dragging and resizing within the measured video frame", async () => {

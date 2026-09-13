@@ -38,6 +38,7 @@ type editorCoverOverlay struct {
 	Mode    string   `json:"mode,omitempty"`
 	Color   string   `json:"color,omitempty"`
 	Opacity *float64 `json:"opacity,omitempty"`
+	Text    string   `json:"text,omitempty"`
 }
 
 type editTimeline struct {

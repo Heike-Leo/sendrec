@@ -22,6 +22,7 @@ interface EditorCoverOverlay {
   mode?: "cover" | "blur";
   color?: string;
   opacity?: number;
+  text?: string;
 }
 
 interface EditorHistoryEntry {
@@ -160,6 +161,7 @@ export function VideoEditorModal({
   const latestTimelinePayloadRef = useRef<string | null>(null);
   const lastSavedTimelinePayloadRef = useRef<string | null>(null);
   const timelineSavePendingRef = useRef(false);
+  const textEditOverlayRef = useRef<string | null>(null);
 
   function updateVisibleVideoFrame() {
     const video = videoRef.current;
@@ -1313,6 +1315,18 @@ export function VideoEditorModal({
     setError(null);
   }
 
+  function handleCoverOverlayTextChange(text: string) {
+    if (!selectedCoverOverlay || (selectedCoverOverlay.mode ?? "cover") !== "cover") return;
+    if (text === (selectedCoverOverlay.text ?? "")) return;
+    if (textEditOverlayRef.current !== selectedCoverOverlay.id) {
+      rememberEditorState();
+      textEditOverlayRef.current = selectedCoverOverlay.id;
+    }
+    setCoverOverlays((previous) => previous.map((overlay) =>
+      overlay.id === selectedCoverOverlay.id ? { ...overlay, text: text.slice(0, 120) } : overlay,
+    ));
+  }
+
   function handleDeleteSelectedCoverOverlay() {
     if (!selectedCoverOverlayId) return;
 
@@ -1505,6 +1519,7 @@ export function VideoEditorModal({
             mode: overlay.mode ?? "cover",
             color: overlay.color,
             opacity: overlay.opacity,
+            text: overlay.text,
           })),
         }),
       });
@@ -1741,6 +1756,45 @@ export function VideoEditorModal({
                 >
                 </div>
               ))}
+              {visibleCoverOverlays.filter(({ overlay }) =>
+                (overlay.mode ?? "cover") === "cover" && overlay.text,
+              ).map(({ overlay }) => {
+                // Reserve the full badge group when badges at this origin are staggered.
+                const badgeCount = visibleCoverOverlays.filter(({ overlay: other }) =>
+                  other.x === overlay.x && other.y === overlay.y,
+                ).length;
+                const leftInset = 22 + (overlay.x <= 50 ? (badgeCount - 1) * 20 : 0);
+                const rightInset = 12;
+                const availableWidth = videoFrameRect.width * overlay.width / 100 - leftInset - rightInset;
+                const availableHeight = videoFrameRect.height * overlay.height / 100 - 8;
+                return (
+                <div
+                  key={`text-${overlay.id}`}
+                  data-testid={`video-editor-cover-text-${overlay.id}`}
+                  style={{
+                    position: "absolute", left: `${overlay.x}%`, top: `${overlay.y}%`,
+                    width: `${overlay.width}%`, height: `${overlay.height}%`,
+                    zIndex: 3, pointerEvents: "none", overflow: "hidden",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    boxSizing: "border-box", color: "#fff",
+                    fontSize: 16, opacity: 1,
+                  }}
+                >
+                  <div
+                    data-testid={`video-editor-text-content-${overlay.id}`}
+                    style={{
+                      position: "absolute", left: leftInset, right: rightInset, top: 4, bottom: 4,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      overflow: "hidden", visibility: availableWidth >= 16 && availableHeight >= 20 ? "visible" : "hidden",
+                    }}
+                  >
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                      {overlay.text}
+                    </span>
+                  </div>
+                </div>
+                );
+              })}
               {selectedVisibleCoverOverlay && (
                 <div
                   data-testid={`video-editor-cover-interaction-${selectedVisibleCoverOverlay.id}`}
@@ -2012,6 +2066,20 @@ export function VideoEditorModal({
                 >
                   {Math.round((selectedCoverOverlay.opacity ?? 1) * 100)} %
                 </span>
+              </label>
+              <label className="video-editor-cover-time-label">
+                Text{" "}
+                <input
+                  type="text"
+                  aria-label="Cover-Text"
+                  maxLength={120}
+                  value={selectedCoverOverlay.text ?? ""}
+                  onFocus={() => { textEditOverlayRef.current = null; }}
+                  onBlur={() => { textEditOverlayRef.current = null; }}
+                  onChange={(e) => handleCoverOverlayTextChange(e.target.value)}
+                  className="video-editor-cover-time-input"
+                  style={{ width: 160 }}
+                />
               </label>
             </>
           )}
