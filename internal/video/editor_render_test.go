@@ -93,6 +93,17 @@ func TestValidateEditTimelineNormalizesAndValidatesOverlayMode(t *testing.T) {
 	if err := validateEditTimeline(&blur); err == nil {
 		t.Fatal("invalid cover color was accepted")
 	}
+
+	opacity := 0.5
+	blur.Overlays[0].Color = ""
+	blur.Overlays[0].Opacity = &opacity
+	if err := validateEditTimeline(&blur); err != nil {
+		t.Fatalf("valid cover opacity rejected: %v", err)
+	}
+	opacity = 0
+	if err := validateEditTimeline(&blur); err == nil {
+		t.Fatal("invalid cover opacity was accepted")
+	}
 }
 
 func TestBuildTimelineRenderArgsPreservesClipOrderAndRanges(t *testing.T) {
@@ -189,6 +200,29 @@ func TestBuildTimelineRenderArgsUsesCustomCoverColor(t *testing.T) {
 	expected := "drawbox=x=iw*0.250000:y=ih*0.100000:w=iw*0.400000:h=ih*0.200000:color=0xe6467a:t=fill:enable='between(t,3.500,8.250)'"
 	if !strings.Contains(joined, expected) {
 		t.Fatalf("render args missing custom cover color; expected %q in %s", expected, joined)
+	}
+}
+
+func TestBuildTimelineRenderArgsUsesCoverOpacity(t *testing.T) {
+	clips := []editClip{{ID: "clip-1", SourceID: "original", SourceStart: 0, SourceEnd: 12, Duration: 12}}
+	sources := map[string]sourceVideo{"original": {ID: "original", HasAudio: true}}
+	opacity := 0.5
+	overlays := []editorCoverOverlay{
+		{ID: "cover", X: 25, Y: 10, Width: 40, Height: 20, Start: 3.5, End: 8.25, Mode: "cover", Color: "#e6467a", Opacity: &opacity},
+	}
+
+	joined := strings.Join(buildTimelineRenderArgs(
+		[]string{"original.mp4"}, clips, map[string]int{"original": 0}, sources, "output.mp4", overlays,
+	), " ")
+	want := []string{
+		"color=c=black@0.0:s=1920x1080:r=30:d=12.000,format=rgba",
+		"drawbox=x=iw*0.250000:y=ih*0.100000:w=iw*0.400000:h=ih*0.200000:color=0xe6467a@0.500:t=fill:replace=1",
+		"overlay=x=0:y=0:enable='between(t,3.500,8.250)'",
+	}
+	for _, expected := range want {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("render args missing cover opacity fragment %q in %s", expected, joined)
+		}
 	}
 }
 
@@ -620,5 +654,46 @@ func TestTimelineBlurRenderFFmpegIntegration(t *testing.T) {
 	}
 	if pixel[0] > 10 || pixel[1] > 10 || pixel[2] > 10 {
 		t.Fatalf("cover over blur is not black: rgb=%v", pixel[:3])
+	}
+}
+
+func TestTimelineCoverOpacityRenderFFmpegIntegration(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if out, err := exec.Command("ffmpeg", "-hide_banner", "-encoders").CombinedOutput(); err != nil || !strings.Contains(string(out), "libx264") {
+		t.Skip("ffmpeg libx264 encoder not available")
+	}
+
+	dir := t.TempDir()
+	input := filepath.Join(dir, "red.mp4")
+	fixture := exec.Command("ffmpeg", "-f", "lavfi", "-i", "color=c=red:s=320x180:d=1",
+		"-c:v", "libx264", "-pix_fmt", "yuv420p", "-y", input)
+	if output, err := fixture.CombinedOutput(); err != nil {
+		t.Fatalf("create opacity fixture: %v: %s", err, output)
+	}
+
+	output := filepath.Join(dir, "opacity.mp4")
+	opacity := 0.5
+	clips := []editClip{{ID: "clip", SourceID: "red", SourceStart: 0, SourceEnd: 1, Duration: 1}}
+	sources := map[string]sourceVideo{"red": {ID: "red", HasAudio: false}}
+	overlays := []editorCoverOverlay{
+		{ID: "cover", X: 0, Y: 0, Width: 100, Height: 100, Start: 0, End: 1, Mode: "cover", Color: "#0000ff", Opacity: &opacity},
+	}
+	cmd := exec.Command("ffmpeg", buildTimelineRenderArgs(
+		[]string{input}, clips, map[string]int{"red": 0}, sources, output, overlays,
+	)...)
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("render opacity fixture: %v: %s", err, combined)
+	}
+
+	sample := exec.Command("ffmpeg", "-v", "error", "-ss", "0.5", "-i", output,
+		"-vf", "scale=1:1", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1")
+	pixel, err := sample.Output()
+	if err != nil || len(pixel) < 3 {
+		t.Fatalf("sample opacity frame: %v (%v)", err, pixel)
+	}
+	if pixel[0] < 70 || pixel[2] < 70 || pixel[1] > 40 {
+		t.Fatalf("semi-transparent blue cover was not blended over red input: rgb=%v", pixel[:3])
 	}
 }

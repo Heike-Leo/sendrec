@@ -21,6 +21,7 @@ interface EditorCoverOverlay {
   end: number;
   mode?: "cover" | "blur";
   color?: string;
+  opacity?: number;
 }
 
 interface EditorHistoryEntry {
@@ -1296,6 +1297,22 @@ export function VideoEditorModal({
     setError(null);
   }
 
+  function handleCoverOverlayOpacityChange(opacity: number) {
+    if (!selectedCoverOverlay || (selectedCoverOverlay.mode ?? "cover") !== "cover") return;
+
+    const normalizedOpacity = Math.max(0.1, Math.min(1, opacity));
+    if (normalizedOpacity === (selectedCoverOverlay.opacity ?? 1)) return;
+
+    setCoverOverlays((previous) =>
+      previous.map((overlay) =>
+        overlay.id === selectedCoverOverlay.id
+          ? { ...overlay, opacity: normalizedOpacity }
+          : overlay,
+      ),
+    );
+    setError(null);
+  }
+
   function handleDeleteSelectedCoverOverlay() {
     if (!selectedCoverOverlayId) return;
 
@@ -1352,6 +1369,7 @@ export function VideoEditorModal({
       end,
       mode: "cover",
       color: "#000000",
+      opacity: 1,
     };
 
     rememberEditorState();
@@ -1486,6 +1504,7 @@ export function VideoEditorModal({
             end: overlay.end,
             mode: overlay.mode ?? "cover",
             color: overlay.color,
+            opacity: overlay.opacity,
           })),
         }),
       });
@@ -1709,6 +1728,9 @@ export function VideoEditorModal({
                     background: (overlay.mode ?? "cover") === "blur"
                       ? "rgba(255, 255, 255, 0.01)"
                       : (overlay.color ?? "#000000"),
+                    opacity: (overlay.mode ?? "cover") === "cover"
+                      ? (overlay.opacity ?? 1)
+                      : undefined,
                     backdropFilter: (overlay.mode ?? "cover") === "blur" ? "blur(12px)" : undefined,
                     WebkitBackdropFilter: (overlay.mode ?? "cover") === "blur" ? "blur(12px)" : undefined,
                     zIndex: 2,
@@ -1954,16 +1976,44 @@ export function VideoEditorModal({
           </label>
 
           {(selectedCoverOverlay.mode ?? "cover") === "cover" && (
-            <label className="video-editor-cover-time-label">
-              Farbe{" "}
-              <input
-                type="color"
-                aria-label="Cover-Farbe"
-                value={selectedCoverOverlay.color ?? "#000000"}
-                onChange={(e) => handleCoverOverlayColorChange(e.target.value)}
-                style={{ width: 32, height: 28, padding: 2 }}
-              />
-            </label>
+            <>
+              <label className="video-editor-cover-time-label">
+                Farbe{" "}
+                <input
+                  type="color"
+                  aria-label="Cover-Farbe"
+                  value={selectedCoverOverlay.color ?? "#000000"}
+                  onChange={(e) => handleCoverOverlayColorChange(e.target.value)}
+                  style={{ width: 32, height: 28, padding: 2 }}
+                />
+              </label>
+              <label className="video-editor-cover-time-label">
+                Deckkraft{" "}
+                <input
+                  type="range"
+                  aria-label="Cover-Deckkraft"
+                  min={10}
+                  max={100}
+                  step={1}
+                  value={Math.round((selectedCoverOverlay.opacity ?? 1) * 100)}
+                  onPointerDown={rememberEditorState}
+                  onKeyDown={(e) => {
+                    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(e.key)) {
+                      rememberEditorState();
+                    }
+                  }}
+                  onChange={(e) => handleCoverOverlayOpacityChange(Number(e.target.value) / 100)}
+                  className="video-editor-opacity-slider"
+                  style={{ width: 88 }}
+                />
+                <span
+                  className="video-editor-opacity-value"
+                  data-testid="video-editor-cover-opacity-value"
+                >
+                  {Math.round((selectedCoverOverlay.opacity ?? 1) * 100)} %
+                </span>
+              </label>
+            </>
           )}
 
           <label className="video-editor-cover-time-label">

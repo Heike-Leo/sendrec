@@ -33,6 +33,7 @@ let editorState: typeof emptyEditorState | {
         end: number;
         mode?: "cover" | "blur";
         color?: string;
+        opacity?: number;
       }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
@@ -410,6 +411,132 @@ describe("VideoEditorModal multi-source preview", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "cover");
     expect(screen.getByLabelText("Cover-Farbe")).toHaveValue("#123456");
     expect(overlay).toHaveStyle({ background: "#123456" });
+  });
+
+  it("defaults legacy covers to full opacity and preserves opacity across blur and undo", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          { id: "opacity-cover", x: 8, y: 9, width: 30, height: 25, start: 0, end: 20, color: "#e6467a" },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    const overlay = await screen.findByTestId("video-editor-cover-overlay-opacity-cover");
+    await user.click(screen.getByTestId("video-editor-cover-badge-opacity-cover"));
+    const opacityInput = screen.getByRole("slider", { name: "Cover-Deckkraft" });
+    expect(opacityInput).toHaveValue("100");
+    expect(screen.getByTestId("video-editor-cover-opacity-value")).toHaveTextContent("100 %");
+    expect(overlay).toHaveStyle({ background: "#e6467a", opacity: "1" });
+
+    fireEvent.pointerDown(opacityInput);
+    fireEvent.change(opacityInput, { target: { value: "90" } });
+    fireEvent.change(opacityInput, { target: { value: "70" } });
+    fireEvent.change(opacityInput, { target: { value: "50" } });
+    fireEvent.pointerUp(opacityInput);
+    expect(overlay).toHaveStyle({ background: "#e6467a", opacity: "0.5" });
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    await user.click(screen.getByTestId("video-editor-cover-badge-opacity-cover"));
+    expect(screen.getByRole("slider", { name: "Cover-Deckkraft" })).toHaveValue("100");
+
+    fireEvent.pointerDown(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Cover-Deckkraft" }), {
+      target: { value: "50" },
+    });
+    fireEvent.pointerUp(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
+
+    fireEvent.pointerDown(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Cover-Deckkraft" }), {
+      target: { value: "70" },
+    });
+    fireEvent.pointerUp(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    await user.click(screen.getByTestId("video-editor-cover-badge-opacity-cover"));
+    expect(screen.getByRole("slider", { name: "Cover-Deckkraft" })).toHaveValue("50");
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    await user.click(screen.getByTestId("video-editor-cover-badge-opacity-cover"));
+    expect(screen.getByRole("slider", { name: "Cover-Deckkraft" })).toHaveValue("100");
+
+    fireEvent.pointerDown(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Cover-Deckkraft" }), {
+      target: { value: "50" },
+    });
+    fireEvent.pointerUp(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "blur");
+    expect(screen.queryByRole("slider", { name: "Cover-Deckkraft" })).not.toBeInTheDocument();
+    expect(overlay.style.opacity).toBe("");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "cover");
+    expect(screen.getByRole("slider", { name: "Cover-Deckkraft" })).toHaveValue("50");
+    expect(overlay).toHaveStyle({ opacity: "0.5" });
+  });
+
+  it("persists, reloads and copies cover opacity through the existing overlay timeline", async () => {
+    vi.useFakeTimers();
+    try {
+      editorState = {
+        timeline: {
+          version: 1,
+          clips: [
+            { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+          ],
+          overlays: [
+            { id: "opacity-cover", x: 8, y: 9, width: 30, height: 25, start: 0, end: 20, mode: "cover", color: "#e6467a", opacity: 0.5 },
+          ],
+        },
+        renderStatus: "none",
+        renderError: null,
+        renderedVideoId: null,
+      };
+
+      const firstRender = render(
+        <VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />,
+      );
+      await vi.waitFor(() => expect(screen.getByTestId("video-editor-cover-overlay-opacity-cover")).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId("video-editor-cover-badge-opacity-cover"));
+      expect(screen.getByRole("slider", { name: "Cover-Deckkraft" })).toHaveValue("50");
+      fireEvent.click(screen.getByRole("button", { name: "Abdeckung kopieren" }));
+      const pasteButton = screen.getByRole("button", { name: "Abdeckung einfügen" });
+      expect(pasteButton).toBeEnabled();
+      fireEvent.click(screen.getByTestId("video-editor-overlay-scroll"));
+      expect(screen.queryByRole("button", { name: "Abdeckung kopieren" })).not.toBeInTheDocument();
+      expect(pasteButton).toBeInTheDocument();
+      expect(pasteButton).toBeEnabled();
+      fireEvent.click(pasteButton);
+      await vi.advanceTimersByTimeAsync(400);
+
+      const saveCall = mockApiFetch.mock.calls.filter(
+        ([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT",
+      ).at(-1);
+      const savedTimeline = JSON.parse((saveCall?.[1] as RequestInit).body as string);
+      expect(savedTimeline.overlays.map((overlay: { opacity: number }) => overlay.opacity)).toEqual([0.5, 0.5]);
+      for (const copiedOverlay of screen.getAllByTestId(/video-editor-cover-overlay-/)) {
+        expect(copiedOverlay).toHaveStyle({ background: "#e6467a", opacity: "0.5" });
+      }
+
+      firstRender.unmount();
+      editorState = {
+        timeline: savedTimeline,
+        renderStatus: "none",
+        renderError: null,
+        renderedVideoId: null,
+      };
+      render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+      await vi.waitFor(() => expect(screen.getAllByTestId(/video-editor-cover-overlay-/)).toHaveLength(2));
+      for (const restoredOverlay of screen.getAllByTestId(/video-editor-cover-overlay-/)) {
+        expect(restoredOverlay).toHaveStyle({ opacity: "0.5" });
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("persists, reloads and copies a cover color through the existing overlay timeline", async () => {

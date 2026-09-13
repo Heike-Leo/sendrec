@@ -28,15 +28,16 @@ type editClip struct {
 }
 
 type editorCoverOverlay struct {
-	ID     string  `json:"id"`
-	X      float64 `json:"x"`
-	Y      float64 `json:"y"`
-	Width  float64 `json:"width"`
-	Height float64 `json:"height"`
-	Start  float64 `json:"start"`
-	End    float64 `json:"end"`
-	Mode   string  `json:"mode,omitempty"`
-	Color  string  `json:"color,omitempty"`
+	ID      string   `json:"id"`
+	X       float64  `json:"x"`
+	Y       float64  `json:"y"`
+	Width   float64  `json:"width"`
+	Height  float64  `json:"height"`
+	Start   float64  `json:"start"`
+	End     float64  `json:"end"`
+	Mode    string   `json:"mode,omitempty"`
+	Color   string   `json:"color,omitempty"`
+	Opacity *float64 `json:"opacity,omitempty"`
 }
 
 type editTimeline struct {
@@ -126,6 +127,9 @@ func validateEditTimeline(timeline *editTimeline) error {
 		}
 		if overlay.Color != "" && !isEditorCoverColor(overlay.Color) {
 			return fmt.Errorf("overlay color must be a six-digit hex color")
+		}
+		if overlay.Opacity != nil && (*overlay.Opacity < 0.1 || *overlay.Opacity > 1) {
+			return fmt.Errorf("overlay opacity must be between 0.1 and 1")
 		}
 
 		if strings.TrimSpace(overlay.ID) == "" {
@@ -309,7 +313,9 @@ func buildTimelineRenderArgs(inputs []string, clips []editClip, sourceIndexes ma
 	}
 	var filters []string
 	var concatInputs strings.Builder
+	timelineDuration := 0.0
 	for i, clip := range clips {
+		timelineDuration += clip.Duration
 		inputIndex := sourceIndexes[clip.SourceID]
 		filters = append(filters, fmt.Sprintf(
 			"[%d:v]trim=start=%.3f:end=%.3f,setpts=PTS-STARTPTS,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p[v%d]",
@@ -384,6 +390,33 @@ func buildTimelineRenderArgs(inputs []string, clips []editClip, sourceIndexes ma
 			coverColor := "black"
 			if overlay.Color != "" {
 				coverColor = "0x" + overlay.Color[1:]
+			}
+			if overlay.Opacity != nil && *overlay.Opacity < 1 {
+				coverLayer := fmt.Sprintf("vcover%d", operationIndex)
+				filters = append(filters,
+					fmt.Sprintf(
+						"color=c=black@0.0:s=1920x1080:r=30:d=%.3f,format=rgba,drawbox=x=iw*%.6f:y=ih*%.6f:w=iw*%.6f:h=ih*%.6f:color=%s@%.3f:t=fill:replace=1[%s]",
+						timelineDuration,
+						overlay.X/100,
+						overlay.Y/100,
+						overlay.Width/100,
+						overlay.Height/100,
+						coverColor,
+						*overlay.Opacity,
+						coverLayer,
+					),
+					fmt.Sprintf(
+						"[%s][%s]overlay=x=0:y=0:enable='between(t,%.3f,%.3f)'[%s]",
+						previousLabel,
+						coverLayer,
+						overlay.Start,
+						overlay.End,
+						nextLabel,
+					),
+				)
+				previousLabel = nextLabel
+				operationIndex++
+				continue
 			}
 			filters = append(filters, fmt.Sprintf(
 				"[%s]drawbox=x=iw*%.6f:y=ih*%.6f:w=iw*%.6f:h=ih*%.6f:color=%s:t=fill:enable='between(t,%.3f,%.3f)'[%s]",
