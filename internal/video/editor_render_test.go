@@ -273,6 +273,96 @@ func TestBuildTimelineRenderArgsAppliesCoverAfterBlur(t *testing.T) {
 	}
 }
 
+func TestBuildTimelineRenderArgsCoverText(t *testing.T) {
+	opacity := 0.4
+	overlays := []editorCoverOverlay{
+		{ID: "legacy", X: 25, Y: 10, Width: 40, Height: 20, Start: 1, End: 2, Text: "Grüße: ' \\ % , (ß)"},
+		{ID: "blur", Width: 40, Height: 20, End: 3, Mode: "blur", Text: "NEVER RENDER"},
+		{ID: "alpha", Width: 20, Height: 20, Start: 2, End: 3, Mode: "cover", Color: "#ff8000", Opacity: &opacity, Text: "Second"},
+		{ID: "tiny", Width: 1, Height: 1, End: 3, Text: "Too small"},
+	}
+	build := func(items []editorCoverOverlay) string {
+		return strings.Join(buildTimelineRenderArgs([]string{"input.mp4"},
+			[]editClip{{SourceID: "source", SourceEnd: 3, Duration: 3}},
+			map[string]int{"source": 0}, map[string]sourceVideo{"source": {}}, "out.mp4", items), " ")
+	}
+	graph := build(overlays)
+	for _, want := range []string{
+		"color=c=black@0.0:s=760x208:r=30:d=3.000,format=rgba,drawtext=",
+		"fontfile=" + editorTextFont + ":textfile=cover-text-0.txt:expansion=none:fontcolor=white:fontsize=32:x=(w-text_w)/2:y=(h-text_h)/2",
+		"overlay=x=484:y=112:enable='between(t,1.000,2.000)'",
+		"textfile=cover-text-2.txt:expansion=none:fontcolor=white",
+		"overlay=x=4:y=4:enable='between(t,2.000,3.000)'[vout]",
+	} {
+		if !strings.Contains(graph, want) {
+			t.Fatalf("missing %q in %s", want, graph)
+		}
+	}
+	if strings.Count(graph, "drawtext=") != 2 || strings.Index(graph, "drawtext=") < strings.LastIndex(graph, "drawbox=") {
+		t.Fatalf("exactly two text surfaces must follow all cover fills: %s", graph)
+	}
+	for _, overlay := range overlays {
+		if strings.Contains(graph, overlay.Text) {
+			t.Fatalf("user text must never enter filtergraph: %q", overlay.Text)
+		}
+	}
+	// Empty text and stored blur text must retain the original no-text path.
+	without := append([]editorCoverOverlay(nil), overlays...)
+	for i := range without {
+		without[i].Text = ""
+	}
+	want := build(without)
+	without[1].Text = "ignored blur text"
+	if build(without) != want || strings.Contains(want, "drawtext=") || !strings.Contains(want, "color=black:t=fill") {
+		t.Fatal("no-text/legacy cover or blur render path changed")
+	}
+}
+
+func TestPrepareCoverTextFiles(t *testing.T) {
+	dir := t.TempDir()
+	text := "Grüße: ' \\ % , (ÄÖÜ äöü ß) %{pts};[vout]"
+	overlays := []editorCoverOverlay{
+		{ID: "../../untrusted", Width: 80, Height: 50, Text: text},
+		{Mode: "blur", Width: 80, Height: 50, Text: text},
+		{Width: 80, Height: 50},
+		{Width: 1, Height: 1, Text: text},
+	}
+	if err := prepareCoverTextFiles(dir, overlays); err != nil {
+		t.Fatal(err)
+	}
+	files, err := os.ReadDir(dir)
+	if err != nil || len(files) != 1 || files[0].Name() != "cover-text-0.txt" {
+		t.Fatalf("unexpected text sidecars: %v, %v", files, err)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, files[0].Name()))
+	if err != nil || string(content) != text {
+		t.Fatalf("UTF-8 literal text changed: %q, %v", content, err)
+	}
+	info, err := files[0].Info()
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal("text file must be private")
+	}
+	if err := prepareCoverTextFiles(filepath.Join(dir, "missing"), overlays); err == nil {
+		t.Fatal("sidecar write error must be propagated")
+	}
+}
+
+func TestCoverTextBounds(t *testing.T) {
+	for _, size := range []struct{ width, height float64; visible bool }{
+		{40, 20, true}, {2, 4, true}, {1, 20, false}, {40, 1, false},
+	} {
+		overlay := editorCoverOverlay{X: 10.11, Y: 20.11, Width: size.width, Height: size.height, Text: "Text"}
+		x, y, width, height, visible := coverTextBounds(overlay)
+		if visible != size.visible {
+			t.Fatalf("size %+v: visible=%v", size, visible)
+		}
+		if visible && (float64(x) < 1920*overlay.X/100 || float64(y) < 1080*overlay.Y/100 ||
+			float64(x+width) > 1920*(overlay.X+overlay.Width)/100 || float64(y+height) > 1080*(overlay.Y+overlay.Height)/100) {
+			t.Fatal("text surface escapes cover bounds")
+		}
+	}
+}
+
 func TestRenderEditorTimelineSavesTimelineAndQueuesResolvedSources(t *testing.T) {
 	mock, err := pgxmock.NewPool()
 	if err != nil {
@@ -654,6 +744,73 @@ func TestTimelineBlurRenderFFmpegIntegration(t *testing.T) {
 	}
 	if pixel[0] > 10 || pixel[1] > 10 || pixel[2] > 10 {
 		t.Fatalf("cover over blur is not black: rgb=%v", pixel[:3])
+	}
+}
+
+func TestTimelineCoverTextRenderFFmpegIntegration(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := os.Stat(editorTextFont); err != nil {
+		t.Skip("DejaVu Sans render font not installed")
+	}
+	dir := t.TempDir()
+	input := filepath.Join(dir, "red.mp4")
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=320x180:d=2",
+		"-c:v", "libx264", "-pix_fmt", "yuv420p", "-y", input).CombinedOutput(); err != nil {
+		t.Fatalf("fixture: %v: %s", err, out)
+	}
+	opacity := 0.4
+	overlays := []editorCoverOverlay{
+		{X: 5, Y: 10, Width: 80, Height: 20, Start: .5, End: 1.5, Color: "#ff8000", Opacity: &opacity,
+			Text: "Grüße ÄÖÜ äöü ß : ' \\ % , (Test) %{pts};[vout]"},
+		{X: 10, Y: 50, Width: 8, Height: 10, Start: .5, End: 1.5,
+			Text: "A very long line that must be clipped inside this narrow cover"},
+		{X: 30, Y: 50, Width: 1, Height: 1, Start: .5, End: 1.5, Text: "Too small"},
+		{X: 50, Y: 50, Width: 30, Height: 20, Start: .5, End: 1.5, Mode: "blur", Text: "Never visible"},
+	}
+	if err := prepareCoverTextFiles(dir, overlays); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "text.mp4")
+	cmd := exec.Command("ffmpeg", buildTimelineRenderArgs([]string{input},
+		[]editClip{{SourceID: "source", SourceEnd: 2, Duration: 2}},
+		map[string]int{"source": 0}, map[string]sourceVideo{"source": {}}, output, overlays)...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("render text (including literal special characters and umlauts): %v: %s", err, out)
+	}
+	for _, at := range []string{"0.25", "1.0", "1.75"} {
+		pixels, err := exec.Command("ffmpeg", "-v", "error", "-ss", at, "-i", output,
+			"-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1").Output()
+		if err != nil || len(pixels) != 1920*1080*3 {
+			t.Fatalf("sample at %s: %v, %d bytes", at, err, len(pixels))
+		}
+		counts := [2]int{}
+		for p := 0; p < len(pixels); p += 3 {
+			// Solid glyph interiors must stay opaque white on the 40% cover.
+			if pixels[p] < 235 || pixels[p+1] < 235 || pixels[p+2] < 235 {
+				continue
+			}
+			if at != "1.0" {
+				t.Fatalf("text visible outside time window at %s", at)
+			}
+			x, y := (p/3)%1920, (p/3)/1920
+			found := false
+			for i := range counts {
+				left, top, width, height, _ := coverTextBounds(overlays[i])
+				if x >= left && x < left+width && y >= top && y < top+height {
+					counts[i]++
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("text escaped cover, or tiny/blur text rendered at %d,%d", x, y)
+			}
+		}
+		if at == "1.0" && (counts[0] < 100 || counts[1] < 30) {
+			t.Fatalf("both covers need opaque white text, including alpha cover: %v", counts)
+		}
 	}
 }
 

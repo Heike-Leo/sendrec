@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +19,8 @@ import (
 
 const editTimelineVersion = 1
 const editorBlurSigma = 12
+const editorTextFont = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
+const editorTextFontSize = 32 // Fixed size for the existing 1920x1080 render target.
 
 type editClip struct {
 	ID          string  `json:"id"`
@@ -303,10 +306,49 @@ func (h *Handler) RenderEditorTimeline(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// Text surfaces are inset and raster-clipped to their cover. Tiny surfaces are
+// omitted, just as in the preview. No editor badges/handles are exported.
+func coverTextBounds(overlay editorCoverOverlay) (x, y, width, height int, visible bool) {
+	if overlay.Mode == "blur" || overlay.Text == "" {
+		return
+	}
+	x = int(math.Ceil(1920*overlay.X/100)) + 4
+	y = int(math.Ceil(1080*overlay.Y/100)) + 4
+	width = int(math.Floor(1920*(overlay.X+overlay.Width)/100)) - 4 - x
+	height = int(math.Floor(1080*(overlay.Y+overlay.Height)/100)) - 4 - y
+	visible = width >= 16 && height >= editorTextFontSize
+	return
+}
+
+func coverTextFilename(index int) string {
+	return fmt.Sprintf("cover-text-%d.txt", index)
+}
+
+// Only generated relative filenames enter the filtergraph. UTF-8 user text
+// stays in private sidecars, with expansion=none; it is never filter/shell code.
+// The FFmpeg command must run with Dir set to this render job's directory.
+func prepareCoverTextFiles(dir string, overlays []editorCoverOverlay) error {
+	for i, overlay := range overlays {
+		if _, _, _, _, visible := coverTextBounds(overlay); !visible {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(dir, coverTextFilename(i)), []byte(overlay.Text), 0600); err != nil {
+			return fmt.Errorf("prepare cover text: %w", err)
+		}
+	}
+	return nil
+}
+
 func buildTimelineRenderArgs(inputs []string, clips []editClip, sourceIndexes map[string]int, sources map[string]sourceVideo, output string, overlaySets ...[]editorCoverOverlay) []string {
 	var overlays []editorCoverOverlay
 	if len(overlaySets) > 0 {
 		overlays = overlaySets[0]
+	}
+	textCount := 0
+	for _, overlay := range overlays {
+		if _, _, _, _, visible := coverTextBounds(overlay); visible {
+			textCount++
+		}
 	}
 	args := make([]string, 0, len(inputs)*2+len(clips)*2+16)
 	for _, input := range inputs {
@@ -347,7 +389,7 @@ func buildTimelineRenderArgs(inputs []string, clips []editClip, sourceIndexes ma
 		operationIndex := 0
 		for _, overlay := range blurOverlays {
 			nextLabel := fmt.Sprintf("voverlay%d", operationIndex)
-			if operationIndex == len(overlays)-1 {
+			if operationIndex == len(overlays)+textCount-1 {
 				nextLabel = "vout"
 			}
 			baseLabel := fmt.Sprintf("vblurbase%d", operationIndex)
@@ -384,7 +426,7 @@ func buildTimelineRenderArgs(inputs []string, clips []editClip, sourceIndexes ma
 
 		for _, overlay := range coverOverlays {
 			nextLabel := fmt.Sprintf("voverlay%d", operationIndex)
-			if operationIndex == len(overlays)-1 {
+			if operationIndex == len(overlays)+textCount-1 {
 				nextLabel = "vout"
 			}
 
@@ -432,6 +474,27 @@ func buildTimelineRenderArgs(inputs []string, clips []editClip, sourceIndexes ma
 				nextLabel,
 			))
 
+			previousLabel = nextLabel
+			operationIndex++
+		}
+
+		// Draw all text after blur and cover fills, independently of fill alpha.
+		for i, overlay := range overlays {
+			x, y, width, height, visible := coverTextBounds(overlay)
+			if !visible {
+				continue
+			}
+			nextLabel := fmt.Sprintf("voverlay%d", operationIndex)
+			if operationIndex == len(overlays)+textCount-1 {
+				nextLabel = "vout"
+			}
+			textLayer := fmt.Sprintf("vtext%d", i)
+			filters = append(filters,
+				fmt.Sprintf("color=c=black@0.0:s=%dx%d:r=30:d=%.3f,format=rgba,drawtext=fontfile=%s:textfile=%s:expansion=none:fontcolor=white:fontsize=%d:x=(w-text_w)/2:y=(h-text_h)/2[%s]",
+					width, height, timelineDuration, editorTextFont, coverTextFilename(i), editorTextFontSize, textLayer),
+				fmt.Sprintf("[%s][%s]overlay=x=%d:y=%d:enable='between(t,%.3f,%.3f)'[%s]",
+					previousLabel, textLayer, x, y, overlay.Start, overlay.End, nextLabel),
+			)
 			previousLabel = nextLabel
 			operationIndex++
 		}
@@ -486,7 +549,12 @@ func (h *Handler) renderTimelineAsync(ctx context.Context, job renderJob) {
 	}
 
 	output := filepath.Join(tmpDir, "rendered.mp4")
+	if err := prepareCoverTextFiles(tmpDir, job.Timeline.Overlays); err != nil {
+		fail(err)
+		return
+	}
 	cmd := exec.CommandContext(ctx, "ffmpeg", buildTimelineRenderArgs(inputs, job.Timeline.Clips, indexes, job.Sources, output, job.Timeline.Overlays)...)
+	cmd.Dir = tmpDir
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		fail(fmt.Errorf("ffmpeg render: %w: %s", err, string(combined)))
 		return

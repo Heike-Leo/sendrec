@@ -19,6 +19,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=${VERSION}" -o sendre
 
 # Stage 3: Final image (base includes whisper-cli, ffmpeg, RNNoise model)
 FROM alexneamtu/sendrec-base:latest
+RUN apk add --no-cache font-dejavu
 COPY --from=backend /app/sendrec .
 COPY docker-entrypoint.sh .
 USER sendrec
