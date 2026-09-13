@@ -32,6 +32,7 @@ let editorState: typeof emptyEditorState | {
         start: number;
         end: number;
         mode?: "cover" | "blur";
+        color?: string;
       }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
@@ -368,6 +369,186 @@ describe("VideoEditorModal multi-source preview", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("uses black for legacy covers and preserves a custom color across blur and undo", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          { id: "colored-cover", x: 8, y: 9, width: 30, height: 25, start: 0, end: 20 },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    const overlay = await screen.findByTestId("video-editor-cover-overlay-colored-cover");
+    await user.click(screen.getByTestId("video-editor-cover-badge-colored-cover"));
+    const colorInput = screen.getByLabelText("Cover-Farbe");
+    expect(colorInput).toHaveValue("#000000");
+    expect(overlay).toHaveStyle({ background: "#000000" });
+
+    fireEvent.change(colorInput, { target: { value: "#123456" } });
+    expect(overlay).toHaveStyle({ background: "#123456" });
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    await user.click(screen.getByTestId("video-editor-cover-badge-colored-cover"));
+    expect(screen.getByLabelText("Cover-Farbe")).toHaveValue("#000000");
+
+    fireEvent.change(screen.getByLabelText("Cover-Farbe"), {
+      target: { value: "#123456" },
+    });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "blur");
+    expect(screen.queryByLabelText("Cover-Farbe")).not.toBeInTheDocument();
+    expect(overlay.style.backdropFilter).toBe("blur(12px)");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "cover");
+    expect(screen.getByLabelText("Cover-Farbe")).toHaveValue("#123456");
+    expect(overlay).toHaveStyle({ background: "#123456" });
+  });
+
+  it("persists, reloads and copies a cover color through the existing overlay timeline", async () => {
+    vi.useFakeTimers();
+    try {
+      editorState = {
+        timeline: {
+          version: 1,
+          clips: [
+            { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+          ],
+          overlays: [
+            { id: "colored-cover", x: 8, y: 9, width: 30, height: 25, start: 0, end: 20, color: "#e6467a" },
+          ],
+        },
+        renderStatus: "none",
+        renderError: null,
+        renderedVideoId: null,
+      };
+
+      render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+      await vi.waitFor(() => expect(screen.getByTestId("video-editor-cover-overlay-colored-cover")).toBeInTheDocument());
+      expect(screen.getByTestId("video-editor-cover-overlay-colored-cover")).toHaveStyle({ background: "#e6467a" });
+      fireEvent.click(screen.getByTestId("video-editor-cover-badge-colored-cover"));
+      fireEvent.click(screen.getByRole("button", { name: "Abdeckung kopieren" }));
+      fireEvent.click(screen.getByRole("button", { name: "Abdeckung einfügen" }));
+      await vi.advanceTimersByTimeAsync(400);
+
+      const saveCall = mockApiFetch.mock.calls.filter(
+        ([path, options]) => path === "/api/videos/original/editor" && options?.method === "PUT",
+      ).at(-1);
+      const savedTimeline = JSON.parse((saveCall?.[1] as RequestInit).body as string);
+      expect(savedTimeline.overlays.map((overlay: { color: string }) => overlay.color)).toEqual([
+        "#e6467a", "#e6467a",
+      ]);
+      for (const copiedOverlay of screen.getAllByTestId(/video-editor-cover-overlay-/)) {
+        expect(copiedOverlay).toHaveStyle({ background: "#e6467a" });
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { label: "black cover", mode: "cover" as const, color: undefined },
+    { label: "colored cover", mode: "cover" as const, color: "#123456" },
+    { label: "blur", mode: "blur" as const, color: "#123456" },
+  ])("copies and enables pasting for a $label", async ({ mode, color }) => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          {
+            id: "copy-source",
+            x: 11,
+            y: 12,
+            width: 31,
+            height: 22,
+            start: 0,
+            end: 20,
+            mode,
+            ...(color ? { color } : {}),
+          },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await user.click(await screen.findByTestId("video-editor-cover-badge-copy-source"));
+    expect(screen.queryByRole("button", { name: "Abdeckung einfügen" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Abdeckung kopieren" }));
+    const pasteButton = screen.getByRole("button", { name: "Abdeckung einfügen" });
+    expect(pasteButton).toBeEnabled();
+    await user.click(screen.getByTestId("video-editor-overlay-scroll"));
+    expect(screen.queryByRole("button", { name: "Abdeckung kopieren" })).not.toBeInTheDocument();
+    expect(pasteButton).toBeInTheDocument();
+    expect(pasteButton).toBeEnabled();
+    await user.click(pasteButton);
+
+    const surfaces = screen.getAllByTestId(/video-editor-cover-overlay-/);
+    expect(surfaces).toHaveLength(2);
+    expect(surfaces[0]).toHaveStyle({ left: "11%", top: "12%", width: "31%", height: "22%" });
+    expect(surfaces[1]).toHaveStyle({ left: "11%", top: "12%", width: "31%", height: "22%" });
+    if (mode === "blur") {
+      expect(surfaces[1].style.backdropFilter).toBe("blur(12px)");
+    } else {
+      expect(surfaces[1]).toHaveStyle({ background: color ?? "#000000" });
+    }
+  });
+
+  it("pastes an independent colored cover that remains movable", async () => {
+    const user = userEvent.setup();
+    editorState = {
+      timeline: {
+        version: 1,
+        clips: [
+          { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
+        ],
+        overlays: [
+          { id: "copy-source", x: 10, y: 10, width: 20, height: 20, start: 0, end: 20, mode: "cover", color: "#123456" },
+        ],
+      },
+      renderStatus: "none",
+      renderError: null,
+      renderedVideoId: null,
+    };
+
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await user.click(await screen.findByTestId("video-editor-cover-badge-copy-source"));
+    await user.click(screen.getByRole("button", { name: "Abdeckung kopieren" }));
+    await user.click(screen.getByRole("button", { name: "Abdeckung einfügen" }));
+
+    const surfaces = screen.getAllByTestId(/video-editor-cover-overlay-/);
+    const original = surfaces[0];
+    const pasted = surfaces[1];
+    const frame = screen.getByTestId("video-editor-overlay-frame");
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 500,
+      width: 1000, height: 500, toJSON: () => ({}),
+    });
+    const pastedID = pasted.dataset.testid?.replace("video-editor-cover-overlay-", "");
+    expect(pastedID).toBeTruthy();
+    expect(pastedID).not.toBe("copy-source");
+    fireEvent.pointerDown(screen.getByTestId(`video-editor-cover-interaction-${pastedID}`), {
+      clientX: 100,
+      clientY: 50,
+    });
+    fireEvent.pointerMove(document, { clientX: 200, clientY: 100 });
+    fireEvent.pointerUp(document);
+
+    expect(original).toHaveStyle({ left: "10%", top: "10%", background: "#123456" });
+    expect(pasted).toHaveStyle({ left: "20%", top: "20%", background: "#123456" });
   });
 
   it("keeps video badges aligned with timeline numbering after delete and copy", async () => {
@@ -1056,16 +1237,16 @@ describe("VideoEditorModal multi-source preview", () => {
 
     fireEvent.click(await screen.findByText("Abdeckung 1"));
     const copyButton = screen.getByRole("button", { name: "Abdeckung kopieren" });
-    const pasteButton = screen.getByRole("button", { name: "Abdeckung einfügen" });
+    expect(screen.queryByRole("button", { name: "Abdeckung einfügen" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: /Start/ })).toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: /Ende/ })).toBeInTheDocument();
-    expect(pasteButton).toBeDisabled();
     expect(screen.getByText("Abdeckung kopieren")).toHaveAttribute("role", "tooltip");
-    expect(screen.getByText("Abdeckung einfügen")).toHaveAttribute("role", "tooltip");
     expect(screen.getByText("Abdeckung löschen")).toHaveAttribute("role", "tooltip");
 
     await user.click(copyButton);
+    const pasteButton = screen.getByRole("button", { name: "Abdeckung einfügen" });
     expect(pasteButton).toBeEnabled();
+    expect(screen.getByText("Abdeckung einfügen")).toHaveAttribute("role", "tooltip");
     await user.click(pasteButton);
     expect(screen.getAllByText(/Abdeckung \d/)).toHaveLength(3);
 

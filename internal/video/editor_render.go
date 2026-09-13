@@ -36,6 +36,7 @@ type editorCoverOverlay struct {
 	Start  float64 `json:"start"`
 	End    float64 `json:"end"`
 	Mode   string  `json:"mode,omitempty"`
+	Color  string  `json:"color,omitempty"`
 }
 
 type editTimeline struct {
@@ -123,6 +124,9 @@ func validateEditTimeline(timeline *editTimeline) error {
 		if overlay.Mode != "cover" && overlay.Mode != "blur" {
 			return fmt.Errorf("overlay mode must be cover or blur")
 		}
+		if overlay.Color != "" && !isEditorCoverColor(overlay.Color) {
+			return fmt.Errorf("overlay color must be a six-digit hex color")
+		}
 
 		if strings.TrimSpace(overlay.ID) == "" {
 			return fmt.Errorf("overlay id is required")
@@ -152,6 +156,18 @@ func validateEditTimeline(timeline *editTimeline) error {
 	}
 
 	return nil
+}
+
+func isEditorCoverColor(color string) bool {
+	if len(color) != 7 || color[0] != '#' {
+		return false
+	}
+	for _, char := range color[1:] {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) GetEditorState(w http.ResponseWriter, r *http.Request) {
@@ -365,13 +381,18 @@ func buildTimelineRenderArgs(inputs []string, clips []editClip, sourceIndexes ma
 				nextLabel = "vout"
 			}
 
+			coverColor := "black"
+			if overlay.Color != "" {
+				coverColor = "0x" + overlay.Color[1:]
+			}
 			filters = append(filters, fmt.Sprintf(
-				"[%s]drawbox=x=iw*%.6f:y=ih*%.6f:w=iw*%.6f:h=ih*%.6f:color=black:t=fill:enable='between(t,%.3f,%.3f)'[%s]",
+				"[%s]drawbox=x=iw*%.6f:y=ih*%.6f:w=iw*%.6f:h=ih*%.6f:color=%s:t=fill:enable='between(t,%.3f,%.3f)'[%s]",
 				previousLabel,
 				overlay.X/100,
 				overlay.Y/100,
 				overlay.Width/100,
 				overlay.Height/100,
+				coverColor,
 				overlay.Start,
 				overlay.End,
 				nextLabel,

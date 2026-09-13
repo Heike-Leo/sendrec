@@ -20,6 +20,7 @@ interface EditorCoverOverlay {
   start: number;
   end: number;
   mode?: "cover" | "blur";
+  color?: string;
 }
 
 interface EditorHistoryEntry {
@@ -1259,12 +1260,15 @@ export function VideoEditorModal({
   }
 
   function handleCopyCoverOverlay() {
-    if (!selectedCoverOverlay) {
+    const overlayToCopy = coverOverlays.find(
+      (overlay) => overlay.id === selectedCoverOverlayId,
+    );
+    if (!overlayToCopy) {
       setError("Bitte zuerst eine Abdeckung auswählen.");
       return;
     }
 
-    setCopiedCoverOverlay({ ...selectedCoverOverlay });
+    setCopiedCoverOverlay({ ...overlayToCopy });
     setError(null);
   }
 
@@ -1275,6 +1279,18 @@ export function VideoEditorModal({
     setCoverOverlays((previous) =>
       previous.map((overlay) =>
         overlay.id === selectedCoverOverlay.id ? { ...overlay, mode } : overlay,
+      ),
+    );
+    setError(null);
+  }
+
+  function handleCoverOverlayColorChange(color: string) {
+    if (!selectedCoverOverlay || (selectedCoverOverlay.mode ?? "cover") !== "cover") return;
+
+    rememberEditorState();
+    setCoverOverlays((previous) =>
+      previous.map((overlay) =>
+        overlay.id === selectedCoverOverlay.id ? { ...overlay, color } : overlay,
       ),
     );
     setError(null);
@@ -1335,6 +1351,7 @@ export function VideoEditorModal({
       start,
       end,
       mode: "cover",
+      color: "#000000",
     };
 
     rememberEditorState();
@@ -1468,6 +1485,7 @@ export function VideoEditorModal({
             start: overlay.start,
             end: overlay.end,
             mode: overlay.mode ?? "cover",
+            color: overlay.color,
           })),
         }),
       });
@@ -1688,7 +1706,9 @@ export function VideoEditorModal({
                     top: `${overlay.y}%`,
                     width: `${overlay.width}%`,
                     height: `${overlay.height}%`,
-                    background: (overlay.mode ?? "cover") === "blur" ? "rgba(255, 255, 255, 0.01)" : "#000",
+                    background: (overlay.mode ?? "cover") === "blur"
+                      ? "rgba(255, 255, 255, 0.01)"
+                      : (overlay.color ?? "#000000"),
                     backdropFilter: (overlay.mode ?? "cover") === "blur" ? "blur(12px)" : undefined,
                     WebkitBackdropFilter: (overlay.mode ?? "cover") === "blur" ? "blur(12px)" : undefined,
                     zIndex: 2,
@@ -1933,6 +1953,19 @@ export function VideoEditorModal({
             </select>
           </label>
 
+          {(selectedCoverOverlay.mode ?? "cover") === "cover" && (
+            <label className="video-editor-cover-time-label">
+              Farbe{" "}
+              <input
+                type="color"
+                aria-label="Cover-Farbe"
+                value={selectedCoverOverlay.color ?? "#000000"}
+                onChange={(e) => handleCoverOverlayColorChange(e.target.value)}
+                style={{ width: 32, height: 28, padding: 2 }}
+              />
+            </label>
+          )}
+
           <label className="video-editor-cover-time-label">
             Start{" "}
             <input
@@ -2008,11 +2041,14 @@ export function VideoEditorModal({
             </span>
           </span>
 
+          </>
+        )}
+
+        {copiedCoverOverlay && (
           <span className="video-editor-tool">
             <button
               type="button"
               onClick={handlePasteCoverOverlay}
-              disabled={!copiedCoverOverlay}
               className="video-editor-tool-button"
               aria-label="Abdeckung einfügen"
               aria-describedby="video-editor-tooltip-paste-cover"
@@ -2023,7 +2059,9 @@ export function VideoEditorModal({
               Abdeckung einfügen
             </span>
           </span>
+        )}
 
+        {selectedCoverOverlay && (
           <span className="video-editor-tool">
             <button
               type="button"
@@ -2038,7 +2076,6 @@ export function VideoEditorModal({
               Abdeckung löschen
             </span>
           </span>
-          </>
         )}
         </div>
 

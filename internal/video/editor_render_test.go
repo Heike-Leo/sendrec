@@ -84,6 +84,15 @@ func TestValidateEditTimelineNormalizesAndValidatesOverlayMode(t *testing.T) {
 	if err := validateEditTimeline(&invalid); err == nil {
 		t.Fatal("invalid overlay mode was accepted")
 	}
+
+	blur.Overlays[0].Color = "#e6467a"
+	if err := validateEditTimeline(&blur); err != nil {
+		t.Fatalf("valid cover color rejected: %v", err)
+	}
+	blur.Overlays[0].Color = "red;drawbox"
+	if err := validateEditTimeline(&blur); err == nil {
+		t.Fatal("invalid cover color was accepted")
+	}
 }
 
 func TestBuildTimelineRenderArgsPreservesClipOrderAndRanges(t *testing.T) {
@@ -167,6 +176,22 @@ func TestBuildTimelineRenderArgsIncludesTimedCoverOverlay(t *testing.T) {
 	}
 }
 
+func TestBuildTimelineRenderArgsUsesCustomCoverColor(t *testing.T) {
+	clips := []editClip{{ID: "clip-1", SourceID: "original", SourceStart: 0, SourceEnd: 12, Duration: 12}}
+	sources := map[string]sourceVideo{"original": {ID: "original", HasAudio: true}}
+	overlays := []editorCoverOverlay{
+		{ID: "cover", X: 25, Y: 10, Width: 40, Height: 20, Start: 3.5, End: 8.25, Mode: "cover", Color: "#e6467a"},
+	}
+
+	joined := strings.Join(buildTimelineRenderArgs(
+		[]string{"original.mp4"}, clips, map[string]int{"original": 0}, sources, "output.mp4", overlays,
+	), " ")
+	expected := "drawbox=x=iw*0.250000:y=ih*0.100000:w=iw*0.400000:h=ih*0.200000:color=0xe6467a:t=fill:enable='between(t,3.500,8.250)'"
+	if !strings.Contains(joined, expected) {
+		t.Fatalf("render args missing custom cover color; expected %q in %s", expected, joined)
+	}
+}
+
 func TestBuildTimelineRenderArgsIncludesTimedScaledBlurOverlays(t *testing.T) {
 	clips := []editClip{{ID: "clip-1", SourceID: "original", SourceStart: 0, SourceEnd: 12, Duration: 12}}
 	sources := map[string]sourceVideo{"original": {ID: "original", HasAudio: true}}
@@ -196,7 +221,7 @@ func TestBuildTimelineRenderArgsAppliesCoverAfterBlur(t *testing.T) {
 	sources := map[string]sourceVideo{"original": {ID: "original", HasAudio: true}}
 	overlays := []editorCoverOverlay{
 		{ID: "legacy-cover", X: 10, Y: 10, Width: 40, Height: 40, Start: 0, End: 10},
-		{ID: "blur", X: 10, Y: 10, Width: 40, Height: 40, Start: 0, End: 10, Mode: "blur"},
+		{ID: "blur", X: 10, Y: 10, Width: 40, Height: 40, Start: 0, End: 10, Mode: "blur", Color: "#ff0000"},
 		{ID: "cover", X: 20, Y: 20, Width: 20, Height: 20, Start: 2, End: 8, Mode: "cover"},
 	}
 
@@ -208,6 +233,9 @@ func TestBuildTimelineRenderArgsAppliesCoverAfterBlur(t *testing.T) {
 	explicitCoverPosition := strings.Index(joined, "drawbox=x=iw*0.200000:y=ih*0.200000")
 	if blurPosition < 0 || legacyCoverPosition <= blurPosition || explicitCoverPosition <= legacyCoverPosition {
 		t.Fatalf("blur must render before legacy and explicit covers: %s", joined)
+	}
+	if strings.Contains(joined, "color=0xff0000") {
+		t.Fatalf("blur overlay color must not be applied: %s", joined)
 	}
 }
 
