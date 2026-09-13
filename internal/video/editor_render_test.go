@@ -58,6 +58,38 @@ func TestValidateEditTimeline(t *testing.T) {
 	}
 }
 
+func TestValidateAndPersistArrowAnnotations(t *testing.T) {
+	timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
+	timeline.Annotations = []editorAnnotation{{ID: "arrow-1", Type: "arrow", X: 20, Y: 30, Width: 40, Height: 20, Start: 1, End: 5, Rotation: 315}}
+	if err := validateEditTimeline(&timeline); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(timeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored editTimeline
+	if err := json.Unmarshal(encoded, &restored); err != nil || len(restored.Annotations) != 1 || restored.Annotations[0] != timeline.Annotations[0] {
+		t.Fatalf("annotation did not survive timeline JSON roundtrip: %s, %v", encoded, err)
+	}
+	for _, invalid := range []editorAnnotation{
+		{ID: "arrow", Type: "circle", Width: 10, Height: 10, End: 5},
+		{ID: "arrow", Type: "arrow", X: 95, Width: 10, Height: 10, End: 5},
+		{ID: "arrow", Type: "arrow", Width: 10, Height: 10, End: 20},
+		{ID: "arrow", Type: "arrow", Width: 10, Height: 10, End: 5, Rotation: 46},
+		{ID: "arrow", Type: "arrow", Width: 10, Height: 10, End: 5, Rotation: math.NaN()},
+	} {
+		timeline.Annotations = []editorAnnotation{invalid}
+		if validateEditTimeline(&timeline) == nil {
+			t.Fatalf("accepted invalid annotation: %+v", invalid)
+		}
+	}
+	timeline.Annotations = append(restored.Annotations, restored.Annotations[0])
+	if validateEditTimeline(&timeline) == nil {
+		t.Fatal("accepted duplicate annotation ids")
+	}
+}
+
 func TestValidateEditTimelineNormalizesAndValidatesOverlayMode(t *testing.T) {
 	legacy := validTimeline(editClip{ID: "one", SourceID: "source-a", SourceStart: 0, SourceEnd: 10})
 	legacy.Overlays = []editorCoverOverlay{{

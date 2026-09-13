@@ -36,6 +36,7 @@ let editorState: typeof emptyEditorState | {
         opacity?: number;
         text?: string;
       }>;
+      annotations?: Array<{ id: string; type: "arrow"; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
   renderError: string | null;
@@ -72,6 +73,230 @@ describe("VideoEditorModal multi-source preview", () => {
       }
       return Promise.reject(new Error(`Unexpected API call: ${path}`));
     });
+  });
+
+  it("adds an independent arrow and undoes direction, timing and creation", async () => {
+    const { container } = render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
+    expect(screen.getByRole("button", { name: "Pfeil 1" })).toHaveAttribute("aria-pressed", "true");
+    const polygon = () => container.querySelector('polygon')!;
+    expect(polygon()).toHaveAttribute("fill", "#FC2667");
+    expect(polygon()).toHaveAttribute("transform", "rotate(0 50 50)");
+    fireEvent.change(screen.getByLabelText("Pfeilrichtung"), { target: { value: "90" } });
+    expect(polygon()).toHaveAttribute("transform", "rotate(90 50 50)");
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(polygon()).toHaveAttribute("transform", "rotate(0 50 50)");
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    fireEvent.change(screen.getByLabelText("Pfeil Start"), { target: { value: "2" } });
+    expect(polygon()).toBeNull();
+    const video = container.querySelector("video")!;
+    video.currentTime = 3; fireEvent.timeUpdate(video);
+    expect(polygon()).not.toBeNull();
+    fireEvent.change(screen.getByLabelText("Pfeil Ende"), { target: { value: "4" } });
+    video.currentTime = 5; fireEvent.timeUpdate(video);
+    expect(polygon()).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(5);
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(0);
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.queryByRole("button", { name: "Pfeil 1" })).not.toBeInTheDocument();
+  });
+
+  it("persists arrows, copies their complete data after deselection and restores them on reload", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
+    fireEvent.change(screen.getByLabelText("Pfeilrichtung"), { target: { value: "225" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil kopieren" }));
+    fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
+    expect(screen.queryByLabelText("Pfeil löschen")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(true));
+    const payload = JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
+    expect(payload.annotations).toHaveLength(2);
+    expect(payload.annotations[1]).toEqual({ ...payload.annotations[0], id: payload.annotations[1].id });
+    expect(payload.annotations[1].id).not.toBe(payload.annotations[0].id);
+    expect(payload.overlays).toEqual([]);
+    view.unmount();
+    editorState = { ...emptyEditorState, timeline: payload };
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Pfeil 2" });
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 2" }));
+    expect(screen.getByLabelText("Pfeilrichtung")).toHaveValue("225");
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil löschen" }));
+    expect(screen.queryByRole("button", { name: "Pfeil 2" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getByRole("button", { name: "Pfeil 2" })).toBeInTheDocument();
+  });
+
+  it("bounds arrow drag and resize to the shared frame and keeps one undo step per gesture", async () => {
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
+    const frame = screen.getByTestId("video-editor-overlay-frame");
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 500 } as DOMRect);
+    const arrow = () => frame.querySelector('[data-testid^="video-editor-arrow-"]')!;
+    const resize = () => frame.querySelector('[data-testid^="video-editor-arrow-resize-"]')!;
+    fireEvent.pointerDown(arrow(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 100, clientY: 50 });
+    fireEvent.pointerMove(document, { clientX: 5000, clientY: 5000 });
+    fireEvent.pointerUp(document);
+    expect(arrow()).toHaveStyle({ left: "70%", top: "80%" });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(arrow()).toHaveStyle({ left: "35%", top: "35%" });
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    fireEvent.pointerDown(resize(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 5000, clientY: 5000 });
+    fireEvent.pointerUp(document);
+    expect(arrow()).toHaveStyle({ width: "65%", height: "65%" });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(arrow()).toHaveStyle({ width: "30%", height: "20%" });
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil kopieren" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil einfügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.queryByRole("button", { name: "Pfeil 2" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "+ Abdeckung" }));
+    expect(screen.queryByLabelText("Pfeilrichtung")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil löschen" }));
+    expect(screen.getByText("Abdeckung 1")).toBeInTheDocument();
+  });
+
+  it.each([
+    [35, 35], [0, 35], [70, 35], [35, 0], [35, 80], [70, 80],
+    // A stale/out-of-bounds clipboard position must not escape on paste.
+    [90, 95], [-2, -3],
+  ])("keeps pasted arrow geometry inside the frame from (%s,%s)", async (x, y) => {
+    const original = { id: "edge-arrow", type: "arrow" as const, x, y, width: 30, height: 20, rotation: 315, start: 0, end: 5 };
+    editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: {
+      version: 1,
+      clips: [{ id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 }],
+      annotations: [original],
+    } };
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Pfeil 1" });
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil kopieren" }));
+    fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(true));
+    const { annotations: saved } = JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
+    expect(saved).toHaveLength(2);
+    expect(saved[0]).toEqual(original);
+    const copy = saved[1];
+    expect(copy.id).not.toBe(original.id);
+    expect(copy).toEqual({ ...original, id: copy.id, x: Math.max(0, Math.min(70, x)), y: Math.max(0, Math.min(80, y)) });
+    expect(copy.x).toBeGreaterThanOrEqual(0);
+    expect(copy.y).toBeGreaterThanOrEqual(0);
+    expect(copy.x + copy.width).toBeLessThanOrEqual(100);
+    expect(copy.y + copy.height).toBeLessThanOrEqual(100);
+    const element = screen.getByTestId(`video-editor-arrow-${copy.id}`);
+    expect(element.parentElement).toBe(screen.getByTestId("video-editor-overlay-frame"));
+    expect(element).toHaveStyle({ left: `${copy.x}%`, top: `${copy.y}%`, width: "30%", height: "20%" });
+    expect(element.querySelector("polygon")).toHaveAttribute("transform", "rotate(315 50 50)");
+  });
+
+  async function renderArrowTimeline(trackWidth = 1000) {
+    editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: {
+      version: 1,
+      clips: [{ id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],
+      annotations: [
+        { id: "timed-a", type: "arrow", x: 10, y: 10, width: 20, height: 20, start: 2, end: 6, rotation: 90 },
+        { id: "timed-b", type: "arrow", x: 60, y: 60, width: 20, height: 20, start: 1, end: 8, rotation: 0 },
+      ],
+    } };
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Pfeil 1" });
+    vi.spyOn(screen.getByTestId("video-editor-arrow-track-timed-a"), "getBoundingClientRect")
+      .mockReturnValue({ left: -100, width: trackWidth } as DOMRect);
+    return view;
+  }
+
+  it("resizes arrow start/end independently with one undo step per pointer gesture", async () => {
+    await renderArrowTimeline();
+    const undo = screen.getByRole("button", { name: "↶ Rückgängig" });
+    fireEvent.pointerDown(screen.getByTestId("video-editor-arrow-start-timed-a"), { clientX: 200 });
+    fireEvent.pointerMove(document, { clientX: 250 });
+    fireEvent.pointerMove(document, { clientX: 300 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(3);
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(6);
+    fireEvent.pointerDown(screen.getByTestId("video-editor-arrow-end-timed-a"), { clientX: 600 });
+    fireEvent.pointerMove(document, { clientX: 700 });
+    fireEvent.pointerMove(document, { clientX: 800 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(3);
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(8);
+    fireEvent.click(undo);
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(3);
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(6);
+    fireEvent.click(undo);
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(2);
+    expect(undo).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 2" }));
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(1);
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(8);
+  });
+
+  it("clamps arrow time handles to duration and minimum gap on a zoomed/scrolled track", async () => {
+    await renderArrowTimeline(2000);
+    const start = screen.getByTestId("video-editor-arrow-start-timed-a");
+    const end = screen.getByTestId("video-editor-arrow-end-timed-a");
+    fireEvent.pointerDown(start, { clientX: 300 });
+    fireEvent.pointerMove(document, { clientX: 500 });
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(3);
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(0);
+    fireEvent.pointerMove(document, { clientX: 5000 });
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(5.9);
+    fireEvent.pointerUp(document);
+    fireEvent.pointerDown(end, { clientX: 1100 });
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(6);
+    fireEvent.pointerMove(document, { clientX: 5000 });
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(10);
+    fireEvent.pointerCancel(document);
+    fireEvent.pointerMove(document, { clientX: 1100 });
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(10);
+  });
+
+  it("updates arrow preview immediately and persists dragged times for reload and copy/paste", async () => {
+    const view = await renderArrowTimeline();
+    const video = view.container.querySelector("video")!;
+    video.currentTime = 2.5; fireEvent.timeUpdate(video);
+    expect(screen.getByTestId("video-editor-arrow-timed-a")).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByTestId("video-editor-arrow-start-timed-a"), { clientX: 200 });
+    fireEvent.pointerMove(document, { clientX: 300 });
+    expect(screen.queryByTestId("video-editor-arrow-timed-a")).not.toBeInTheDocument();
+    fireEvent.pointerUp(document);
+    video.currentTime = 7; fireEvent.timeUpdate(video);
+    fireEvent.pointerDown(screen.getByTestId("video-editor-arrow-end-timed-a"), { clientX: 600 });
+    fireEvent.pointerMove(document, { clientX: 800 });
+    expect(screen.getByTestId("video-editor-arrow-timed-a")).toBeInTheDocument();
+    fireEvent.pointerUp(document);
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations[0]).toMatchObject({ start: 3, end: 8 });
+    expect(timeline.annotations[1]).toMatchObject({ start: 1, end: 8 });
+    view.unmount();
+    editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Pfeil 1" });
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(3);
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(8);
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil kopieren" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil einfügen" }));
+    expect(screen.getByRole("button", { name: "Pfeil 3" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(3);
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(8);
   });
 
   async function renderWithInsertedVideo() {
@@ -944,6 +1169,9 @@ describe("VideoEditorModal multi-source preview", () => {
         overlays: [
           { id: "cover-frame", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20 },
         ],
+        annotations: [
+          { id: "arrow-frame", type: "arrow", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 315 },
+        ],
       },
       renderStatus: "none",
       renderError: null,
@@ -971,6 +1199,8 @@ describe("VideoEditorModal multi-source preview", () => {
       fireEvent.loadedMetadata(video);
       const frame = screen.getByTestId("video-editor-overlay-frame");
       expect(frame).toHaveStyle({ left: "0px", top: "18.75px", width: "1000px", height: "562.5px" });
+      expect(screen.getByTestId("video-editor-arrow-arrow-frame").parentElement).toBe(frame);
+      expect(screen.getByTestId("video-editor-arrow-arrow-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-cover-overlay-cover-frame")).toHaveStyle({
         left: "80%", top: "80%", width: "20%", height: "20%",
       });
@@ -984,6 +1214,7 @@ describe("VideoEditorModal multi-source preview", () => {
       });
       act(() => resizeCallback([], {} as ResizeObserver));
       expect(frame).toHaveStyle({ left: "0px", top: "131.25px", width: "600px", height: "337.5px" });
+      expect(screen.getByTestId("video-editor-arrow-arrow-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-cover-badge-cover-frame")).toHaveStyle({
         left: "80%", top: "80%",
       });
@@ -1696,6 +1927,7 @@ describe("VideoEditorModal multi-source preview", () => {
       "Trimmen",
       "Teilen",
       "Abdeckung hinzufügen",
+      "Pfeil hinzufügen",
       "Video einfügen",
       "Rückgängig",
       "Ansicht einpassen",

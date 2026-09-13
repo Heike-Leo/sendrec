@@ -25,9 +25,22 @@ interface EditorCoverOverlay {
   text?: string;
 }
 
+interface EditorAnnotation {
+  id: string;
+  type: "arrow";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  start: number;
+  end: number;
+  rotation: number;
+}
+
 interface EditorHistoryEntry {
   clips: EditorClip[];
   coverOverlays: EditorCoverOverlay[];
+  annotations: EditorAnnotation[];
 }
 
 interface StoredEditorState {
@@ -41,6 +54,7 @@ interface StoredEditorState {
       duration: number;
     }>;
     overlays?: EditorCoverOverlay[];
+    annotations?: EditorAnnotation[];
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
   renderError: string | null;
@@ -61,7 +75,7 @@ const VISIBLE_OVERLAY_TRACKS = 4;
 const OVERLAY_TRACK_HEIGHT = 38;
 const OVERLAY_TRACK_GAP = 4;
 
-function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[]) {
+function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], annotations: EditorAnnotation[] = []) {
   return JSON.stringify({
     version: 1,
     clips: clips.map((clip) => ({
@@ -72,11 +86,13 @@ function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[]) 
       duration: clip.end - clip.start,
     })),
     overlays,
+    annotations,
   });
 }
 
-function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" }) {
+function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" }) {
   const paths = {
+    arrow: <path d="M2 13 13 2M5 2h8v8" />,
     trim: <><circle cx="3.5" cy="4" r="1.5" /><circle cx="3.5" cy="12" r="1.5" /><path d="m4.8 5 7.7 6.5M4.8 11l7.7-6.5" /></>,
     split: <><rect x="1.5" y="3" width="5" height="10" rx="1" /><rect x="9.5" y="3" width="5" height="10" rx="1" /><path d="M8 2.5v11" /></>,
     cover: <rect x="2" y="3" width="12" height="10" rx="1.5" />,
@@ -131,7 +147,20 @@ export function VideoEditorModal({
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [editorHistory, setEditorHistory] = useState<EditorHistoryEntry[]>([]);
   const [coverOverlays, setCoverOverlays] = useState<EditorCoverOverlay[]>([]);
-  const [selectedCoverOverlayId, setSelectedCoverOverlayId] = useState<string | null>(null);
+  const [selectedCoverOverlayId, setCoverSelection] = useState<string | null>(null);
+  const [annotations, setAnnotations] = useState<EditorAnnotation[]>([]);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
+  const [copiedAnnotation, setCopiedAnnotation] = useState<EditorAnnotation | null>(null);
+  const annotationFrameRef = useRef<HTMLDivElement>(null);
+  const cancelAnnotationDragRef = useRef<(() => void) | null>(null);
+  function setSelectedCoverOverlayId(id: string | null) {
+    setCoverSelection(id);
+    setSelectedAnnotationId(null);
+  }
+  function selectAnnotation(id: string) {
+    setCoverSelection(null);
+    setSelectedAnnotationId(id);
+  }
   const [copiedCoverOverlay, setCopiedCoverOverlay] = useState<EditorCoverOverlay | null>(null);
   const [videoFrameRect, setVideoFrameRect] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const [clips, setClips] = useState<EditorClip[]>([
@@ -368,6 +397,8 @@ export function VideoEditorModal({
     setSelectedClipId(null);
     setEditorHistory([]);
     setCoverOverlays([]);
+    setAnnotations([]);
+    setCopiedAnnotation(null);
     setSelectedCoverOverlayId(null);
     setTimelinePlayheadTime(0);
     activeSourceVideoIdRef.current = videoId;
@@ -398,6 +429,7 @@ export function VideoEditorModal({
           end: duration,
         }];
         let restoredOverlays: EditorCoverOverlay[] = [];
+        let restoredAnnotations: EditorAnnotation[] = [];
         if (state.timeline?.version === 1 && state.timeline.clips.length > 0) {
           restoredClips = state.timeline.clips.map((clip) => ({
             id: clip.id,
@@ -411,6 +443,8 @@ export function VideoEditorModal({
             mode: overlay.mode === "blur" ? "blur" : "cover",
           }));
           setCoverOverlays(restoredOverlays);
+          restoredAnnotations = state.timeline.annotations ?? [];
+          setAnnotations(restoredAnnotations);
           setSelectedCoverOverlayId(null);
           activeClipIdRef.current = restoredClips[0].id;
           activeSourceVideoIdRef.current = restoredClips[0].sourceVideoId;
@@ -432,7 +466,7 @@ export function VideoEditorModal({
             pendingRestoredPreviewRef.current = restoredClips[0];
           }
         }
-        const restoredPayload = serializeTimeline(restoredClips, restoredOverlays);
+        const restoredPayload = serializeTimeline(restoredClips, restoredOverlays, restoredAnnotations);
         latestTimelinePayloadRef.current = restoredPayload;
         lastSavedTimelinePayloadRef.current = restoredPayload;
         editorStateLoadedRef.current = true;
@@ -491,7 +525,7 @@ export function VideoEditorModal({
   );
 
   useEffect(() => {
-    const payload = serializeTimeline(clips, coverOverlays);
+    const payload = serializeTimeline(clips, coverOverlays, annotations);
     latestTimelinePayloadRef.current = payload;
 
     if (!editorStateLoadedRef.current) return;
@@ -513,9 +547,10 @@ export function VideoEditorModal({
         setError(err instanceof Error ? err.message : "Editorstand konnte nicht gespeichert werden.");
       });
     }, OVERLAY_SAVE_DEBOUNCE_MS);
-  }, [clips, coverOverlays, videoId]);
+  }, [clips, coverOverlays, annotations, videoId]);
 
   useEffect(() => () => {
+    cancelAnnotationDragRef.current?.();
     if (overlaySaveTimerRef.current !== null) {
       window.clearTimeout(overlaySaveTimerRef.current);
     }
@@ -908,6 +943,7 @@ export function VideoEditorModal({
       {
         clips: clips.map((clip) => ({ ...clip })),
         coverOverlays: coverOverlays.map((overlay) => ({ ...overlay })),
+        annotations: annotations.map((annotation) => ({ ...annotation })),
       },
     ]);
   }
@@ -921,6 +957,7 @@ export function VideoEditorModal({
 
     setClips(previousState.clips);
     setCoverOverlays(previousState.coverOverlays);
+    setAnnotations(previousState.annotations);
     setEditorHistory((history) => history.slice(0, -1));
     setSelectedClipId(null);
     setSelectedCoverOverlayId(null);
@@ -1364,6 +1401,97 @@ export function VideoEditorModal({
     setError(null);
   }
 
+  const selectedAnnotation = annotations.find((item) => item.id === selectedAnnotationId);
+
+  function addAnnotation(source?: EditorAnnotation) {
+    if (timelineDuration <= 0) return;
+    const start = Math.min(timelinePlayheadTime, Math.max(0, timelineDuration - 0.1));
+    const annotation: EditorAnnotation = source
+      ? { ...source, id: crypto.randomUUID(),
+          // Clipboard geometry uses the same frame-relative bounds as dragging.
+          // Do not offset copies; only bring out-of-bounds positions back inside.
+          x: Math.max(0, Math.min(100 - source.width, source.x)),
+          y: Math.max(0, Math.min(100 - source.height, source.y)) }
+      : { id: crypto.randomUUID(), type: "arrow", x: 35, y: 35, width: 30, height: 20,
+          start, end: Math.min(timelineDuration, start + 5), rotation: 0 };
+    rememberEditorState();
+    setAnnotations((previous) => [...previous, annotation]);
+    selectAnnotation(annotation.id);
+  }
+
+  function updateAnnotation(patch: Partial<Pick<EditorAnnotation, "start" | "end" | "rotation">>) {
+    if (!selectedAnnotation) return;
+    rememberEditorState();
+    setAnnotations((previous) => previous.map((item) =>
+      item.id === selectedAnnotation.id ? { ...item, ...patch } : item));
+  }
+
+  function handleAnnotationPointerDown(e: React.PointerEvent<HTMLDivElement>, annotation: EditorAnnotation, resize = false) {
+    e.preventDefault();
+    e.stopPropagation();
+    selectAnnotation(annotation.id);
+    const rect = annotationFrameRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+    cancelAnnotationDragRef.current?.();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let captured = false;
+    const move = (event: PointerEvent) => {
+      if (event.clientX === startX && event.clientY === startY && !captured) return;
+      if (!captured) { rememberEditorState(); captured = true; }
+      const dx = (event.clientX - startX) / rect.width * 100;
+      const dy = (event.clientY - startY) / rect.height * 100;
+      const geometry = resize
+        ? { width: Math.min(100 - annotation.x, Math.max(5, annotation.width + dx)),
+            height: Math.min(100 - annotation.y, Math.max(5, annotation.height + dy)) }
+        : { x: Math.max(0, Math.min(100 - annotation.width, annotation.x + dx)),
+            y: Math.max(0, Math.min(100 - annotation.height, annotation.y + dy)) };
+      setAnnotations((previous) => previous.map((item) => item.id === annotation.id ? { ...item, ...geometry } : item));
+    };
+    const stop = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", stop);
+      document.removeEventListener("pointercancel", stop);
+      cancelAnnotationDragRef.current = null;
+    };
+    cancelAnnotationDragRef.current = stop;
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", stop);
+    document.addEventListener("pointercancel", stop);
+  }
+
+  function handleAnnotationTimelineResize(e: React.PointerEvent<HTMLSpanElement>, annotation: EditorAnnotation, edge: "start" | "end") {
+    e.preventDefault();
+    e.stopPropagation();
+    selectAnnotation(annotation.id);
+    const rect = e.currentTarget.parentElement?.parentElement?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || timelineDuration <= 0) return;
+    cancelAnnotationDragRef.current?.();
+    const startClientX = e.clientX;
+    let captured = false;
+    let lastValue = annotation[edge];
+    const move = (event: PointerEvent) => {
+      const rawTime = annotation[edge] + (event.clientX - startClientX) / rect.width * timelineDuration;
+      const value = edge === "start"
+        ? Math.max(0, Math.min(annotation.end - 0.1, rawTime))
+        : Math.min(timelineDuration, Math.max(annotation.start + 0.1, rawTime));
+      if (value === lastValue) return;
+      if (!captured) { rememberEditorState(); captured = true; }
+      lastValue = value;
+      setAnnotations((previous) => previous.map((item) => item.id === annotation.id ? { ...item, [edge]: value } : item));
+    };
+    const stop = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", stop);
+      document.removeEventListener("pointercancel", stop);
+      cancelAnnotationDragRef.current = null;
+    };
+    cancelAnnotationDragRef.current = stop;
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", stop);
+    document.addEventListener("pointercancel", stop);
+  }
+
   function handleAddCoverOverlay() {
     if (timelineDuration <= 0) return;
 
@@ -1521,6 +1649,7 @@ export function VideoEditorModal({
             opacity: overlay.opacity,
             text: overlay.text,
           })),
+          annotations,
         }),
       });
     } catch (err) {
@@ -1716,6 +1845,7 @@ export function VideoEditorModal({
 
             <div
               data-testid="video-editor-overlay-frame"
+              ref={annotationFrameRef}
               style={{
                 position: "absolute",
                 left: videoFrameRect.left,
@@ -1727,6 +1857,22 @@ export function VideoEditorModal({
                 pointerEvents: "none",
               }}
             >
+              {annotations.filter((item) => timelineCurrentTime >= item.start && timelineCurrentTime <= item.end).map((item) => (
+                <div key={item.id} data-testid={`video-editor-arrow-${item.id}`}
+                  onPointerDown={(e) => handleAnnotationPointerDown(e, item)}
+                  onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
+                  style={{ position: "absolute", left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`,
+                    pointerEvents: "auto", touchAction: "none", cursor: "move", boxSizing: "border-box",
+                    zIndex: selectedAnnotationId === item.id ? 4 : 3,
+                    border: selectedAnnotationId === item.id ? "1px solid #FC2667" : "1px solid transparent" }}>
+                  <svg aria-hidden="true" width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: "block", pointerEvents: "none" }}>
+                    <polygon fill="#FC2667" points="8,44 65,44 65,28 94,50 65,72 65,56 8,56" transform={`rotate(${item.rotation} 50 50)`} />
+                  </svg>
+                  {selectedAnnotationId === item.id && <div data-testid={`video-editor-arrow-resize-${item.id}`}
+                    onPointerDown={(e) => handleAnnotationPointerDown(e, item, true)}
+                    style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, background: "#FC2667", cursor: "nwse-resize", touchAction: "none" }} />}
+                </div>
+              ))}
               {visibleCoverOverlays.map(({ overlay }) => (
                 <div
                   key={overlay.id}
@@ -1949,6 +2095,14 @@ export function VideoEditorModal({
             </span>
           </span>
 
+          <span className="video-editor-tool">
+            <button type="button" className="video-editor-tool-button" aria-label="Pfeil hinzufügen"
+              aria-describedby="video-editor-tooltip-arrow" onClick={() => addAnnotation()}>
+              <EditorToolIcon name="arrow" />
+            </button>
+            <span id="video-editor-tooltip-arrow" role="tooltip" className="video-editor-tool-tooltip">Pfeil hinzufügen</span>
+          </span>
+
           {selectedClipId && (
             <button
               type="button"
@@ -2012,6 +2166,33 @@ export function VideoEditorModal({
         </div>
 
         <div className="video-editor-cover-actions" data-testid="video-editor-cover-actions">
+        {selectedAnnotation && <>
+          <span>Pfeil:</span>
+          <label>Richtung <select aria-label="Pfeilrichtung" value={selectedAnnotation.rotation}
+            onChange={(e) => updateAnnotation({ rotation: Number(e.target.value) })}>
+            {["Rechts", "Rechts unten", "Unten", "Links unten", "Links", "Links oben", "Oben", "Rechts oben"].map((label, index) =>
+              <option key={label} value={index * 45}>{label}</option>)}
+          </select></label>
+          <label>Start <input aria-label="Pfeil Start" type="number" min={0} max={selectedAnnotation.end - 0.1} step={0.1}
+            value={selectedAnnotation.start} onChange={(e) => {
+              const value = Number(e.target.value);
+              if (Number.isFinite(value)) updateAnnotation({ start: Math.max(0, Math.min(value, selectedAnnotation.end - 0.1)) });
+            }} style={{ width: 70 }} /></label>
+          <label>Ende <input aria-label="Pfeil Ende" type="number" min={selectedAnnotation.start + 0.1} max={timelineDuration} step={0.1}
+            value={selectedAnnotation.end} onChange={(e) => {
+              const value = Number(e.target.value);
+              if (Number.isFinite(value)) updateAnnotation({ end: Math.min(timelineDuration, Math.max(value, selectedAnnotation.start + 0.1)) });
+            }} style={{ width: 70 }} /></label>
+          <button type="button" className="video-editor-tool-button" aria-label="Pfeil kopieren" title="Pfeil kopieren"
+            onClick={() => setCopiedAnnotation({ ...selectedAnnotation })}><EditorToolIcon name="copy" /></button>
+          <button type="button" className="video-editor-tool-button" aria-label="Pfeil löschen" title="Pfeil löschen" onClick={() => {
+            rememberEditorState();
+            setAnnotations((previous) => previous.filter((item) => item.id !== selectedAnnotation.id));
+            setSelectedAnnotationId(null);
+          }}><EditorToolIcon name="delete" /></button>
+        </>}
+        {copiedAnnotation && <button type="button" className="video-editor-tool-button" aria-label="Pfeil einfügen" title="Pfeil einfügen"
+          onClick={() => addAnnotation(copiedAnnotation)}><EditorToolIcon name="paste" /></button>}
         {selectedCoverOverlay && (
           <>
           <strong className="video-editor-cover-actions-label">Abdeckung:</strong>
@@ -2659,6 +2840,28 @@ export function VideoEditorModal({
         </div>
         </div>
 
+          {annotations.length > 0 && <div data-testid="video-editor-annotation-tracks"
+            onClick={() => setSelectedCoverOverlayId(null)}
+            style={{ width: `${timelineZoom * 100}%`, minWidth: "100%", marginBottom: 4, display: "flex", flexDirection: "column", gap: 4 }}>
+            {annotations.map((item, index) => <div key={item.id} data-testid={`video-editor-arrow-track-${item.id}`}
+              style={{ height: 38, position: "relative", background: "#F8FAFC", border: "1px solid var(--color-border)", borderRadius: 8 }}>
+              <button type="button" aria-label={`Pfeil ${index + 1}`} aria-pressed={selectedAnnotationId === item.id}
+                onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
+                style={{ position: "absolute", left: `${item.start / timelineDuration * 100}%`, width: `${(item.end - item.start) / timelineDuration * 100}%`,
+                  top: 3, bottom: 3, overflow: "hidden", whiteSpace: "nowrap", background: "#FCE7EF", color: "#881337",
+                  border: selectedAnnotationId === item.id ? "2px solid #FC2667" : "1px solid #F9A8C0", borderRadius: 5 }}>
+                Pfeil {index + 1}
+                {(["start", "end"] as const).map((edge) => <span key={edge}
+                  data-testid={`video-editor-arrow-${edge}-${item.id}`}
+                  title={edge === "start" ? "Start des Pfeils ziehen" : "Ende des Pfeils ziehen"}
+                  onPointerDown={(e) => handleAnnotationTimelineResize(e, item, edge)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ position: "absolute", top: 0, bottom: 0, width: 8,
+                    [edge === "start" ? "left" : "right"]: 0,
+                    background: "#FC2667", cursor: "ew-resize", touchAction: "none" }} />)}
+              </button>
+            </div>)}
+          </div>}
           <div
             ref={timelineRef}
             data-testid="video-editor-timeline"

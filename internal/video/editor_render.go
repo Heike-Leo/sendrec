@@ -44,10 +44,24 @@ type editorCoverOverlay struct {
 	Text    string   `json:"text,omitempty"`
 }
 
+// Preview annotations are persisted, but not consumed by the export graph.
+type editorAnnotation struct {
+	ID       string  `json:"id"`
+	Type     string  `json:"type"`
+	X        float64 `json:"x"`
+	Y        float64 `json:"y"`
+	Width    float64 `json:"width"`
+	Height   float64 `json:"height"`
+	Start    float64 `json:"start"`
+	End      float64 `json:"end"`
+	Rotation float64 `json:"rotation"`
+}
+
 type editTimeline struct {
-	Version  int                  `json:"version"`
-	Clips    []editClip           `json:"clips"`
-	Overlays []editorCoverOverlay `json:"overlays,omitempty"`
+	Version     int                  `json:"version"`
+	Clips       []editClip           `json:"clips"`
+	Overlays    []editorCoverOverlay `json:"overlays,omitempty"`
+	Annotations []editorAnnotation  `json:"annotations,omitempty"`
 }
 
 type editorStateResponse struct {
@@ -118,6 +132,31 @@ func validateEditTimeline(timeline *editTimeline) error {
 
 	if len(timeline.Overlays) > 500 {
 		return fmt.Errorf("timeline contains too many overlays")
+	}
+	if len(timeline.Annotations) > 500 {
+		return fmt.Errorf("timeline contains too many annotations")
+	}
+	annotationIDs := make(map[string]bool, len(timeline.Annotations))
+	for _, annotation := range timeline.Annotations {
+		if strings.TrimSpace(annotation.ID) == "" || annotationIDs[annotation.ID] || annotation.Type != "arrow" {
+			return fmt.Errorf("annotation requires a unique id and type arrow")
+		}
+		annotationIDs[annotation.ID] = true
+		for _, value := range []float64{annotation.X, annotation.Y, annotation.Width, annotation.Height, annotation.Start, annotation.End, annotation.Rotation} {
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return fmt.Errorf("annotation values must be finite")
+			}
+		}
+		if annotation.X < 0 || annotation.Y < 0 || annotation.Width <= 0 || annotation.Height <= 0 ||
+			annotation.X+annotation.Width > 100.001 || annotation.Y+annotation.Height > 100.001 {
+			return fmt.Errorf("annotation must stay inside video bounds")
+		}
+		if annotation.Start < 0 || annotation.End <= annotation.Start || annotation.End > totalDuration+0.001 {
+			return fmt.Errorf("annotation time range is invalid")
+		}
+		if annotation.Rotation < 0 || annotation.Rotation >= 360 || math.Mod(annotation.Rotation, 45) != 0 {
+			return fmt.Errorf("annotation rotation must be a multiple of 45 in [0,360)")
+		}
 	}
 
 	overlayIDs := make(map[string]struct{}, len(timeline.Overlays))
