@@ -76,7 +76,7 @@ func TestValidateAndPersistArrowAnnotations(t *testing.T) {
 		{ID: "arrow", Type: "circle", Width: 10, Height: 10, End: 5},
 		{ID: "arrow", Type: "arrow", X: 95, Width: 10, Height: 10, End: 5},
 		{ID: "arrow", Type: "arrow", Width: 10, Height: 10, End: 20},
-		{ID: "arrow", Type: "arrow", Width: 10, Height: 10, End: 5, Rotation: 46},
+		{ID: "arrow", Type: "arrow", Width: 10, Height: 10, End: 5, Rotation: math.Inf(1)},
 		{ID: "arrow", Type: "arrow", Width: 10, Height: 10, End: 5, Rotation: math.NaN()},
 	} {
 		timeline.Annotations = []editorAnnotation{invalid}
@@ -87,6 +87,31 @@ func TestValidateAndPersistArrowAnnotations(t *testing.T) {
 	timeline.Annotations = append(restored.Annotations, restored.Annotations[0])
 	if validateEditTimeline(&timeline) == nil {
 		t.Fatal("accepted duplicate annotation ids")
+	}
+}
+
+func TestValidateAnnotationFreeRotation(t *testing.T) {
+	for _, angle := range []float64{0, 45, 315, 37, 37.123, 359.999, -323, 397} {
+		timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
+		timeline.Annotations = []editorAnnotation{{ID: "arrow", Type: "arrow", Width: 20, Height: 20, End: 5, Rotation: angle}}
+		if err := validateEditTimeline(&timeline); err != nil {
+			t.Fatal(err)
+		}
+		want := angle
+		if angle < 0 || angle >= 360 {
+			want = math.Mod(math.Mod(angle, 360)+360, 360)
+		}
+		if timeline.Annotations[0].Rotation != want {
+			t.Fatalf("rotation %f normalized incorrectly", angle)
+		}
+		encoded, err := json.Marshal(timeline)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored editTimeline
+		if err := json.Unmarshal(encoded, &restored); err != nil || restored.Annotations[0].Rotation != want {
+			t.Fatalf("rotation did not survive persistence: %s, %v", encoded, err)
+		}
 	}
 }
 

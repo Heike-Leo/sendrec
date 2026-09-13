@@ -1460,6 +1460,44 @@ export function VideoEditorModal({
     document.addEventListener("pointercancel", stop);
   }
 
+  function handleAnnotationRotation(e: React.PointerEvent<HTMLButtonElement>, annotation: EditorAnnotation) {
+    e.preventDefault();
+    e.stopPropagation();
+    selectAnnotation(annotation.id);
+    const rect = annotationFrameRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+    cancelAnnotationDragRef.current?.();
+    const width = rect.width * annotation.width / 100;
+    const height = rect.height * annotation.height / 100;
+    const cx = rect.left + rect.width * (annotation.x + annotation.width / 2) / 100;
+    const cy = rect.top + rect.height * (annotation.y + annotation.height / 2) / 100;
+    // Undo the SVG viewport's non-uniform scale before measuring its angle.
+    // Rotation remains in the existing 100x100 viewBox around (50,50).
+    const angleAt = (x: number, y: number) => Math.atan2((y - cy) / height, (x - cx) / width) * 180 / Math.PI;
+    const initialAngle = angleAt(e.clientX, e.clientY);
+    let captured = false;
+    let lastRotation = annotation.rotation;
+    const move = (event: PointerEvent) => {
+      if (Math.hypot(event.clientX - cx, event.clientY - cy) < 2) return;
+      const angle = annotation.rotation + angleAt(event.clientX, event.clientY) - initialAngle;
+      const rotation = Math.round(((angle % 360 + 360) % 360) * 1000) / 1000 % 360;
+      if (rotation === lastRotation) return;
+      if (!captured) { rememberEditorState(); captured = true; }
+      lastRotation = rotation;
+      setAnnotations((previous) => previous.map((item) => item.id === annotation.id ? { ...item, rotation } : item));
+    };
+    const stop = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", stop);
+      document.removeEventListener("pointercancel", stop);
+      cancelAnnotationDragRef.current = null;
+    };
+    cancelAnnotationDragRef.current = stop;
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", stop);
+    document.addEventListener("pointercancel", stop);
+  }
+
   function handleAnnotationTimelineResize(e: React.PointerEvent<HTMLSpanElement>, annotation: EditorAnnotation, edge: "start" | "end") {
     e.preventDefault();
     e.stopPropagation();
@@ -1866,8 +1904,21 @@ export function VideoEditorModal({
                     zIndex: selectedAnnotationId === item.id ? 4 : 3,
                     border: selectedAnnotationId === item.id ? "1px solid #FC2667" : "1px solid transparent" }}>
                   <svg aria-hidden="true" width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: "block", pointerEvents: "none" }}>
+                    {/* Every vertex is within radius 44 of (50,50), so at any
+                        angle the actual polygon stays inside this viewport. */}
                     <polygon fill="#FC2667" points="8,44 65,44 65,28 94,50 65,72 65,56 8,56" transform={`rotate(${item.rotation} 50 50)`} />
                   </svg>
+                  {selectedAnnotationId === item.id && <>
+                    <span aria-hidden="true" style={{ position: "absolute", right: 5, top: Math.max(-14, -videoFrameRect.height * item.y / 100),
+                      width: 1, height: 18, background: "#FC2667", pointerEvents: "none" }} />
+                    <button type="button" aria-label="Pfeil drehen" title="Pfeil drehen"
+                      data-testid={`video-editor-arrow-rotate-${item.id}`}
+                      onPointerDown={(e) => handleAnnotationRotation(e, item)}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ position: "absolute", right: 0, top: Math.max(-18, -videoFrameRect.height * item.y / 100),
+                        width: 12, height: 12, minWidth: 0, padding: 0, borderRadius: "50%", border: "2px solid #FC2667",
+                        background: "#FFFFFF", cursor: "grab", touchAction: "none" }} />
+                  </>}
                   {selectedAnnotationId === item.id && <div data-testid={`video-editor-arrow-resize-${item.id}`}
                     onPointerDown={(e) => handleAnnotationPointerDown(e, item, true)}
                     style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, background: "#FC2667", cursor: "nwse-resize", touchAction: "none" }} />}
@@ -2170,6 +2221,7 @@ export function VideoEditorModal({
           <span>Pfeil:</span>
           <label>Richtung <select aria-label="Pfeilrichtung" value={selectedAnnotation.rotation}
             onChange={(e) => updateAnnotation({ rotation: Number(e.target.value) })}>
+            {selectedAnnotation.rotation % 45 !== 0 && <option value={selectedAnnotation.rotation}>{selectedAnnotation.rotation}°</option>}
             {["Rechts", "Rechts unten", "Unten", "Links unten", "Links", "Links oben", "Oben", "Rechts oben"].map((label, index) =>
               <option key={label} value={index * 45}>{label}</option>)}
           </select></label>

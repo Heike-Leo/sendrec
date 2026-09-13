@@ -299,6 +299,83 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(8);
   });
 
+  async function setupArrowRotation() {
+    const view = render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
+    const frame = screen.getByTestId("video-editor-overlay-frame");
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 100, top: 50, width: 1000, height: 500 } as DOMRect);
+    const point = (angle: number) => ({ clientX: 600 + 150 * Math.cos(angle * Math.PI / 180), clientY: 275 + 50 * Math.sin(angle * Math.PI / 180) });
+    return { ...view, frame, point };
+  }
+
+  it("rotates about the arrow center continuously with a single undo step and isolated selection", async () => {
+    const { frame, point } = await setupArrowRotation();
+    fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
+    expect(screen.queryByRole("button", { name: "Pfeil drehen" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Pfeil drehen" }), point(0));
+    fireEvent.pointerMove(document, point(37));
+    expect(screen.getByLabelText("Pfeilrichtung")).toHaveValue("37");
+    fireEvent.pointerMove(document, point(82));
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Pfeilrichtung")).toHaveValue("82");
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    expect(screen.getByLabelText("Pfeilrichtung")).toHaveValue("0");
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    fireEvent.change(screen.getByLabelText("Pfeilrichtung"), { target: { value: "45" } });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Pfeil drehen" }), point(45));
+    fireEvent.pointerMove(document, point(37));
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Pfeilrichtung")).toHaveValue("37");
+    const arrows = frame.querySelectorAll('[data-testid^="video-editor-arrow-"] > svg');
+    expect(arrows[0].querySelector("polygon")).toHaveAttribute("transform", "rotate(37 50 50)");
+    expect(arrows[1].querySelector("polygon")).toHaveAttribute("transform", "rotate(0 50 50)");
+    fireEvent.pointerDown(arrows[0].parentElement!, { clientX: 500, clientY: 250 });
+    fireEvent.pointerMove(document, { clientX: 5000, clientY: 5000 });
+    fireEvent.pointerUp(document);
+    expect(arrows[0].parentElement).toHaveStyle({ left: "70%", top: "80%" });
+    fireEvent.pointerDown(frame.querySelector('[data-testid^="video-editor-arrow-resize-"]')!, { clientX: 500, clientY: 250 });
+    fireEvent.pointerMove(document, { clientX: 450, clientY: 225 });
+    fireEvent.pointerUp(document);
+    expect(arrows[0].parentElement).toHaveStyle({ width: "25%", height: "15%" });
+    expect(arrows[0].querySelector("polygon")).toHaveAttribute("transform", "rotate(37 50 50)");
+    // Check the actual rotated polygon, not just the unrotated selection box.
+    const vertices = arrows[0].querySelector("polygon")!.getAttribute("points")!.split(" ").map((p) => p.split(",").map(Number));
+    for (let angle = 0; angle < 360; angle++) {
+      const radians = angle * Math.PI / 180;
+      for (const [x, y] of vertices) {
+        const rx = 50 + (x - 50) * Math.cos(radians) - (y - 50) * Math.sin(radians);
+        const ry = 50 + (x - 50) * Math.sin(radians) + (y - 50) * Math.cos(radians);
+        expect(rx).toBeGreaterThanOrEqual(0); expect(rx).toBeLessThanOrEqual(100);
+        expect(ry).toBeGreaterThanOrEqual(0); expect(ry).toBeLessThanOrEqual(100);
+      }
+    }
+  });
+
+  it("persists and copies exact free rotation and restores it after reload", async () => {
+    const view = await setupArrowRotation();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Pfeil drehen" }), view.point(0));
+    fireEvent.pointerMove(document, view.point(37));
+    fireEvent.pointerUp(document);
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil kopieren" }));
+    fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations.map((a: { rotation: number }) => a.rotation)).toEqual([37, 37]);
+    view.unmount();
+    editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline };
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Pfeil 2" });
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 2" }));
+    expect(screen.getByLabelText("Pfeilrichtung")).toHaveValue("37");
+    fireEvent.change(screen.getByLabelText("Pfeilrichtung"), { target: { value: "90" } });
+    expect(screen.getByLabelText("Pfeilrichtung")).toHaveValue("90");
+  });
+
   async function renderWithInsertedVideo() {
     const user = userEvent.setup();
     libraryVideos = [
@@ -1170,7 +1247,7 @@ describe("VideoEditorModal multi-source preview", () => {
           { id: "cover-frame", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20 },
         ],
         annotations: [
-          { id: "arrow-frame", type: "arrow", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 315 },
+          { id: "arrow-frame", type: "arrow", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 37 },
         ],
       },
       renderStatus: "none",
@@ -1214,6 +1291,7 @@ describe("VideoEditorModal multi-source preview", () => {
       });
       act(() => resizeCallback([], {} as ResizeObserver));
       expect(frame).toHaveStyle({ left: "0px", top: "131.25px", width: "600px", height: "337.5px" });
+      expect(screen.getByTestId("video-editor-arrow-arrow-frame").querySelector("polygon")).toHaveAttribute("transform", "rotate(37 50 50)");
       expect(screen.getByTestId("video-editor-arrow-arrow-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-cover-badge-cover-frame")).toHaveStyle({
         left: "80%", top: "80%",

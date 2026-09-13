@@ -137,7 +137,8 @@ func validateEditTimeline(timeline *editTimeline) error {
 		return fmt.Errorf("timeline contains too many annotations")
 	}
 	annotationIDs := make(map[string]bool, len(timeline.Annotations))
-	for _, annotation := range timeline.Annotations {
+	for i := range timeline.Annotations {
+		annotation := &timeline.Annotations[i]
 		if strings.TrimSpace(annotation.ID) == "" || annotationIDs[annotation.ID] || annotation.Type != "arrow" {
 			return fmt.Errorf("annotation requires a unique id and type arrow")
 		}
@@ -154,8 +155,8 @@ func validateEditTimeline(timeline *editTimeline) error {
 		if annotation.Start < 0 || annotation.End <= annotation.Start || annotation.End > totalDuration+0.001 {
 			return fmt.Errorf("annotation time range is invalid")
 		}
-		if annotation.Rotation < 0 || annotation.Rotation >= 360 || math.Mod(annotation.Rotation, 45) != 0 {
-			return fmt.Errorf("annotation rotation must be a multiple of 45 in [0,360)")
+		if annotation.Rotation < 0 || annotation.Rotation >= 360 {
+			annotation.Rotation = math.Mod(math.Mod(annotation.Rotation, 360)+360, 360)
 		}
 	}
 
