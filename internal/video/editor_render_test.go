@@ -90,6 +90,31 @@ func TestValidateAndPersistArrowAnnotations(t *testing.T) {
 	}
 }
 
+func TestValidateAnnotationColor(t *testing.T) {
+	for _, color := range []string{"", "#FC2667", "#123abc", "#000000", "#FFFFFF"} {
+		timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
+		timeline.Annotations = []editorAnnotation{{ID: "arrow", Type: "arrow", Width: 20, Height: 20, End: 5, Rotation: 37, Color: color}}
+		if err := validateEditTimeline(&timeline); err != nil {
+			t.Fatalf("color %q: %v", color, err)
+		}
+		encoded, err := json.Marshal(timeline)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored editTimeline
+		if err := json.Unmarshal(encoded, &restored); err != nil || restored.Annotations[0] != timeline.Annotations[0] {
+			t.Fatalf("color did not survive persistence: %s, %v", encoded, err)
+		}
+	}
+	for _, color := range []string{"#fff", "#12345678", "red", "123456", "#gggggg", " #123456", "#123456;movie=x"} {
+		timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
+		timeline.Annotations = []editorAnnotation{{ID: "arrow", Type: "arrow", Width: 20, Height: 20, End: 5, Color: color}}
+		if validateEditTimeline(&timeline) == nil {
+			t.Fatalf("accepted invalid color %q", color)
+		}
+	}
+}
+
 func TestValidateAnnotationFreeRotation(t *testing.T) {
 	for _, angle := range []float64{0, 45, 315, 37, 37.123, 359.999, -323, 397} {
 		timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
@@ -405,7 +430,10 @@ func TestPrepareCoverTextFiles(t *testing.T) {
 }
 
 func TestCoverTextBounds(t *testing.T) {
-	for _, size := range []struct{ width, height float64; visible bool }{
+	for _, size := range []struct {
+		width, height float64
+		visible       bool
+	}{
 		{40, 20, true}, {2, 4, true}, {1, 20, false}, {40, 1, false},
 	} {
 		overlay := editorCoverOverlay{X: 10.11, Y: 20.11, Width: size.width, Height: size.height, Text: "Text"}

@@ -55,13 +55,14 @@ type editorAnnotation struct {
 	Start    float64 `json:"start"`
 	End      float64 `json:"end"`
 	Rotation float64 `json:"rotation"`
+	Color    string  `json:"color,omitempty"`
 }
 
 type editTimeline struct {
 	Version     int                  `json:"version"`
 	Clips       []editClip           `json:"clips"`
 	Overlays    []editorCoverOverlay `json:"overlays,omitempty"`
-	Annotations []editorAnnotation  `json:"annotations,omitempty"`
+	Annotations []editorAnnotation   `json:"annotations,omitempty"`
 }
 
 type editorStateResponse struct {
@@ -143,6 +144,9 @@ func validateEditTimeline(timeline *editTimeline) error {
 			return fmt.Errorf("annotation requires a unique id and type arrow")
 		}
 		annotationIDs[annotation.ID] = true
+		if annotation.Color != "" && !isEditorCoverColor(annotation.Color) {
+			return fmt.Errorf("annotation color must be a six-digit hex color")
+		}
 		for _, value := range []float64{annotation.X, annotation.Y, annotation.Width, annotation.Height, annotation.Start, annotation.End, annotation.Rotation} {
 			if math.IsNaN(value) || math.IsInf(value, 0) {
 				return fmt.Errorf("annotation values must be finite")

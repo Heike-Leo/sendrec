@@ -36,7 +36,7 @@ let editorState: typeof emptyEditorState | {
         opacity?: number;
         text?: string;
       }>;
-      annotations?: Array<{ id: string; type: "arrow"; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number }>;
+      annotations?: Array<{ id: string; type: "arrow"; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number; color?: string }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
   renderError: string | null;
@@ -75,6 +75,36 @@ describe("VideoEditorModal multi-source preview", () => {
     });
   });
 
+  it("colors legacy arrows independently and undoes color without changing geometry or timing", async () => {
+    const original = { id: "legacy", type: "arrow" as const, x: 10, y: 20, width: 25, height: 25, start: 0, end: 5, rotation: 37 };
+    editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: {
+      version: 1, clips: [{ id: "clip", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],
+      annotations: [original, { ...original, id: "colored", color: "#123abc" }],
+    } };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Pfeil 1" });
+    const polygon = (id: string) => screen.getByTestId(`video-editor-arrow-${id}`).querySelector("polygon");
+    expect(polygon("legacy")).toHaveAttribute("fill", "#FC2667");
+    expect(polygon("colored")).toHaveAttribute("fill", "#123abc");
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    expect(screen.getByLabelText("Pfeilfarbe")).toHaveValue("#fc2667");
+    fireEvent.change(screen.getByLabelText("Pfeilfarbe"), { target: { value: "#ff9900" } });
+    expect(polygon("legacy")).toHaveAttribute("fill", "#ff9900");
+    expect(polygon("legacy")).toHaveAttribute("transform", "rotate(37 50 50)");
+    expect(polygon("colored")).toHaveAttribute("fill", "#123abc");
+    expect(screen.getByTestId("video-editor-arrow-resize-legacy")).toHaveStyle({ background: "#FC2667" });
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(0);
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(5);
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(true));
+    const payload = JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
+    expect(payload.annotations[0]).toEqual({ ...original, color: "#ff9900" });
+    fireEvent.change(screen.getByLabelText("Pfeilfarbe"), { target: { value: "#ffffff" } });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(polygon("legacy")).toHaveAttribute("fill", "#ff9900");
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(polygon("legacy")).toHaveAttribute("fill", "#FC2667");
+  });
+
   it("adds an independent arrow and undoes direction, timing and creation", async () => {
     const { container } = render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-timeline");
@@ -111,6 +141,7 @@ describe("VideoEditorModal multi-source preview", () => {
     await screen.findByTestId("video-editor-timeline");
     fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
     fireEvent.change(screen.getByLabelText("Pfeilrichtung"), { target: { value: "225" } });
+    fireEvent.change(screen.getByLabelText("Pfeilfarbe"), { target: { value: "#12ab34" } });
     fireEvent.click(screen.getByRole("button", { name: "Pfeil kopieren" }));
     fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
     expect(screen.queryByLabelText("Pfeil löschen")).not.toBeInTheDocument();
@@ -118,6 +149,7 @@ describe("VideoEditorModal multi-source preview", () => {
     await waitFor(() => expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(true));
     const payload = JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
     expect(payload.annotations).toHaveLength(2);
+    expect(payload.annotations[0].color).toBe("#12ab34");
     expect(payload.annotations[1]).toEqual({ ...payload.annotations[0], id: payload.annotations[1].id });
     expect(payload.annotations[1].id).not.toBe(payload.annotations[0].id);
     expect(payload.overlays).toEqual([]);
@@ -127,6 +159,8 @@ describe("VideoEditorModal multi-source preview", () => {
     await screen.findByRole("button", { name: "Pfeil 2" });
     fireEvent.click(screen.getByRole("button", { name: "Pfeil 2" }));
     expect(screen.getByLabelText("Pfeilrichtung")).toHaveValue("225");
+    expect(screen.getByLabelText("Pfeilfarbe")).toHaveValue("#12ab34");
+    expect(screen.getByTestId(`video-editor-arrow-${payload.annotations[1].id}`).querySelector("polygon")).toHaveAttribute("fill", "#12ab34");
     fireEvent.click(screen.getByRole("button", { name: "Pfeil löschen" }));
     expect(screen.queryByRole("button", { name: "Pfeil 2" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));

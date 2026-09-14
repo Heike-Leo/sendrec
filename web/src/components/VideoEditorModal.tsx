@@ -35,6 +35,7 @@ interface EditorAnnotation {
   start: number;
   end: number;
   rotation: number;
+  color?: string;
 }
 
 interface EditorHistoryEntry {
@@ -1419,8 +1420,9 @@ export function VideoEditorModal({
     selectAnnotation(annotation.id);
   }
 
-  function updateAnnotation(patch: Partial<Pick<EditorAnnotation, "start" | "end" | "rotation">>) {
+  function updateAnnotation(patch: Partial<Pick<EditorAnnotation, "start" | "end" | "rotation" | "color">>) {
     if (!selectedAnnotation) return;
+    if (patch.color !== undefined && (!/^#[0-9a-fA-F]{6}$/.test(patch.color) || patch.color === (selectedAnnotation.color ?? "#FC2667"))) return;
     rememberEditorState();
     setAnnotations((previous) => previous.map((item) =>
       item.id === selectedAnnotation.id ? { ...item, ...patch } : item));
@@ -1912,7 +1914,7 @@ export function VideoEditorModal({
                   <svg aria-hidden="true" width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: "block", pointerEvents: "none" }}>
                     {/* Every vertex is within radius 44 of (50,50), so at any
                         angle the actual polygon stays inside this viewport. */}
-                    <polygon fill="#FC2667" points="8,44 65,44 65,28 94,50 65,72 65,56 8,56" transform={`rotate(${item.rotation} 50 50)`} />
+                    <polygon fill={item.color ?? "#FC2667"} points="8,44 65,44 65,28 94,50 65,72 65,56 8,56" transform={`rotate(${item.rotation} 50 50)`} />
                   </svg>
                   {selectedAnnotationId === item.id && <>
                     <span aria-hidden="true" style={{ position: "absolute", right: 5, top: Math.max(-14, -videoFrameRect.height * item.y / 100),
@@ -2225,6 +2227,9 @@ export function VideoEditorModal({
         <div className="video-editor-cover-actions" data-testid="video-editor-cover-actions">
         {selectedAnnotation && <>
           <span>Pfeil:</span>
+          <label>Farbe <input type="color" aria-label="Pfeilfarbe" value={selectedAnnotation.color ?? "#FC2667"}
+            onChange={(e) => updateAnnotation({ color: e.target.value })}
+            style={{ width: 32, height: 28, padding: 2, cursor: "pointer" }} /></label>
           <label>Richtung <select aria-label="Pfeilrichtung" value={selectedAnnotation.rotation}
             onChange={(e) => updateAnnotation({ rotation: Number(e.target.value) })}>
             {selectedAnnotation.rotation % 45 !== 0 && <option value={selectedAnnotation.rotation}>{selectedAnnotation.rotation}°</option>}
