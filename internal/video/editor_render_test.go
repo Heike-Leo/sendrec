@@ -119,7 +119,7 @@ func TestValidateAnnotationColor(t *testing.T) {
 	}
 }
 
-func TestSymbolPersistenceWithoutExport(t *testing.T) {
+func TestSymbolPersistenceWithExport(t *testing.T) {
 	for _, symbol := range []string{"check", "cross", "warning", "info", "star", "pointer", "plus", "question"} {
 		timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
 		timeline.Annotations = []editorAnnotation{{ID: "symbol", Type: "symbol", Symbol: symbol, X: 12, Y: 23, Width: 20, Height: 20, Start: 1, End: 5, Rotation: 37, Color: "#123abc"}}
@@ -134,8 +134,8 @@ func TestSymbolPersistenceWithoutExport(t *testing.T) {
 		if err := json.Unmarshal(encoded, &restored); err != nil || restored.Annotations[0] != timeline.Annotations[0] {
 			t.Fatalf("symbol lost in persistence: %s %v", encoded, err)
 		}
-		if len(exportAnnotations(restored.Annotations)) != 0 {
-			t.Fatal("preview-only symbol entered export")
+		if len(exportAnnotations(restored.Annotations)) != 1 {
+			t.Fatal("symbol missing from export")
 		}
 		for _, invalid := range []string{"", "unknown", "<svg>"} {
 			timeline.Annotations[0].Symbol = invalid
