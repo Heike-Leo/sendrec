@@ -326,6 +326,89 @@ describe("VideoEditorModal multi-source preview", () => {
   });
 
 
+  it.each([0, 180, 90, 270, 45, 37, 217].flatMap((angle) => [[angle, 1000, 500], [angle, 640, 800]]))(
+    "resizes a %s-degree line along its screen axis at %sx%s with a fixed endpoint",
+    async (angle, frameWidth, frameHeight) => {
+      const original = { id: "line-axis", type: "line" as const, x: 30, y: 30, width: 30, height: 20, start: 0, end: 5, rotation: angle, color: "#123abc" };
+      editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: {
+        version: 1, clips: [{ id: "clip", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],
+        annotations: [original, { ...original, id: "line-other", rotation: 23 }],
+      }};
+      const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+      await screen.findByRole("button", { name: "Linie 1" });
+      const frame = screen.getByTestId("video-editor-overlay-frame");
+      vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 17, top: 29, width: frameWidth, height: frameHeight } as DOMRect);
+      fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+      const geometry = () => {
+        const e = screen.getByTestId("video-editor-line-line-axis");
+        return { x: parseFloat(e.style.left), y: parseFloat(e.style.top), width: parseFloat(e.style.width), height: parseFloat(e.style.height) };
+      };
+      const ends = () => {
+        const g = geometry(), r = angle * Math.PI / 180;
+        return [-.42, .42].map((sign) => ({
+          x: 17 + (g.x + g.width * (.5 + sign * Math.cos(r))) * frameWidth / 100,
+          y: 29 + (g.y + g.height * (.5 + sign * Math.sin(r))) * frameHeight / 100,
+        }));
+      };
+      const [fixed, moving] = ends();
+      const length = Math.hypot(moving.x-fixed.x, moving.y-fixed.y);
+      const ux = (moving.x-fixed.x)/length, uy = (moving.y-fixed.y)/length;
+      // Grabbing slightly off-center must not cause an initial jump.
+      const start = { clientX: moving.x+2, clientY: moving.y-3 };
+      const drag = (distance: number, normal = 0) => fireEvent.pointerMove(document, {
+        clientX: start.clientX + ux*distance - uy*normal,
+        clientY: start.clientY + uy*distance + ux*normal,
+      });
+      const assertEnds = (distance: number) => {
+        const [a,b] = ends();
+        expect(a.x).toBeCloseTo(fixed.x, 7); expect(a.y).toBeCloseTo(fixed.y, 7);
+        expect(b.x).toBeCloseTo(moving.x+ux*distance, 7); expect(b.y).toBeCloseTo(moving.y+uy*distance, 7);
+        expect(screen.getByLabelText("Linienrichtung")).toHaveValue(String(angle));
+      };
+      fireEvent.pointerDown(screen.getByTestId("video-editor-line-resize-line-axis"), start);
+      drag(0); assertEnds(0);
+      drag(0, 10); assertEnds(0);
+      expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+      drag(1); assertEnds(1);
+      drag(20, 10); assertEnds(20);
+      drag(100000);
+      const clamped = geometry();
+      const limit = (a: number, d: number, low: number, high: number) => Math.abs(d) < 1e-10 ? Infinity : ((d > 0 ? high : low) - a) / d;
+      const maxLength = Math.min(limit(fixed.x, ux, 17, 17+frameWidth), limit(fixed.y, uy, 29, 29+frameHeight));
+      expect(ends()[1].x).toBeCloseTo(fixed.x + ux * maxLength, 7);
+      expect(ends()[1].y).toBeCloseTo(fixed.y + uy * maxLength, 7);
+      expect(ends()[1].x).toBeGreaterThanOrEqual(17-1e-8);
+      expect(ends()[1].x).toBeLessThanOrEqual(17+frameWidth+1e-8);
+      expect(ends()[1].y).toBeGreaterThanOrEqual(29-1e-8);
+      expect(ends()[1].y).toBeLessThanOrEqual(29+frameHeight+1e-8);
+      expect(ends()[0].x).toBeCloseTo(fixed.x, 7); expect(ends()[0].y).toBeCloseTo(fixed.y, 7);
+      drag(200000); expect(geometry()).toEqual(clamped);
+      drag(-10); assertEnds(-10);
+      drag(20); assertEnds(20);
+      fireEvent.pointerUp(document);
+      expect(screen.getByTestId("video-editor-line-line-other")).toHaveStyle({ left: "30%", top: "30%", width: "30%", height: "20%" });
+      fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+      fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+      assertEnds(0);
+      expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+      fireEvent.pointerDown(screen.getByTestId("video-editor-line-resize-line-axis"), start);
+      drag(100000); fireEvent.pointerUp(document);
+      const savedGeometry = geometry();
+      await waitFor(() => {
+        const call = mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT").at(-1);
+        expect(call).toBeDefined();
+        expect(JSON.parse(call![1].body).annotations[0].width).toBeCloseTo(savedGeometry.width);
+      });
+      const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT").at(-1)![1].body);
+      view.unmount(); editorState = { ...emptyEditorState, timeline };
+      render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+      await screen.findByRole("button", { name: "Linie 1" });
+      fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+      expect(geometry()).toEqual(savedGeometry);
+      expect(ends()[1].x).toBeCloseTo(fixed.x + ux * maxLength, 7);
+      expect(ends()[1].y).toBeCloseTo(fixed.y + uy * maxLength, 7);
+    });
+
   it("edits line length, rotation and color without changing stroke width, preserving copy and reload", async () => {
     const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-timeline");
@@ -388,8 +471,8 @@ describe("VideoEditorModal multi-source preview", () => {
     rect.mockReturnValue({ left: 0, top: 0, width: 500, height: 250 } as DOMRect);
     fireEvent.pointerDown(hit(), { clientX: 0, clientY: 0 });
     fireEvent.pointerMove(document, { clientX: 5000, clientY: 5000 });fireEvent.pointerUp(document);
-    expect(parseFloat(box().style.left)+parseFloat(box().style.width)).toBeCloseTo(100);
-    expect(parseFloat(box().style.top)+parseFloat(box().style.height)).toBeCloseTo(100);
+    expect(parseFloat(box().style.left)+parseFloat(box().style.width)*(.5+.42*Math.cos(37*Math.PI/180))).toBeCloseTo(100);
+    expect(parseFloat(box().style.top)+parseFloat(box().style.height)*(.5+.42*Math.sin(37*Math.PI/180))).toBeCloseTo(100);
     fireEvent.click(screen.getByRole("button", { name: "Linie kopieren" }));
     fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
     expect(screen.queryByRole("button", { name: "Linie drehen" })).not.toBeInTheDocument();

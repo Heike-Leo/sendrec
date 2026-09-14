@@ -160,8 +160,16 @@ func validateEditTimeline(timeline *editTimeline) error {
 				return fmt.Errorf("annotation values must be finite")
 			}
 		}
-		if annotation.X < 0 || annotation.Y < 0 || annotation.Width <= 0 || annotation.Height <= 0 ||
-			annotation.X+annotation.Width > 100.001 || annotation.Y+annotation.Height > 100.001 {
+		inside := annotation.X >= 0 && annotation.Y >= 0 && annotation.X+annotation.Width <= 100.001 && annotation.Y+annotation.Height <= 100.001
+		if annotation.Type == "line" {
+			// Lines may have an off-frame SVG viewport; only their endpoints are visible.
+			a, b := lineEndpoints(*annotation, 100, 100)
+			inside = true
+			for _, p := range []arrowPoint{a, b} {
+				inside = inside && p.x >= -0.001 && p.y >= -0.001 && p.x <= 100.001 && p.y <= 100.001
+			}
+		}
+		if !inside || annotation.Width <= 0 || annotation.Height <= 0 {
 			return fmt.Errorf("annotation must stay inside video bounds")
 		}
 		if annotation.Start < 0 || annotation.End <= annotation.Start || annotation.End > totalDuration+0.001 {

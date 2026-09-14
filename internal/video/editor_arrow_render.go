@@ -81,7 +81,7 @@ func rasterArrow(a editorAnnotation, width, height int) *image.NRGBA {
 
 func arrowFilename(index int) string { return fmt.Sprintf("arrow-%d.png", index) }
 
-// Keep order within each type: arrows, circles, then symbols.
+// Keep order within each type: arrows, circles, symbols, then lines.
 func exportAnnotations(annotations []editorAnnotation) []editorAnnotation {
 	var arrows []editorAnnotation
 	for _, annotation := range annotations {
@@ -99,10 +99,18 @@ func exportAnnotations(annotations []editorAnnotation) []editorAnnotation {
 			arrows = append(arrows, annotation)
 		}
 	}
+	for _, annotation := range annotations {
+		if annotation.Type == "line" {
+			arrows = append(arrows, annotation)
+		}
+	}
 	return arrows
 }
 
 func annotationFilename(index int, a editorAnnotation) string {
+	if a.Type == "line" {
+		return fmt.Sprintf("line-%d.png", index)
+	}
 	if a.Type == "symbol" {
 		return fmt.Sprintf("symbol-%d.png", index)
 	}
@@ -125,7 +133,9 @@ func prepareArrowFiles(dir string, timeline editTimeline) error {
 			return fmt.Errorf("prepare arrow: %w", err)
 		}
 		var img *image.NRGBA
-		if a.Type == "symbol" {
+		if a.Type == "line" {
+			img = rasterLine(a, editorRenderWidth, editorRenderHeight)
+		} else if a.Type == "symbol" {
 			img = rasterSymbol(a, editorRenderWidth, editorRenderHeight)
 		} else if a.Type == "circle" {
 			img = rasterCircle(a, editorRenderWidth, editorRenderHeight)

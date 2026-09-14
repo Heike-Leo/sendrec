@@ -1440,8 +1440,8 @@ export function VideoEditorModal({
       ? { ...source, id: crypto.randomUUID(),
           // Clipboard geometry uses the same frame-relative bounds as dragging.
           // Do not offset copies; only bring out-of-bounds positions back inside.
-          x: Math.max(0, Math.min(100 - source.width, source.x)),
-          y: Math.max(0, Math.min(100 - source.height, source.y)) }
+          x: source.type === "line" ? source.x : Math.max(0, Math.min(100 - source.width, source.x)),
+          y: source.type === "line" ? source.y : Math.max(0, Math.min(100 - source.height, source.y)) }
       : { id: crypto.randomUUID(), type, ...(type === "symbol" ? { symbol } : {}), x: 35, y: 35,
           width: type !== "arrow" ? Math.min(defaultSize, defaultSize * (videoFrameRect.height || 9) / (videoFrameRect.width || 16)) : 30,
           height: type !== "arrow" ? Math.min(defaultSize, defaultSize * (videoFrameRect.width || 16) / (videoFrameRect.height || 9)) : 20,
@@ -1468,22 +1468,53 @@ export function VideoEditorModal({
     cancelAnnotationDragRef.current?.();
     const startX = e.clientX;
     const startY = e.clientY;
+    let lastLineScale = 1;
     let captured = false;
     const move = (event: PointerEvent) => {
+      if (resize && annotation.type === "line") {
+        const radians = annotation.rotation * Math.PI / 180;
+        const cos = Math.cos(radians), sin = Math.sin(radians);
+        // SVG rotates before its non-uniform viewport scale. Project in actual
+        // screen pixels, not independently normalized x/y coordinates.
+        const vx = .84 * annotation.width * rect.width / 100 * cos;
+        const vy = .84 * annotation.height * rect.height / 100 * sin;
+        const deltaScale = ((event.clientX - startX) * vx + (event.clientY - startY) * vy) / (vx * vx + vy * vy);
+        // Keep the SVG's first endpoint (8,50) fixed while scaling its viewport.
+        const ax = .5 - .42 * cos, ay = .5 - .42 * sin;
+        const fixedX = annotation.x + annotation.width * ax;
+        const fixedY = annotation.y + annotation.height * ay;
+        // Intersect the actual endpoint ray with the frame, not its invisible SVG box.
+        const rayLimit = (origin: number, delta: number) => Math.abs(delta) < 1e-10
+          ? Infinity : (delta > 0 ? 100 - origin : -origin) / delta;
+        const maximum = Math.min(rayLimit(fixedX, .84 * annotation.width * cos),
+          rayLimit(fixedY, .84 * annotation.height * sin));
+        const minimum = Math.min(1, Math.max(5 / annotation.width, 5 / annotation.height));
+        const scale = Math.max(minimum, Math.min(maximum, 1 + deltaScale));
+        if (Math.abs(scale - lastLineScale) < 1e-10) return;
+        if (!captured) { rememberEditorState(); captured = true; }
+        lastLineScale = scale;
+        const width = annotation.width * scale, height = annotation.height * scale;
+        setAnnotations((previous) => previous.map((item) => item.id === annotation.id
+          ? { ...item, width, height, x: fixedX - width * ax, y: fixedY - height * ay } : item));
+        return;
+      }
       if (event.clientX === startX && event.clientY === startY && !captured) return;
       if (!captured) { rememberEditorState(); captured = true; }
       const dx = (event.clientX - startX) / rect.width * 100;
       const dy = (event.clientY - startY) / rect.height * 100;
-      // Length-only resize: scale the rotation viewport uniformly. SVG's
-      // non-scaling stroke keeps the visible line thickness fixed.
-      const radians = annotation.rotation * Math.PI / 180;
-      const lineScale = Math.max(Math.max(5 / annotation.width, 5 / annotation.height),
-        Math.min((100 - annotation.x) / annotation.width, (100 - annotation.y) / annotation.height,
-          1 + (dx * Math.cos(radians) / annotation.width + dy * Math.sin(radians) / annotation.height) / .42));
+      if (!resize && annotation.type === "line") {
+        const r = annotation.rotation * Math.PI / 180;
+        const cx = annotation.x + annotation.width / 2, cy = annotation.y + annotation.height / 2;
+        const rx = Math.abs(.42 * annotation.width * Math.cos(r));
+        const ry = Math.abs(.42 * annotation.height * Math.sin(r));
+        const shiftX = Math.max(rx - cx, Math.min(100 - cx - rx, dx));
+        const shiftY = Math.max(ry - cy, Math.min(100 - cy - ry, dy));
+        setAnnotations((previous) => previous.map((item) => item.id === annotation.id
+          ? { ...item, x: annotation.x + shiftX, y: annotation.y + shiftY } : item));
+        return;
+      }
       const geometry = resize
-        ? annotation.type === "line"
-          ? { width: annotation.width * lineScale, height: annotation.height * lineScale }
-          : { width: Math.min(100 - annotation.x, Math.max(5, annotation.width + dx)),
+        ? { width: Math.min(100 - annotation.x, Math.max(5, annotation.width + dx)),
             height: Math.min(100 - annotation.y, Math.max(5, annotation.height + dy)) }
         : { x: Math.max(0, Math.min(100 - annotation.width, annotation.x + dx)),
             y: Math.max(0, Math.min(100 - annotation.height, annotation.y + dy)) };
