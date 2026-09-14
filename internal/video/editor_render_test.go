@@ -836,7 +836,13 @@ func TestTimelineCoverTextRenderFFmpegIntegration(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed")
 	}
-	if _, err := os.Stat(editorTextFont); err != nil {
+	font := editorTextFont
+	// Permit the same DejaVu Sans font at a local test-only path on non-Linux
+	// hosts. The runtime font path and rendering logic remain unchanged.
+	if localFont := os.Getenv("SENDREC_TEST_DEJAVU_FONT"); localFont != "" {
+		font = localFont
+	}
+	if _, err := os.Stat(font); err != nil {
 		t.Skip("DejaVu Sans render font not installed")
 	}
 	dir := t.TempDir()
@@ -858,9 +864,16 @@ func TestTimelineCoverTextRenderFFmpegIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := filepath.Join(dir, "text.mp4")
-	cmd := exec.Command("ffmpeg", buildTimelineRenderArgs([]string{input},
+	args := buildTimelineRenderArgs([]string{input},
 		[]editClip{{SourceID: "source", SourceEnd: 2, Duration: 2}},
-		map[string]int{"source": 0}, map[string]sourceVideo{"source": {}}, output, overlays)...)
+		map[string]int{"source": 0}, map[string]sourceVideo{"source": {}}, output, overlays)
+	for i, arg := range args {
+		if arg == "-filter_complex" {
+			args[i+1] = strings.ReplaceAll(args[i+1], editorTextFont, font)
+			break
+		}
+	}
+	cmd := exec.Command("ffmpeg", args...)
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("render text (including literal special characters and umlauts): %v: %s", err, out)

@@ -597,7 +597,11 @@ func (h *Handler) renderTimelineAsync(ctx context.Context, job renderJob) {
 		fail(err)
 		return
 	}
-	cmd := exec.CommandContext(ctx, "ffmpeg", buildTimelineRenderArgs(inputs, job.Timeline.Clips, indexes, job.Sources, output, job.Timeline.Overlays)...)
+	if err := prepareArrowFiles(tmpDir, job.Timeline); err != nil {
+		fail(err)
+		return
+	}
+	cmd := exec.CommandContext(ctx, "ffmpeg", buildAnnotatedTimelineRenderArgs(inputs, job.Timeline.Clips, indexes, job.Sources, output, job.Timeline.Overlays, job.Timeline.Annotations)...)
 	cmd.Dir = tmpDir
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		fail(fmt.Errorf("ffmpeg render: %w: %s", err, string(combined)))
