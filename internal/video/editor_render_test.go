@@ -73,7 +73,7 @@ func TestValidateAndPersistArrowAnnotations(t *testing.T) {
 		t.Fatalf("annotation did not survive timeline JSON roundtrip: %s, %v", encoded, err)
 	}
 	for _, invalid := range []editorAnnotation{
-		{ID: "arrow", Type: "circle", Width: 10, Height: 10, End: 5},
+		{ID: "arrow", Type: "unknown", Width: 10, Height: 10, End: 5},
 		{ID: "arrow", Type: "arrow", X: 95, Width: 10, Height: 10, End: 5},
 		{ID: "arrow", Type: "arrow", Width: 10, Height: 10, End: 20},
 		{ID: "arrow", Type: "arrow", Width: 10, Height: 10, End: 5, Rotation: math.Inf(1)},

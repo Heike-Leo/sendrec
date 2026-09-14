@@ -27,7 +27,7 @@ interface EditorCoverOverlay {
 
 interface EditorAnnotation {
   id: string;
-  type: "arrow";
+  type: "arrow" | "circle";
   x: number;
   y: number;
   width: number;
@@ -91,9 +91,10 @@ function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], 
   });
 }
 
-function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" }) {
+function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" | "circle" }) {
   const paths = {
     arrow: <path d="M2 13 13 2M5 2h8v8" />,
+    circle: <circle cx="8" cy="8" r="5.5" />,
     trim: <><circle cx="3.5" cy="4" r="1.5" /><circle cx="3.5" cy="12" r="1.5" /><path d="m4.8 5 7.7 6.5M4.8 11l7.7-6.5" /></>,
     split: <><rect x="1.5" y="3" width="5" height="10" rx="1" /><rect x="9.5" y="3" width="5" height="10" rx="1" /><path d="M8 2.5v11" /></>,
     cover: <rect x="2" y="3" width="12" height="10" rx="1.5" />,
@@ -1403,8 +1404,9 @@ export function VideoEditorModal({
   }
 
   const selectedAnnotation = annotations.find((item) => item.id === selectedAnnotationId);
+  const annotationName = (item: EditorAnnotation) => item.type === "circle" ? "Kreis" : "Pfeil";
 
-  function addAnnotation(source?: EditorAnnotation) {
+  function addAnnotation(source?: EditorAnnotation, type: EditorAnnotation["type"] = "arrow") {
     if (timelineDuration <= 0) return;
     const start = Math.min(timelinePlayheadTime, Math.max(0, timelineDuration - 0.1));
     const annotation: EditorAnnotation = source
@@ -1413,7 +1415,9 @@ export function VideoEditorModal({
           // Do not offset copies; only bring out-of-bounds positions back inside.
           x: Math.max(0, Math.min(100 - source.width, source.x)),
           y: Math.max(0, Math.min(100 - source.height, source.y)) }
-      : { id: crypto.randomUUID(), type: "arrow", x: 35, y: 35, width: 30, height: 20,
+      : { id: crypto.randomUUID(), type, x: 35, y: 35,
+          width: type === "circle" ? Math.min(30, 30 * (videoFrameRect.height || 9) / (videoFrameRect.width || 16)) : 30,
+          height: type === "circle" ? Math.min(30, 30 * (videoFrameRect.width || 16) / (videoFrameRect.height || 9)) : 20,
           start, end: Math.min(timelineDuration, start + 5), rotation: 0 };
     rememberEditorState();
     setAnnotations((previous) => [...previous, annotation]);
@@ -1904,7 +1908,7 @@ export function VideoEditorModal({
               }}
             >
               {annotations.filter((item) => timelineCurrentTime >= item.start && timelineCurrentTime <= item.end).map((item) => (
-                <div key={item.id} data-testid={`video-editor-arrow-${item.id}`}
+                <div key={item.id} data-testid={`video-editor-${item.type}-${item.id}`}
                   onPointerDown={(e) => handleAnnotationPointerDown(e, item)}
                   onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
                   style={{ position: "absolute", left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`,
@@ -1914,9 +1918,11 @@ export function VideoEditorModal({
                   <svg aria-hidden="true" width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: "block", pointerEvents: "none" }}>
                     {/* Every vertex is within radius 44 of (50,50), so at any
                         angle the actual polygon stays inside this viewport. */}
-                    <polygon fill={item.color ?? "#FC2667"} points="8,44 65,44 65,28 94,50 65,72 65,56 8,56" transform={`rotate(${item.rotation} 50 50)`} />
+                    {item.type === "circle"
+                      ? <ellipse cx="50" cy="50" rx="47" ry="47" fill="none" stroke="#FC2667" strokeWidth="3" vectorEffect="non-scaling-stroke" />
+                      : <polygon fill={item.color ?? "#FC2667"} points="8,44 65,44 65,28 94,50 65,72 65,56 8,56" transform={`rotate(${item.rotation} 50 50)`} />}
                   </svg>
-                  {selectedAnnotationId === item.id && <>
+                  {selectedAnnotationId === item.id && item.type === "arrow" && <>
                     <span aria-hidden="true" style={{ position: "absolute", right: 5, top: Math.max(-14, -videoFrameRect.height * item.y / 100),
                       width: 1, height: 18, background: "#FC2667", pointerEvents: "none" }} />
                     <button type="button" aria-label="Pfeil drehen" title="Pfeil drehen"
@@ -1927,7 +1933,7 @@ export function VideoEditorModal({
                         width: 12, height: 12, minWidth: 0, padding: 0, borderRadius: "50%", border: "2px solid #FC2667",
                         background: "#FFFFFF", cursor: "grab", touchAction: "none" }} />
                   </>}
-                  {selectedAnnotationId === item.id && <div data-testid={`video-editor-arrow-resize-${item.id}`}
+                  {selectedAnnotationId === item.id && <div data-testid={`video-editor-${item.type}-resize-${item.id}`}
                     onPointerDown={(e) => handleAnnotationPointerDown(e, item, true)}
                     style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, background: "#FC2667", cursor: "nwse-resize", touchAction: "none" }} />}
                 </div>
@@ -2161,6 +2167,13 @@ export function VideoEditorModal({
             </button>
             <span id="video-editor-tooltip-arrow" role="tooltip" className="video-editor-tool-tooltip">Pfeil hinzufügen</span>
           </span>
+          <span className="video-editor-tool">
+            <button type="button" className="video-editor-tool-button" aria-label="Kreis hinzufügen"
+              aria-describedby="video-editor-tooltip-circle" onClick={() => addAnnotation(undefined, "circle")}>
+              <EditorToolIcon name="circle" />
+            </button>
+            <span id="video-editor-tooltip-circle" role="tooltip" className="video-editor-tool-tooltip">Kreis hinzufügen</span>
+          </span>
 
           {selectedClipId && (
             <button
@@ -2226,7 +2239,8 @@ export function VideoEditorModal({
 
         <div className="video-editor-cover-actions" data-testid="video-editor-cover-actions">
         {selectedAnnotation && <>
-          <span>Pfeil:</span>
+          <span>{annotationName(selectedAnnotation)}:</span>
+          {selectedAnnotation.type === "arrow" && <>
           <label>Farbe <input type="color" aria-label="Pfeilfarbe" value={selectedAnnotation.color ?? "#FC2667"}
             onChange={(e) => updateAnnotation({ color: e.target.value })}
             style={{ width: 32, height: 28, padding: 2, cursor: "pointer" }} /></label>
@@ -2236,25 +2250,26 @@ export function VideoEditorModal({
             {["Rechts", "Rechts unten", "Unten", "Links unten", "Links", "Links oben", "Oben", "Rechts oben"].map((label, index) =>
               <option key={label} value={index * 45}>{label}</option>)}
           </select></label>
-          <label>Start <input aria-label="Pfeil Start" type="number" min={0} max={selectedAnnotation.end - 0.1} step={0.1}
+          </>}
+          <label>Start <input aria-label={`${annotationName(selectedAnnotation)} Start`} type="number" min={0} max={selectedAnnotation.end - 0.1} step={0.1}
             value={selectedAnnotation.start} onChange={(e) => {
               const value = Number(e.target.value);
               if (Number.isFinite(value)) updateAnnotation({ start: Math.max(0, Math.min(value, selectedAnnotation.end - 0.1)) });
             }} style={{ width: 70 }} /></label>
-          <label>Ende <input aria-label="Pfeil Ende" type="number" min={selectedAnnotation.start + 0.1} max={timelineDuration} step={0.1}
+          <label>Ende <input aria-label={`${annotationName(selectedAnnotation)} Ende`} type="number" min={selectedAnnotation.start + 0.1} max={timelineDuration} step={0.1}
             value={selectedAnnotation.end} onChange={(e) => {
               const value = Number(e.target.value);
               if (Number.isFinite(value)) updateAnnotation({ end: Math.min(timelineDuration, Math.max(value, selectedAnnotation.start + 0.1)) });
             }} style={{ width: 70 }} /></label>
-          <button type="button" className="video-editor-tool-button" aria-label="Pfeil kopieren" title="Pfeil kopieren"
+          <button type="button" className="video-editor-tool-button" aria-label={`${annotationName(selectedAnnotation)} kopieren`} title={`${annotationName(selectedAnnotation)} kopieren`}
             onClick={() => setCopiedAnnotation({ ...selectedAnnotation })}><EditorToolIcon name="copy" /></button>
-          <button type="button" className="video-editor-tool-button" aria-label="Pfeil löschen" title="Pfeil löschen" onClick={() => {
+          <button type="button" className="video-editor-tool-button" aria-label={`${annotationName(selectedAnnotation)} löschen`} title={`${annotationName(selectedAnnotation)} löschen`} onClick={() => {
             rememberEditorState();
             setAnnotations((previous) => previous.filter((item) => item.id !== selectedAnnotation.id));
             setSelectedAnnotationId(null);
           }}><EditorToolIcon name="delete" /></button>
         </>}
-        {copiedAnnotation && <button type="button" className="video-editor-tool-button" aria-label="Pfeil einfügen" title="Pfeil einfügen"
+        {copiedAnnotation && <button type="button" className="video-editor-tool-button" aria-label={`${annotationName(copiedAnnotation)} einfügen`} title={`${annotationName(copiedAnnotation)} einfügen`}
           onClick={() => addAnnotation(copiedAnnotation)}><EditorToolIcon name="paste" /></button>}
         {selectedCoverOverlay && (
           <>
@@ -2906,18 +2921,18 @@ export function VideoEditorModal({
           {annotations.length > 0 && <div data-testid="video-editor-annotation-tracks"
             onClick={() => setSelectedCoverOverlayId(null)}
             style={{ width: `${timelineZoom * 100}%`, minWidth: "100%", marginBottom: 4, display: "flex", flexDirection: "column", gap: 4 }}>
-            {annotations.map((item, index) => <div key={item.id} data-testid={`video-editor-arrow-track-${item.id}`}
+            {annotations.map((item, index) => <div key={item.id} data-testid={`video-editor-${item.type}-track-${item.id}`}
               style={{ height: 38, position: "relative", background: "#F8FAFC", border: "1px solid var(--color-border)", borderRadius: 8 }}>
-              <button type="button" aria-label={`Pfeil ${index + 1}`} aria-pressed={selectedAnnotationId === item.id}
+              <button type="button" aria-label={`${annotationName(item)} ${annotations.slice(0, index + 1).filter((a) => a.type === item.type).length}`} aria-pressed={selectedAnnotationId === item.id}
                 onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, "move")}
                 onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
                 style={{ position: "absolute", left: `${item.start / timelineDuration * 100}%`, width: `${(item.end - item.start) / timelineDuration * 100}%`,
                   top: 3, bottom: 3, overflow: "hidden", whiteSpace: "nowrap", background: "#FCE7EF", color: "#881337", cursor: "grab", touchAction: "none",
                   border: selectedAnnotationId === item.id ? "2px solid #FC2667" : "1px solid #F9A8C0", borderRadius: 5 }}>
-                Pfeil {index + 1}
+                {annotationName(item)} {annotations.slice(0, index + 1).filter((a) => a.type === item.type).length}
                 {(["start", "end"] as const).map((edge) => <span key={edge}
-                  data-testid={`video-editor-arrow-${edge}-${item.id}`}
-                  title={edge === "start" ? "Start des Pfeils ziehen" : "Ende des Pfeils ziehen"}
+                  data-testid={`video-editor-${item.type}-${edge}-${item.id}`}
+                  title={`${edge === "start" ? "Start" : "Ende"} ${item.type === "circle" ? "des Kreises" : "des Pfeils"} ziehen`}
                   onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, edge)}
                   onClick={(e) => e.stopPropagation()}
                   style={{ position: "absolute", top: 0, bottom: 0, width: 8,

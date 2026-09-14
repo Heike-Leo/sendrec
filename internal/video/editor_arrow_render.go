@@ -81,6 +81,17 @@ func rasterArrow(a editorAnnotation, width, height int) *image.NRGBA {
 
 func arrowFilename(index int) string { return fmt.Sprintf("arrow-%d.png", index) }
 
+// Circles are persisted preview-only annotations; do not export them as arrows.
+func exportArrowAnnotations(annotations []editorAnnotation) []editorAnnotation {
+	var arrows []editorAnnotation
+	for _, annotation := range annotations {
+		if annotation.Type == "arrow" {
+			arrows = append(arrows, annotation)
+		}
+	}
+	return arrows
+}
+
 func prepareArrowFiles(dir string, timeline editTimeline) error {
 	if len(timeline.Annotations) == 0 {
 		return nil
@@ -88,7 +99,7 @@ func prepareArrowFiles(dir string, timeline editTimeline) error {
 	if err := validateEditTimeline(&timeline); err != nil {
 		return err
 	}
-	for i, a := range timeline.Annotations {
+	for i, a := range exportArrowAnnotations(timeline.Annotations) {
 		f, err := os.OpenFile(filepath.Join(dir, arrowFilename(i)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
 			return fmt.Errorf("prepare arrow: %w", err)
@@ -109,6 +120,7 @@ func prepareArrowFiles(dir string, timeline editTimeline) error {
 // annotations return byte-for-byte identical arguments. Generated filenames
 // contain neither annotation IDs nor user input; no shell is involved.
 func buildAnnotatedTimelineRenderArgs(inputs []string, clips []editClip, indexes map[string]int, sources map[string]sourceVideo, output string, overlays []editorCoverOverlay, annotations []editorAnnotation) []string {
+	annotations = exportArrowAnnotations(annotations)
 	args := buildTimelineRenderArgs(inputs, clips, indexes, sources, output, overlays)
 	if len(annotations) == 0 {
 		return args

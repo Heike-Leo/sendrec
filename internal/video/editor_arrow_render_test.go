@@ -1,6 +1,7 @@
 package video
 
 import (
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -45,6 +46,41 @@ func TestArrowRenderGeometry(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestCirclePersistenceWithoutExport(t *testing.T) {
+	timeline := validTimeline(editClip{ID: "clip", SourceID: "source", SourceEnd: 2, Duration: 2})
+	circle := editorAnnotation{ID: "circle", Type: "circle", X: 10, Y: 20, Width: 30, Height: 20, Start: .5, End: 1.5}
+	arrow := editorAnnotation{ID: "arrow", Type: "arrow", X: 5, Y: 5, Width: 20, Height: 20, End: 2, Rotation: 37, Color: "#123456"}
+	timeline.Annotations = []editorAnnotation{circle, arrow}
+	if err := validateEditTimeline(&timeline); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(timeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored editTimeline
+	if err := json.Unmarshal(data, &restored); err != nil || !reflect.DeepEqual(restored, timeline) {
+		t.Fatalf("mixed persistence failed: %v", err)
+	}
+	dir := t.TempDir()
+	if err := prepareArrowFiles(dir, timeline); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 || entries[0].Name() != "arrow-0.png" {
+		t.Fatalf("circles generated export assets: %v", entries)
+	}
+	args := func(annotations []editorAnnotation) []string {
+		return buildAnnotatedTimelineRenderArgs([]string{"source.mp4"}, timeline.Clips, map[string]int{"source": 0}, map[string]sourceVideo{"source": {}}, "out.mp4", nil, annotations)
+	}
+	if !reflect.DeepEqual(args([]editorAnnotation{circle}), args(nil)) {
+		t.Fatal("circle changed legacy render")
+	}
+	if !reflect.DeepEqual(args(timeline.Annotations), args([]editorAnnotation{arrow})) {
+		t.Fatal("circle changed arrow render")
 	}
 }
 
@@ -124,7 +160,7 @@ func TestBuildAnnotatedTimelineRenderArgs(t *testing.T) {
 		if !reflect.DeepEqual(base, buildAnnotatedTimelineRenderArgs(inputs, clips, indexes, sources, "out.mp4", overlays, nil)) {
 			t.Fatal("legacy rendering changed")
 		}
-		arrows := []editorAnnotation{{X: 10, Y: 20, Width: 30, Height: 40, Start: .125, End: 1.625, Rotation: 37}, {X: 50, Y: 60, Width: 10, Height: 20, Start: 1, End: 2, Color: "#00ff00", Rotation: 225}}
+		arrows := []editorAnnotation{{Type: "arrow", X: 10, Y: 20, Width: 30, Height: 40, Start: .125, End: 1.625, Rotation: 37}, {Type: "arrow", X: 50, Y: 60, Width: 10, Height: 20, Start: 1, End: 2, Color: "#00ff00", Rotation: 225}}
 		args := buildAnnotatedTimelineRenderArgs(inputs, clips, indexes, sources, "out.mp4", overlays, arrows)
 		joined := strings.Join(args, " ")
 		for _, want := range []string{"-loop 1 -framerate 30 -i arrow-0.png", "-i arrow-1.png", "[varrowbase][1:v]overlay=x=192:y=216", "[varrow0rgb][2:v]overlay=x=960:y=648", "between(t,0.125000,1.625000)", "between(t,1.000000,2.000000)", "format=yuv420p[vout]"} {

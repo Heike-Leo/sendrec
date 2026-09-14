@@ -36,7 +36,7 @@ let editorState: typeof emptyEditorState | {
         opacity?: number;
         text?: string;
       }>;
-      annotations?: Array<{ id: string; type: "arrow"; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number; color?: string }>;
+      annotations?: Array<{ id: string; type: "arrow" | "circle"; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number; color?: string }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
   renderError: string | null;
@@ -73,6 +73,164 @@ describe("VideoEditorModal multi-source preview", () => {
       }
       return Promise.reject(new Error(`Unexpected API call: ${path}`));
     });
+  });
+
+  it("creates circles with independent numbering, copy/paste, deletion, reload and undo", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Kreis hinzufügen" }));
+    const ring = view.container.querySelector("ellipse")!;
+    expect(ring).toHaveAttribute("fill", "none");
+    expect(ring).toHaveAttribute("stroke", "#FC2667");
+    expect(ring).toHaveAttribute("vector-effect", "non-scaling-stroke");
+    expect(screen.queryByLabelText("Pfeilfarbe")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Pfeil drehen")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kreis hinzufügen" }));
+    expect(screen.getByRole("button", { name: "Kreis 2" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Pfeil 1" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Kreis kopieren" }));
+    fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
+    fireEvent.click(screen.getByRole("button", { name: "Kreis einfügen" }));
+    expect(screen.getByRole("button", { name: "Kreis 3" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([, o]) => o?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations[3]).toEqual({ ...timeline.annotations[2], id: timeline.annotations[3].id });
+    expect(timeline.annotations[3].id).not.toBe(timeline.annotations[2].id);
+    fireEvent.click(screen.getByRole("button", { name: "Kreis löschen" }));
+    expect(screen.queryByRole("button", { name: "Kreis 3" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pfeil 1" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getByRole("button", { name: "Kreis 3" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.queryByRole("button", { name: "Kreis 3" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.queryByRole("button", { name: "Kreis 2" })).not.toBeInTheDocument();
+    view.unmount();
+    editorState = { ...emptyEditorState, timeline };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Kreis 3" });
+    expect(screen.getByRole("button", { name: "Pfeil 1" })).toBeInTheDocument();
+  });
+
+  it("drags and resizes a circle into an oval with frame bounds and one undo per gesture", async () => {
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Kreis hinzufügen" }));
+    const frame = screen.getByTestId("video-editor-overlay-frame");
+    const rect = vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 500 } as DOMRect);
+    const circle = () => frame.querySelector('[data-testid^="video-editor-circle-"]') as HTMLElement;
+    const originalWidth = circle().style.width;
+    fireEvent.pointerDown(circle(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 100, clientY: 50 });
+    fireEvent.pointerMove(document, { clientX: 200, clientY: 100 });
+    fireEvent.pointerUp(document);
+    expect(circle()).toHaveStyle({ left: "55%", top: "55%" });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(circle()).toHaveStyle({ left: "35%", top: "35%" });
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 1" }));
+    const resize = () => frame.querySelector('[data-testid^="video-editor-circle-resize-"]')!;
+    fireEvent.pointerDown(resize(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 100, clientY: 0 });
+    fireEvent.pointerUp(document);
+    expect(circle().style.width).not.toBe(originalWidth);
+    expect(circle()).toHaveStyle({ height: "30%" });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(circle().style.width).toBe(originalWidth);
+    // A resized video frame must change pointer-to-percent conversion.
+    rect.mockReturnValue({ left: 0, top: 0, width: 500, height: 250 } as DOMRect);
+    fireEvent.pointerDown(circle(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 50, clientY: 25 });
+    fireEvent.pointerUp(document);
+    expect(circle()).toHaveStyle({ left: "45%", top: "45%" });
+    fireEvent.pointerDown(resize(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 5000, clientY: 5000 });
+    fireEvent.pointerUp(document);
+    expect(circle()).toHaveStyle({ width: "55%", height: "55%" });
+    fireEvent.pointerDown(circle(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: -5000, clientY: -5000 });
+    fireEvent.pointerUp(document);
+    expect(circle()).toHaveStyle({ left: "0%", top: "0%" });
+  });
+
+  it("resizes and moves circle timeline windows with live preview, undo and persistence", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Kreis hinzufügen" }));
+    const track = view.container.querySelector('[data-testid^="video-editor-circle-track-"]')!;
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({ left: -100, width: 2000 } as DOMRect);
+    const start = view.container.querySelector('[data-testid^="video-editor-circle-start-"]')!;
+    const end = view.container.querySelector('[data-testid^="video-editor-circle-end-"]')!;
+    const video = view.container.querySelector("video")!;
+    fireEvent.pointerDown(start, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 200 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Kreis Start")).toHaveValue(1);
+    expect(view.container.querySelector("ellipse")).toBeNull();
+    video.currentTime = 2; fireEvent.timeUpdate(video);
+    expect(view.container.querySelector("ellipse")).not.toBeNull();
+    fireEvent.pointerDown(end, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 200 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Kreis Ende")).toHaveValue(6);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Kreis 1" }), { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 200 });
+    fireEvent.pointerMove(document, { clientX: 800 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Kreis Start")).toHaveValue(5);
+    expect(screen.getByLabelText("Kreis Ende")).toHaveValue(10);
+    expect(view.container.querySelector("ellipse")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 1" }));
+    expect(screen.getByLabelText("Kreis Start")).toHaveValue(1);
+    expect(screen.getByLabelText("Kreis Ende")).toHaveValue(6);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Kreis 1" }), { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Kreis Start")).toHaveValue(0);
+    expect(screen.getByLabelText("Kreis Ende")).toHaveValue(5);
+    fireEvent.click(screen.getByRole("button", { name: "Kreis kopieren" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kreis einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([, o]) => o?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations.map((a: { start: number; end: number }) => [a.start, a.end])).toEqual([[0, 5], [0, 5]]);
+    view.unmount(); editorState = { ...emptyEditorState, timeline };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Kreis 2" });
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 2" }));
+    expect(screen.getByLabelText("Kreis Ende")).toHaveValue(5);
+  });
+
+  it("clamps circle timeline handles without changing another circle", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Kreis hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kreis hinzufügen" }));
+    const tracks = view.container.querySelectorAll('[data-testid^="video-editor-circle-track-"]');
+    vi.spyOn(tracks[0], "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
+    const start = tracks[0].querySelector('[data-testid^="video-editor-circle-start-"]')!;
+    const end = tracks[0].querySelector('[data-testid^="video-editor-circle-end-"]')!;
+    fireEvent.pointerDown(start, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    expect(screen.getByLabelText("Kreis Start")).toHaveValue(0);
+    fireEvent.pointerMove(document, { clientX: 5000 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Kreis Start")).toHaveValue(4.9);
+    fireEvent.pointerDown(end, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    expect(screen.getByLabelText("Kreis Ende")).toHaveValue(5);
+    fireEvent.pointerMove(document, { clientX: 5000 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Kreis Ende")).toHaveValue(10);
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 2" }));
+    expect(screen.getByLabelText("Kreis Start")).toHaveValue(0);
+    expect(screen.getByLabelText("Kreis Ende")).toHaveValue(5);
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 1" }));
+    expect(screen.getByLabelText("Kreis Ende")).toHaveValue(5);
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 1" }));
+    expect(screen.getByLabelText("Kreis Start")).toHaveValue(0);
   });
 
   it("colors legacy arrows independently and undoes color without changing geometry or timing", async () => {
@@ -1354,6 +1512,7 @@ describe("VideoEditorModal multi-source preview", () => {
         ],
         annotations: [
           { id: "arrow-frame", type: "arrow", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 37 },
+          { id: "circle-frame", type: "circle", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 0 },
         ],
       },
       renderStatus: "none",
@@ -1383,6 +1542,8 @@ describe("VideoEditorModal multi-source preview", () => {
       const frame = screen.getByTestId("video-editor-overlay-frame");
       expect(frame).toHaveStyle({ left: "0px", top: "18.75px", width: "1000px", height: "562.5px" });
       expect(screen.getByTestId("video-editor-arrow-arrow-frame").parentElement).toBe(frame);
+      expect(screen.getByTestId("video-editor-circle-circle-frame").parentElement).toBe(frame);
+      expect(screen.getByTestId("video-editor-circle-circle-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-arrow-arrow-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-cover-overlay-cover-frame")).toHaveStyle({
         left: "80%", top: "80%", width: "20%", height: "20%",
@@ -1397,6 +1558,7 @@ describe("VideoEditorModal multi-source preview", () => {
       });
       act(() => resizeCallback([], {} as ResizeObserver));
       expect(frame).toHaveStyle({ left: "0px", top: "131.25px", width: "600px", height: "337.5px" });
+      expect(screen.getByTestId("video-editor-circle-circle-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-arrow-arrow-frame").querySelector("polygon")).toHaveAttribute("transform", "rotate(37 50 50)");
       expect(screen.getByTestId("video-editor-arrow-arrow-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-cover-badge-cover-frame")).toHaveStyle({
@@ -2112,6 +2274,7 @@ describe("VideoEditorModal multi-source preview", () => {
       "Teilen",
       "Abdeckung hinzufügen",
       "Pfeil hinzufügen",
+      "Kreis hinzufügen",
       "Video einfügen",
       "Rückgängig",
       "Ansicht einpassen",
