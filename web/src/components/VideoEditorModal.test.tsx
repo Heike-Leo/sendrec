@@ -233,6 +233,54 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getByLabelText("Kreis Start")).toHaveValue(0);
   });
 
+  it("colors circles independently, undoes changes and preserves color through copy and reload", async () => {
+    const original = { id: "circle-old", type: "circle" as const, x: 12, y: 23, width: 30, height: 18, start: 0, end: 4, rotation: 0 };
+    editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: {
+      version: 1, clips: [{ id: "clip", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],
+      annotations: [original, { ...original, id: "circle-other", color: "#123abc" }],
+    } };
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Kreis 1" });
+    const ring = (id: string) => screen.getByTestId(`video-editor-circle-${id}`).querySelector("ellipse");
+    expect(screen.queryByLabelText("Kreisfarbe")).not.toBeInTheDocument();
+    expect(ring("circle-old")).toHaveAttribute("stroke", "#FC2667");
+    expect(ring("circle-other")).toHaveAttribute("stroke", "#123abc");
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 1" }));
+    expect(screen.getByLabelText("Kreisfarbe")).toHaveValue("#fc2667");
+    fireEvent.change(screen.getByLabelText("Kreisfarbe"), { target: { value: "#ff9900" } });
+    expect(ring("circle-old")).toHaveAttribute("stroke", "#ff9900");
+    expect(ring("circle-old")).toHaveAttribute("fill", "none");
+    expect(ring("circle-other")).toHaveAttribute("stroke", "#123abc");
+    expect(screen.getByTestId("video-editor-circle-circle-old")).toHaveStyle({ border: "1px solid #FC2667", left: "12%", top: "23%", width: "30%", height: "18%" });
+    expect(screen.getByTestId("video-editor-circle-resize-circle-old")).toHaveStyle({ background: "#FC2667" });
+    expect(screen.getByLabelText("Kreis Start")).toHaveValue(0);
+    expect(screen.getByLabelText("Kreis Ende")).toHaveValue(4);
+    fireEvent.change(screen.getByLabelText("Kreisfarbe"), { target: { value: "#ffffff" } });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(ring("circle-old")).toHaveAttribute("stroke", "#ff9900");
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(ring("circle-old")).toHaveAttribute("stroke", "#FC2667");
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 1" }));
+    fireEvent.change(screen.getByLabelText("Kreisfarbe"), { target: { value: "#ff9900" } });
+    fireEvent.click(screen.getByRole("button", { name: "Kreis kopieren" }));
+    fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
+    expect(screen.queryByLabelText("Kreisfarbe")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Kreis einfügen" }));
+    expect(screen.getByLabelText("Kreisfarbe")).toHaveValue("#ff9900");
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([, o]) => o?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations[0]).toEqual({ ...original, color: "#ff9900" });
+    expect(timeline.annotations[2]).toEqual({ ...original, color: "#ff9900", id: timeline.annotations[2].id });
+    expect(timeline.annotations[2].id).not.toBe(original.id);
+    view.unmount(); editorState = { ...emptyEditorState, timeline };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Kreis 3" });
+    expect(ring(timeline.annotations[2].id)).toHaveAttribute("stroke", "#ff9900");
+    expect(ring("circle-other")).toHaveAttribute("stroke", "#123abc");
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 3" }));
+    expect(screen.getByLabelText("Kreisfarbe")).toHaveValue("#ff9900");
+  });
+
   it("colors legacy arrows independently and undoes color without changing geometry or timing", async () => {
     const original = { id: "legacy", type: "arrow" as const, x: 10, y: 20, width: 25, height: 25, start: 0, end: 5, rotation: 37 };
     editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: {

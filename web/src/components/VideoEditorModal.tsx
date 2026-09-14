@@ -1919,7 +1919,7 @@ export function VideoEditorModal({
                     {/* Every vertex is within radius 44 of (50,50), so at any
                         angle the actual polygon stays inside this viewport. */}
                     {item.type === "circle"
-                      ? <ellipse cx="50" cy="50" rx="47" ry="47" fill="none" stroke="#FC2667" strokeWidth="3" vectorEffect="non-scaling-stroke" />
+                      ? <ellipse cx="50" cy="50" rx="47" ry="47" fill="none" stroke={item.color ?? "#FC2667"} strokeWidth="3" vectorEffect="non-scaling-stroke" />
                       : <polygon fill={item.color ?? "#FC2667"} points="8,44 65,44 65,28 94,50 65,72 65,56 8,56" transform={`rotate(${item.rotation} 50 50)`} />}
                   </svg>
                   {selectedAnnotationId === item.id && item.type === "arrow" && <>
@@ -2240,10 +2240,10 @@ export function VideoEditorModal({
         <div className="video-editor-cover-actions" data-testid="video-editor-cover-actions">
         {selectedAnnotation && <>
           <span>{annotationName(selectedAnnotation)}:</span>
-          {selectedAnnotation.type === "arrow" && <>
-          <label>Farbe <input type="color" aria-label="Pfeilfarbe" value={selectedAnnotation.color ?? "#FC2667"}
+          <label>Farbe <input type="color" aria-label={`${annotationName(selectedAnnotation)}farbe`} value={selectedAnnotation.color ?? "#FC2667"}
             onChange={(e) => updateAnnotation({ color: e.target.value })}
             style={{ width: 32, height: 28, padding: 2, cursor: "pointer" }} /></label>
+          {selectedAnnotation.type === "arrow" && <>
           <label>Richtung <select aria-label="Pfeilrichtung" value={selectedAnnotation.rotation}
             onChange={(e) => updateAnnotation({ rotation: Number(e.target.value) })}>
             {selectedAnnotation.rotation % 45 !== 0 && <option value={selectedAnnotation.rotation}>{selectedAnnotation.rotation}°</option>}

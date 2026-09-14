@@ -91,27 +91,31 @@ func TestValidateAndPersistArrowAnnotations(t *testing.T) {
 }
 
 func TestValidateAnnotationColor(t *testing.T) {
-	for _, color := range []string{"", "#FC2667", "#123abc", "#000000", "#FFFFFF"} {
-		timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
-		timeline.Annotations = []editorAnnotation{{ID: "arrow", Type: "arrow", Width: 20, Height: 20, End: 5, Rotation: 37, Color: color}}
-		if err := validateEditTimeline(&timeline); err != nil {
-			t.Fatalf("color %q: %v", color, err)
-		}
-		encoded, err := json.Marshal(timeline)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var restored editTimeline
-		if err := json.Unmarshal(encoded, &restored); err != nil || restored.Annotations[0] != timeline.Annotations[0] {
-			t.Fatalf("color did not survive persistence: %s, %v", encoded, err)
-		}
-	}
-	for _, color := range []string{"#fff", "#12345678", "red", "123456", "#gggggg", " #123456", "#123456;movie=x"} {
-		timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
-		timeline.Annotations = []editorAnnotation{{ID: "arrow", Type: "arrow", Width: 20, Height: 20, End: 5, Color: color}}
-		if validateEditTimeline(&timeline) == nil {
-			t.Fatalf("accepted invalid color %q", color)
-		}
+	for _, annotationType := range []string{"arrow", "circle"} {
+		t.Run(annotationType, func(t *testing.T) {
+			for _, color := range []string{"", "#FC2667", "#123abc", "#000000", "#FFFFFF"} {
+				timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
+				timeline.Annotations = []editorAnnotation{{ID: "annotation", Type: annotationType, Width: 20, Height: 20, End: 5, Rotation: 37, Color: color}}
+				if err := validateEditTimeline(&timeline); err != nil {
+					t.Fatalf("color %q: %v", color, err)
+				}
+				encoded, err := json.Marshal(timeline)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var restored editTimeline
+				if err := json.Unmarshal(encoded, &restored); err != nil || restored.Annotations[0] != timeline.Annotations[0] {
+					t.Fatalf("color did not survive persistence: %s, %v", encoded, err)
+				}
+			}
+			for _, color := range []string{"#fff", "#12345678", "red", "123456", "#gggggg", " #123456", "#123456;movie=x"} {
+				timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
+				timeline.Annotations = []editorAnnotation{{ID: "annotation", Type: annotationType, Width: 20, Height: 20, End: 5, Color: color}}
+				if validateEditTimeline(&timeline) == nil {
+					t.Fatalf("accepted invalid color %q", color)
+				}
+			}
+		})
 	}
 }
 
