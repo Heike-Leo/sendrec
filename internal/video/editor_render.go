@@ -141,8 +141,8 @@ func validateEditTimeline(timeline *editTimeline) error {
 	annotationIDs := make(map[string]bool, len(timeline.Annotations))
 	for i := range timeline.Annotations {
 		annotation := &timeline.Annotations[i]
-		if strings.TrimSpace(annotation.ID) == "" || annotationIDs[annotation.ID] || (annotation.Type != "arrow" && annotation.Type != "circle" && annotation.Type != "symbol") {
-			return fmt.Errorf("annotation requires a unique id and type arrow, circle or symbol")
+		if strings.TrimSpace(annotation.ID) == "" || annotationIDs[annotation.ID] || (annotation.Type != "arrow" && annotation.Type != "circle" && annotation.Type != "symbol" && annotation.Type != "line") {
+			return fmt.Errorf("annotation requires a unique id and type arrow, circle, symbol or line")
 		}
 		if annotation.Type == "symbol" {
 			switch annotation.Symbol {

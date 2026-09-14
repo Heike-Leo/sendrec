@@ -91,7 +91,7 @@ func TestValidateAndPersistArrowAnnotations(t *testing.T) {
 }
 
 func TestValidateAnnotationColor(t *testing.T) {
-	for _, annotationType := range []string{"arrow", "circle", "symbol"} {
+	for _, annotationType := range []string{"arrow", "circle", "symbol", "line"} {
 		t.Run(annotationType, func(t *testing.T) {
 			for _, color := range []string{"", "#FC2667", "#123abc", "#000000", "#FFFFFF"} {
 				timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
@@ -116,6 +116,28 @@ func TestValidateAnnotationColor(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLinePersistenceWithoutExport(t *testing.T) {
+	timeline := validTimeline(editClip{ID: "clip", SourceID: "source", SourceEnd: 10})
+	timeline.Annotations = []editorAnnotation{{ID: "line", Type: "line", X: 20, Y: 30, Width: 30, Height: 20, Start: 1, End: 5, Rotation: 37, Color: "#123abc"}}
+	if err := validateEditTimeline(&timeline); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(timeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored editTimeline
+	if err := json.Unmarshal(encoded, &restored); err != nil || restored.Annotations[0] != timeline.Annotations[0] {
+		t.Fatalf("line persistence failed: %v", err)
+	}
+	if len(exportAnnotations(restored.Annotations)) != 0 {
+		t.Fatal("line must remain preview-only")
+	}
+	if err := prepareArrowFiles(t.TempDir(), restored); err != nil {
+		t.Fatal(err)
 	}
 }
 

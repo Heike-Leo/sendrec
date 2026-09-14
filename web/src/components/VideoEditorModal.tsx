@@ -48,7 +48,7 @@ function SymbolShape({ symbol }: { symbol: AnnotationSymbol }) {
 
 interface EditorAnnotation {
   id: string;
-  type: "arrow" | "circle" | "symbol";
+  type: "arrow" | "circle" | "symbol" | "line";
   symbol?: AnnotationSymbol;
   x: number;
   y: number;
@@ -113,11 +113,12 @@ function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], 
   });
 }
 
-function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" | "circle" | "symbol" }) {
+function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" | "circle" | "symbol" | "line" }) {
   const paths = {
     arrow: <path d="M2 13 13 2M5 2h8v8" />,
     circle: <circle cx="8" cy="8" r="5.5" />,
     symbol: <SymbolShape symbol="star" />,
+    line: <path d="M2 12 14 4" />,
     trim: <><circle cx="3.5" cy="4" r="1.5" /><circle cx="3.5" cy="12" r="1.5" /><path d="m4.8 5 7.7 6.5M4.8 11l7.7-6.5" /></>,
     split: <><rect x="1.5" y="3" width="5" height="10" rx="1" /><rect x="9.5" y="3" width="5" height="10" rx="1" /><path d="M8 2.5v11" /></>,
     cover: <rect x="2" y="3" width="12" height="10" rx="1.5" />,
@@ -1429,7 +1430,7 @@ export function VideoEditorModal({
   }
 
   const selectedAnnotation = annotations.find((item) => item.id === selectedAnnotationId);
-  const annotationName = (item: EditorAnnotation) => item.type === "symbol" ? "Symbol" : item.type === "circle" ? "Kreis" : "Pfeil";
+  const annotationName = (item: EditorAnnotation) => item.type === "line" ? "Linie" : item.type === "symbol" ? "Symbol" : item.type === "circle" ? "Kreis" : "Pfeil";
 
   function addAnnotation(source?: EditorAnnotation, type: EditorAnnotation["type"] = "arrow", symbol?: AnnotationSymbol) {
     if (timelineDuration <= 0) return;
@@ -1473,8 +1474,16 @@ export function VideoEditorModal({
       if (!captured) { rememberEditorState(); captured = true; }
       const dx = (event.clientX - startX) / rect.width * 100;
       const dy = (event.clientY - startY) / rect.height * 100;
+      // Length-only resize: scale the rotation viewport uniformly. SVG's
+      // non-scaling stroke keeps the visible line thickness fixed.
+      const radians = annotation.rotation * Math.PI / 180;
+      const lineScale = Math.max(Math.max(5 / annotation.width, 5 / annotation.height),
+        Math.min((100 - annotation.x) / annotation.width, (100 - annotation.y) / annotation.height,
+          1 + (dx * Math.cos(radians) / annotation.width + dy * Math.sin(radians) / annotation.height) / .42));
       const geometry = resize
-        ? { width: Math.min(100 - annotation.x, Math.max(5, annotation.width + dx)),
+        ? annotation.type === "line"
+          ? { width: annotation.width * lineScale, height: annotation.height * lineScale }
+          : { width: Math.min(100 - annotation.x, Math.max(5, annotation.width + dx)),
             height: Math.min(100 - annotation.y, Math.max(5, annotation.height + dy)) }
         : { x: Math.max(0, Math.min(100 - annotation.width, annotation.x + dx)),
             y: Math.max(0, Math.min(100 - annotation.height, annotation.y + dy)) };
@@ -1938,13 +1947,18 @@ export function VideoEditorModal({
                   onPointerDown={(e) => handleAnnotationPointerDown(e, item)}
                   onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
                   style={{ position: "absolute", left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`,
-                    pointerEvents: "auto", touchAction: "none", cursor: "move", boxSizing: "border-box",
+                    pointerEvents: item.type === "line" ? "none" : "auto", touchAction: "none", cursor: "move", boxSizing: "border-box",
                     zIndex: selectedAnnotationId === item.id ? 4 : 3,
-                    border: selectedAnnotationId === item.id ? "1px solid #FC2667" : "1px solid transparent" }}>
+                    border: item.type === "line" ? "none" : selectedAnnotationId === item.id ? "1px solid #FC2667" : "1px solid transparent" }}>
                   <svg aria-hidden="true" width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: "block", pointerEvents: "none" }}>
                     {/* Every vertex is within radius 44 of (50,50), so at any
                         angle the actual polygon stays inside this viewport. */}
-                    {item.type === "symbol" && item.symbol
+                    {item.type === "line"
+                      ? <g transform={`rotate(${item.rotation} 50 50)`}>
+                          <line x1="8" y1="50" x2="92" y2="50" fill="none" stroke={item.color ?? "#FC2667"} strokeWidth="3" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                          <line data-testid={`video-editor-line-hit-${item.id}`} x1="8" y1="50" x2="92" y2="50" stroke="transparent" strokeWidth="12" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "stroke" }} />
+                        </g>
+                      : item.type === "symbol" && item.symbol
                       ? <g transform={`rotate(${item.rotation} 50 50)`} style={{ color: item.color ?? "#FC2667" }}>
                           {/* Entire stroked 16x16 icon remains inside radius 50,
                               including at arbitrary rotations before scaling. */}
@@ -1955,19 +1969,32 @@ export function VideoEditorModal({
                       : <polygon fill={item.color ?? "#FC2667"} points="8,44 65,44 65,28 94,50 65,72 65,56 8,56" transform={`rotate(${item.rotation} 50 50)`} />}
                   </svg>
                   {selectedAnnotationId === item.id && item.type !== "circle" && <>
-                    <span aria-hidden="true" style={{ position: "absolute", right: 5, top: Math.max(-14, -videoFrameRect.height * item.y / 100),
-                      width: 1, height: 18, background: "#FC2667", pointerEvents: "none" }} />
+                    <span aria-hidden="true" style={{ position: "absolute",
+                      ...(item.type === "line" ? {
+                        left: "50%", top: "50%", height: 8,
+                        transform: `translate(-50%, -100%) rotate(${item.rotation}deg)`, transformOrigin: "bottom center",
+                      } : { right: 5, top: Math.max(-14, -videoFrameRect.height * item.y / 100), height: 18 }),
+                      width: 1, background: "#FC2667", pointerEvents: "none" }} />
                     <button type="button" aria-label={`${annotationName(item)} drehen`} title={`${annotationName(item)} drehen`}
                       data-testid={`video-editor-${item.type}-rotate-${item.id}`}
                       onPointerDown={(e) => handleAnnotationRotation(e, item)}
                       onClick={(e) => e.stopPropagation()}
-                      style={{ position: "absolute", right: 0, top: Math.max(-18, -videoFrameRect.height * item.y / 100),
+                      style={{ position: "absolute",
+                        ...(item.type === "line" ? {
+                          left: `calc(50% + ${14 * Math.sin(item.rotation * Math.PI / 180)}px - 6px)`,
+                          top: `calc(50% - ${14 * Math.cos(item.rotation * Math.PI / 180)}px - 6px)`,
+                        } : { right: 0, top: Math.max(-18, -videoFrameRect.height * item.y / 100) }),
                         width: 12, height: 12, minWidth: 0, padding: 0, borderRadius: "50%", border: "2px solid #FC2667",
-                        background: "#FFFFFF", cursor: "grab", touchAction: "none" }} />
+                        background: "#FFFFFF", cursor: "grab", touchAction: "none", pointerEvents: "auto" }} />
                   </>}
                   {selectedAnnotationId === item.id && <div data-testid={`video-editor-${item.type}-resize-${item.id}`}
                     onPointerDown={(e) => handleAnnotationPointerDown(e, item, true)}
-                    style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, background: "#FC2667", cursor: "nwse-resize", touchAction: "none" }} />}
+                    style={{ position: "absolute",
+                      ...(item.type === "line" ? {
+                        left: `calc(${50 + 42 * Math.cos(item.rotation * Math.PI / 180)}% - 6px)`,
+                        top: `calc(${50 + 42 * Math.sin(item.rotation * Math.PI / 180)}% - 6px)`,
+                      } : { right: 0, bottom: 0 }),
+                      width: 12, height: 12, background: "#FC2667", cursor: item.type === "line" ? "grab" : "nwse-resize", touchAction: "none", pointerEvents: "auto" }} />}
                 </div>
               ))}
               {visibleCoverOverlays.map(({ overlay }) => (
@@ -2227,6 +2254,14 @@ export function VideoEditorModal({
             </div>}
           </span>
 
+          <span className="video-editor-tool">
+            <button type="button" className="video-editor-tool-button" aria-label="Linie hinzufügen"
+              aria-describedby="video-editor-tooltip-line" onClick={() => addAnnotation(undefined, "line")}>
+              <EditorToolIcon name="line" />
+            </button>
+            <span id="video-editor-tooltip-line" role="tooltip" className="video-editor-tool-tooltip">Linie hinzufügen</span>
+          </span>
+
           {selectedClipId && (
             <button
               type="button"
@@ -2292,11 +2327,11 @@ export function VideoEditorModal({
         <div className="video-editor-cover-actions" data-testid="video-editor-cover-actions">
         {selectedAnnotation && <>
           <span>{annotationName(selectedAnnotation)}:</span>
-          <label>Farbe <input type="color" aria-label={`${annotationName(selectedAnnotation)}farbe`} value={selectedAnnotation.color ?? "#FC2667"}
+          <label>Farbe <input type="color" aria-label={`${selectedAnnotation.type === "line" ? "Linien" : annotationName(selectedAnnotation)}farbe`} value={selectedAnnotation.color ?? "#FC2667"}
             onChange={(e) => updateAnnotation({ color: e.target.value })}
             style={{ width: 32, height: 28, padding: 2, cursor: "pointer" }} /></label>
           {selectedAnnotation.type !== "circle" && <>
-          <label>Richtung <select aria-label={`${annotationName(selectedAnnotation)}richtung`} value={selectedAnnotation.rotation}
+          <label>Richtung <select aria-label={`${selectedAnnotation.type === "line" ? "Linien" : annotationName(selectedAnnotation)}richtung`} value={selectedAnnotation.rotation}
             onChange={(e) => updateAnnotation({ rotation: Number(e.target.value) })}>
             {selectedAnnotation.rotation % 45 !== 0 && <option value={selectedAnnotation.rotation}>{selectedAnnotation.rotation}°</option>}
             {["Rechts", "Rechts unten", "Unten", "Links unten", "Links", "Links oben", "Oben", "Rechts oben"].map((label, index) =>
@@ -2984,7 +3019,7 @@ export function VideoEditorModal({
                 {annotationName(item)} {annotations.slice(0, index + 1).filter((a) => a.type === item.type).length}
                 {(["start", "end"] as const).map((edge) => <span key={edge}
                   data-testid={`video-editor-${item.type}-${edge}-${item.id}`}
-                  title={`${edge === "start" ? "Start" : "Ende"} ${item.type === "symbol" ? "des Symbols" : item.type === "circle" ? "des Kreises" : "des Pfeils"} ziehen`}
+                  title={`${edge === "start" ? "Start" : "Ende"} ${item.type === "line" ? "der Linie" : item.type === "symbol" ? "des Symbols" : item.type === "circle" ? "des Kreises" : "des Pfeils"} ziehen`}
                   onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, edge)}
                   onClick={(e) => e.stopPropagation()}
                   style={{ position: "absolute", top: 0, bottom: 0, width: 8,

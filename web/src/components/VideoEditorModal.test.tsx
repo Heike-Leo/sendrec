@@ -36,7 +36,7 @@ let editorState: typeof emptyEditorState | {
         opacity?: number;
         text?: string;
       }>;
-      annotations?: Array<{ id: string; type: "arrow" | "circle" | "symbol"; symbol?: string; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number; color?: string }>;
+      annotations?: Array<{ id: string; type: "arrow" | "circle" | "symbol" | "line"; symbol?: string; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number; color?: string }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
   renderError: string | null;
@@ -323,6 +323,208 @@ describe("VideoEditorModal multi-source preview", () => {
     fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
     fireEvent.click(screen.getByRole("button", { name: "Symbol 1" }));
     expect(screen.getByLabelText("Symbol Start")).toHaveValue(0);
+  });
+
+
+  it("edits line length, rotation and color without changing stroke width, preserving copy and reload", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Linie hinzufügen" }));
+    const frame = screen.getByTestId("video-editor-overlay-frame");
+    const rect = vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 500 } as DOMRect);
+    const shape = () => frame.querySelector("line")!;
+    const box = () => shape().closest("svg")!.parentElement as HTMLElement;
+    const hit = () => frame.querySelector('[data-testid^="video-editor-line-hit-"]')!;
+    const grip = () => frame.querySelector('[data-testid^="video-editor-line-resize-"]')!;
+    const before = [box().style.width,box().style.height];
+    const rotationGrip = screen.getByRole("button", { name: "Linie drehen" });
+    expect(rotationGrip).toHaveStyle({ width: "12px", height: "12px", pointerEvents: "auto" });
+    expect(rotationGrip.style.left).toBe("calc(50% - 6px)");
+    expect(rotationGrip.style.top).toBe("calc(50% - 20px)");
+    expect(rotationGrip.previousElementSibling).toHaveStyle({ height: "8px", left: "50%", top: "50%", pointerEvents: "none" });
+    // Rotation is near the middle, length remains at the endpoint.
+    expect(grip()).not.toBe(rotationGrip);
+    expect((grip() as HTMLElement).style.left).toBe("calc(92% - 6px)");
+    expect((grip() as HTMLElement).style.top).toBe("calc(50% - 6px)");
+    expect(box()).toHaveStyle({ pointerEvents: "none" });
+    expect(box().style.border).not.toContain("solid");
+    expect(hit()).toHaveStyle({ pointerEvents: "stroke" });
+    fireEvent.pointerDown(hit(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 100, clientY: 50 });
+    fireEvent.pointerUp(document);
+    expect(box()).toHaveStyle({ left: "45%", top: "45%" });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(box()).toHaveStyle({ left: "35%", top: "35%" });
+    fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+    fireEvent.pointerDown(grip(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 10, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 20, clientY: 0 });
+    fireEvent.pointerUp(document);
+    expect(parseFloat(box().style.width)).toBeGreaterThan(parseFloat(before[0]));
+    expect(parseFloat(box().style.width)/parseFloat(box().style.height)).toBeCloseTo(parseFloat(before[0])/parseFloat(before[1]));
+    expect(shape()).toHaveAttribute("stroke-width", "3");
+    expect(shape()).toHaveAttribute("vector-effect", "non-scaling-stroke");
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect([box().style.width,box().style.height]).toEqual(before);
+    fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+    const point = (angle: number) => ({
+      clientX: (35 + parseFloat(before[0])/2)*10 + Math.cos(angle*Math.PI/180)*parseFloat(before[0])*5,
+      clientY: (35 + parseFloat(before[1])/2)*5 + Math.sin(angle*Math.PI/180)*parseFloat(before[1])*2.5,
+    });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Linie drehen" }), point(0));
+    fireEvent.pointerMove(document, point(20));fireEvent.pointerMove(document, point(37));fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Linienrichtung")).toHaveValue("37");
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+    expect(screen.getByLabelText("Linienrichtung")).toHaveValue("0");
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Linie drehen" }), point(0));
+    fireEvent.pointerMove(document, point(37));fireEvent.pointerUp(document);
+    fireEvent.change(screen.getByLabelText("Linienfarbe"), { target: { value: "#123abc" } });
+    expect(shape()).toHaveAttribute("stroke", "#123abc");
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+    expect(shape()).toHaveAttribute("stroke", "#FC2667");
+    fireEvent.change(screen.getByLabelText("Linienfarbe"), { target: { value: "#123abc" } });
+    rect.mockReturnValue({ left: 0, top: 0, width: 500, height: 250 } as DOMRect);
+    fireEvent.pointerDown(hit(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 5000, clientY: 5000 });fireEvent.pointerUp(document);
+    expect(parseFloat(box().style.left)+parseFloat(box().style.width)).toBeCloseTo(100);
+    expect(parseFloat(box().style.top)+parseFloat(box().style.height)).toBeCloseTo(100);
+    fireEvent.click(screen.getByRole("button", { name: "Linie kopieren" }));
+    fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
+    expect(screen.queryByRole("button", { name: "Linie drehen" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Linie einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations[1]).toEqual({...timeline.annotations[0], id: timeline.annotations[1].id});
+    expect(timeline.annotations[1].id).not.toBe(timeline.annotations[0].id);
+    view.unmount();editorState = {...emptyEditorState,timeline};
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Linie 2" });
+    fireEvent.click(screen.getByRole("button", { name: "Linie 2" }));
+    expect(screen.getByLabelText("Linienfarbe")).toHaveValue("#123abc");
+    expect(screen.getByLabelText("Linienrichtung")).toHaveValue("37");
+    fireEvent.change(screen.getByLabelText("Linienfarbe"), { target: { value: "#ff0000" } });
+    fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+    expect(screen.getByLabelText("Linienfarbe")).toHaveValue("#123abc");
+  });
+
+  it("creates lines with independent numbering, copy/paste, deletion, reload and undo", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Linie hinzufügen" }));
+    const ring = view.container.querySelector("line")!;
+    expect(ring).toHaveAttribute("fill", "none");
+    expect(ring).toHaveAttribute("stroke", "#FC2667");
+    expect(ring).toHaveAttribute("vector-effect", "non-scaling-stroke");
+    expect(screen.queryByLabelText("Pfeilfarbe")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Pfeil drehen")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Linie hinzufügen" }));
+    expect(screen.getByRole("button", { name: "Linie 2" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Pfeil 1" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Linie kopieren" }));
+    fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
+    fireEvent.click(screen.getByRole("button", { name: "Linie einfügen" }));
+    expect(screen.getByRole("button", { name: "Linie 3" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([, o]) => o?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations[3]).toEqual({ ...timeline.annotations[2], id: timeline.annotations[3].id });
+    expect(timeline.annotations[3].id).not.toBe(timeline.annotations[2].id);
+    fireEvent.click(screen.getByRole("button", { name: "Linie löschen" }));
+    expect(screen.queryByRole("button", { name: "Linie 3" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pfeil 1" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getByRole("button", { name: "Linie 3" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.queryByRole("button", { name: "Linie 3" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.queryByRole("button", { name: "Linie 2" })).not.toBeInTheDocument();
+    view.unmount();
+    editorState = { ...emptyEditorState, timeline };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Linie 3" });
+    expect(screen.getByRole("button", { name: "Pfeil 1" })).toBeInTheDocument();
+  });
+
+  it("resizes and moves line timeline windows with live preview, undo and persistence", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Linie hinzufügen" }));
+    const track = view.container.querySelector('[data-testid^="video-editor-line-track-"]')!;
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({ left: -100, width: 2000 } as DOMRect);
+    const start = view.container.querySelector('[data-testid^="video-editor-line-start-"]')!;
+    const end = view.container.querySelector('[data-testid^="video-editor-line-end-"]')!;
+    const video = view.container.querySelector("video")!;
+    fireEvent.pointerDown(start, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 200 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Linie Start")).toHaveValue(1);
+    expect(view.container.querySelector("line")).toBeNull();
+    video.currentTime = 2; fireEvent.timeUpdate(video);
+    expect(view.container.querySelector("line")).not.toBeNull();
+    fireEvent.pointerDown(end, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 200 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Linie Ende")).toHaveValue(6);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Linie 1" }), { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 200 });
+    fireEvent.pointerMove(document, { clientX: 800 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Linie Start")).toHaveValue(5);
+    expect(screen.getByLabelText("Linie Ende")).toHaveValue(10);
+    expect(view.container.querySelector("line")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+    expect(screen.getByLabelText("Linie Start")).toHaveValue(1);
+    expect(screen.getByLabelText("Linie Ende")).toHaveValue(6);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Linie 1" }), { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Linie Start")).toHaveValue(0);
+    expect(screen.getByLabelText("Linie Ende")).toHaveValue(5);
+    fireEvent.click(screen.getByRole("button", { name: "Linie kopieren" }));
+    fireEvent.click(screen.getByRole("button", { name: "Linie einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([, o]) => o?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations.map((a: { start: number; end: number }) => [a.start, a.end])).toEqual([[0, 5], [0, 5]]);
+    view.unmount(); editorState = { ...emptyEditorState, timeline };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Linie 2" });
+    fireEvent.click(screen.getByRole("button", { name: "Linie 2" }));
+    expect(screen.getByLabelText("Linie Ende")).toHaveValue(5);
+  });
+
+  it("clamps line timeline handles without changing another line", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Linie hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Linie hinzufügen" }));
+    const tracks = view.container.querySelectorAll('[data-testid^="video-editor-line-track-"]');
+    vi.spyOn(tracks[0], "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
+    const start = tracks[0].querySelector('[data-testid^="video-editor-line-start-"]')!;
+    const end = tracks[0].querySelector('[data-testid^="video-editor-line-end-"]')!;
+    fireEvent.pointerDown(start, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    expect(screen.getByLabelText("Linie Start")).toHaveValue(0);
+    fireEvent.pointerMove(document, { clientX: 5000 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Linie Start")).toHaveValue(4.9);
+    fireEvent.pointerDown(end, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    expect(screen.getByLabelText("Linie Ende")).toHaveValue(5);
+    fireEvent.pointerMove(document, { clientX: 5000 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Linie Ende")).toHaveValue(10);
+    fireEvent.click(screen.getByRole("button", { name: "Linie 2" }));
+    expect(screen.getByLabelText("Linie Start")).toHaveValue(0);
+    expect(screen.getByLabelText("Linie Ende")).toHaveValue(5);
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+    expect(screen.getByLabelText("Linie Ende")).toHaveValue(5);
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+    expect(screen.getByLabelText("Linie Start")).toHaveValue(0);
   });
 
 
@@ -1812,6 +2014,7 @@ describe("VideoEditorModal multi-source preview", () => {
         annotations: [
           { id: "arrow-frame", type: "arrow", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 37 },
           { id: "circle-frame", type: "circle", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 0 },
+          { id: "line-frame", type: "line", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 37 },
           { id: "symbol-frame", type: "symbol", symbol: "star", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 37 },
         ],
       },
@@ -1843,6 +2046,7 @@ describe("VideoEditorModal multi-source preview", () => {
       expect(frame).toHaveStyle({ left: "0px", top: "18.75px", width: "1000px", height: "562.5px" });
       expect(screen.getByTestId("video-editor-arrow-arrow-frame").parentElement).toBe(frame);
       expect(screen.getByTestId("video-editor-circle-circle-frame").parentElement).toBe(frame);
+      expect(screen.getByTestId("video-editor-line-line-frame").parentElement).toBe(frame);
       expect(screen.getByTestId("video-editor-symbol-symbol-frame").parentElement).toBe(frame);
       expect(screen.getByTestId("video-editor-symbol-symbol-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-circle-circle-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
@@ -1862,6 +2066,8 @@ describe("VideoEditorModal multi-source preview", () => {
       expect(frame).toHaveStyle({ left: "0px", top: "131.25px", width: "600px", height: "337.5px" });
       expect(screen.getByTestId("video-editor-circle-circle-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-arrow-arrow-frame").querySelector("polygon")).toHaveAttribute("transform", "rotate(37 50 50)");
+      expect(screen.getByTestId("video-editor-line-line-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
+      expect(screen.getByTestId("video-editor-line-line-frame").querySelector("line")).toHaveAttribute("stroke-width", "3");
       expect(screen.getByTestId("video-editor-symbol-symbol-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-symbol-symbol-frame").querySelector("svg > g")).toHaveAttribute("transform", "rotate(37 50 50)");
       expect(screen.getByTestId("video-editor-arrow-arrow-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
@@ -2580,6 +2786,7 @@ describe("VideoEditorModal multi-source preview", () => {
       "Pfeil hinzufügen",
       "Kreis hinzufügen",
       "Symbol hinzufügen",
+      "Linie hinzufügen",
       "Video einfügen",
       "Rückgängig",
       "Ansicht einpassen",
