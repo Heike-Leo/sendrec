@@ -81,15 +81,27 @@ func rasterArrow(a editorAnnotation, width, height int) *image.NRGBA {
 
 func arrowFilename(index int) string { return fmt.Sprintf("arrow-%d.png", index) }
 
-// Circles are persisted preview-only annotations; do not export them as arrows.
-func exportArrowAnnotations(annotations []editorAnnotation) []editorAnnotation {
+// Keep order within each type, with circle contours above all arrows.
+func exportAnnotations(annotations []editorAnnotation) []editorAnnotation {
 	var arrows []editorAnnotation
 	for _, annotation := range annotations {
 		if annotation.Type == "arrow" {
 			arrows = append(arrows, annotation)
 		}
 	}
+	for _, annotation := range annotations {
+		if annotation.Type == "circle" {
+			arrows = append(arrows, annotation)
+		}
+	}
 	return arrows
+}
+
+func annotationFilename(index int, a editorAnnotation) string {
+	if a.Type == "circle" {
+		return fmt.Sprintf("circle-%d.png", index)
+	}
+	return arrowFilename(index)
 }
 
 func prepareArrowFiles(dir string, timeline editTimeline) error {
@@ -99,12 +111,18 @@ func prepareArrowFiles(dir string, timeline editTimeline) error {
 	if err := validateEditTimeline(&timeline); err != nil {
 		return err
 	}
-	for i, a := range exportArrowAnnotations(timeline.Annotations) {
-		f, err := os.OpenFile(filepath.Join(dir, arrowFilename(i)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	for i, a := range exportAnnotations(timeline.Annotations) {
+		f, err := os.OpenFile(filepath.Join(dir, annotationFilename(i, a)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
 			return fmt.Errorf("prepare arrow: %w", err)
 		}
-		err = png.Encode(f, rasterArrow(a, editorRenderWidth, editorRenderHeight))
+		var img *image.NRGBA
+		if a.Type == "circle" {
+			img = rasterCircle(a, editorRenderWidth, editorRenderHeight)
+		} else {
+			img = rasterArrow(a, editorRenderWidth, editorRenderHeight)
+		}
+		err = png.Encode(f, img)
 		closeErr := f.Close()
 		if err != nil {
 			return fmt.Errorf("encode arrow: %w", err)
@@ -120,7 +138,7 @@ func prepareArrowFiles(dir string, timeline editTimeline) error {
 // annotations return byte-for-byte identical arguments. Generated filenames
 // contain neither annotation IDs nor user input; no shell is involved.
 func buildAnnotatedTimelineRenderArgs(inputs []string, clips []editClip, indexes map[string]int, sources map[string]sourceVideo, output string, overlays []editorCoverOverlay, annotations []editorAnnotation) []string {
-	annotations = exportArrowAnnotations(annotations)
+	annotations = exportAnnotations(annotations)
 	args := buildTimelineRenderArgs(inputs, clips, indexes, sources, output, overlays)
 	if len(annotations) == 0 {
 		return args
@@ -133,7 +151,7 @@ func buildAnnotatedTimelineRenderArgs(inputs []string, clips []editClip, indexes
 	result := append([]string{}, args[:filterIndex]...)
 	previous := "varrowbase"
 	for i, a := range annotations {
-		result = append(result, "-loop", "1", "-framerate", "30", "-i", arrowFilename(i))
+		result = append(result, "-loop", "1", "-framerate", "30", "-i", annotationFilename(i, a))
 		bounds := arrowBounds(a, editorRenderWidth, editorRenderHeight)
 		next := fmt.Sprintf("varrow%d", i)
 		if i == len(annotations)-1 {

@@ -49,7 +49,7 @@ func TestArrowRenderGeometry(t *testing.T) {
 	}
 }
 
-func TestCirclePersistenceWithoutExport(t *testing.T) {
+func TestCirclePersistenceWithExport(t *testing.T) {
 	timeline := validTimeline(editClip{ID: "clip", SourceID: "source", SourceEnd: 2, Duration: 2})
 	circle := editorAnnotation{ID: "circle", Type: "circle", X: 10, Y: 20, Width: 30, Height: 20, Start: .5, End: 1.5}
 	arrow := editorAnnotation{ID: "arrow", Type: "arrow", X: 5, Y: 5, Width: 20, Height: 20, End: 2, Rotation: 37, Color: "#123456"}
@@ -70,17 +70,17 @@ func TestCirclePersistenceWithoutExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 1 || entries[0].Name() != "arrow-0.png" {
-		t.Fatalf("circles generated export assets: %v", entries)
+	if len(entries) != 2 || entries[0].Name() != "arrow-0.png" || entries[1].Name() != "circle-1.png" {
+		t.Fatalf("incorrect annotation assets: %v", entries)
 	}
 	args := func(annotations []editorAnnotation) []string {
 		return buildAnnotatedTimelineRenderArgs([]string{"source.mp4"}, timeline.Clips, map[string]int{"source": 0}, map[string]sourceVideo{"source": {}}, "out.mp4", nil, annotations)
 	}
-	if !reflect.DeepEqual(args([]editorAnnotation{circle}), args(nil)) {
-		t.Fatal("circle changed legacy render")
+	if reflect.DeepEqual(args([]editorAnnotation{circle}), args(nil)) {
+		t.Fatal("circle missing from render")
 	}
-	if !reflect.DeepEqual(args(timeline.Annotations), args([]editorAnnotation{arrow})) {
-		t.Fatal("circle changed arrow render")
+	if !reflect.DeepEqual(args(timeline.Annotations), args([]editorAnnotation{arrow, circle})) {
+		t.Fatal("circle must render after arrows independent of stored order")
 	}
 }
 
