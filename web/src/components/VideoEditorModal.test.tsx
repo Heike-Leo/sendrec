@@ -299,6 +299,78 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(8);
   });
 
+  it.each([1000, 2000])("moves the complete arrow window at track width %s with constant duration and one undo step", async (width) => {
+    await renderArrowTimeline(width);
+    const bar = screen.getByRole("button", { name: "Pfeil 1" });
+    const undo = screen.getByRole("button", { name: "↶ Rückgängig" });
+    const times = (start: number, end: number) => {
+      expect(screen.getByLabelText("Pfeil Start")).toHaveValue(start);
+      expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(end);
+      const actualStart = Number((screen.getByLabelText("Pfeil Start") as HTMLInputElement).value);
+      const actualEnd = Number((screen.getByLabelText("Pfeil Ende") as HTMLInputElement).value);
+      expect(actualEnd - actualStart).toBe(4);
+    };
+    fireEvent.pointerDown(bar, { clientX: 500 });
+    fireEvent.pointerMove(document, { clientX: 500 });
+    fireEvent.pointerUp(document);
+    expect(undo).toBeDisabled();
+    fireEvent.pointerDown(bar, { clientX: 500 });
+    fireEvent.pointerMove(document, { clientX: 500 + width * 0.2 });
+    times(4, 8);
+    fireEvent.pointerMove(document, { clientX: 500 + width * 0.3 });
+    times(5, 9);
+    fireEvent.pointerUp(document);
+    fireEvent.click(undo);
+    fireEvent.click(bar);
+    times(2, 6);
+    expect(undo).toBeDisabled();
+    fireEvent.pointerDown(bar, { clientX: 500 });
+    fireEvent.pointerMove(document, { clientX: 500 - width * 0.1 });
+    times(1, 5);
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    times(0, 4);
+    fireEvent.pointerUp(document);
+    fireEvent.pointerDown(bar, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 5000 });
+    times(6, 10);
+    fireEvent.pointerCancel(document);
+    fireEvent.pointerMove(document, { clientX: 0 });
+    times(6, 10);
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 2" }));
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(1);
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(8);
+  });
+
+  it("updates preview during arrow timeline move and restores/copies the shifted window", async () => {
+    const view = await renderArrowTimeline();
+    const video = view.container.querySelector("video")!;
+    video.currentTime = 3.5; fireEvent.timeUpdate(video);
+    expect(screen.getByTestId("video-editor-arrow-timed-a")).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Pfeil 1" }), { clientX: 500 });
+    fireEvent.pointerMove(document, { clientX: 700 });
+    expect(screen.queryByTestId("video-editor-arrow-timed-a")).not.toBeInTheDocument();
+    video.currentTime = 7.5; fireEvent.timeUpdate(video);
+    expect(screen.getByTestId("video-editor-arrow-timed-a")).toBeInTheDocument();
+    fireEvent.pointerUp(document);
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations[0]).toEqual({ id: "timed-a", type: "arrow", x: 10, y: 10, width: 20, height: 20, start: 4, end: 8, rotation: 90 });
+    expect(timeline.annotations[1]).toMatchObject({ id: "timed-b", start: 1, end: 8 });
+    view.unmount();
+    editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Pfeil 1" });
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(4);
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(8);
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil kopieren" }));
+    fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil einfügen" }));
+    expect(screen.getByRole("button", { name: "Pfeil 3" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Pfeil Start")).toHaveValue(4);
+    expect(screen.getByLabelText("Pfeil Ende")).toHaveValue(8);
+  });
+
   async function setupArrowRotation() {
     const view = render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-timeline");

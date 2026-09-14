@@ -1498,25 +1498,31 @@ export function VideoEditorModal({
     document.addEventListener("pointercancel", stop);
   }
 
-  function handleAnnotationTimelineResize(e: React.PointerEvent<HTMLSpanElement>, annotation: EditorAnnotation, edge: "start" | "end") {
+  function handleAnnotationTimelinePointerDown(e: React.PointerEvent<HTMLElement>, annotation: EditorAnnotation, edge: "start" | "end" | "move") {
     e.preventDefault();
     e.stopPropagation();
     selectAnnotation(annotation.id);
-    const rect = e.currentTarget.parentElement?.parentElement?.getBoundingClientRect();
+    const track = edge === "move" ? e.currentTarget.parentElement : e.currentTarget.parentElement?.parentElement;
+    const rect = track?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || timelineDuration <= 0) return;
     cancelAnnotationDragRef.current?.();
     const startClientX = e.clientX;
     let captured = false;
-    let lastValue = annotation[edge];
+    const duration = annotation.end - annotation.start;
+    const initialValue = edge === "end" ? annotation.end : annotation.start;
+    let lastValue = initialValue;
     const move = (event: PointerEvent) => {
-      const rawTime = annotation[edge] + (event.clientX - startClientX) / rect.width * timelineDuration;
-      const value = edge === "start"
+      const rawTime = initialValue + (event.clientX - startClientX) / rect.width * timelineDuration;
+      const value = edge === "move"
+        ? Math.max(0, Math.min(timelineDuration - duration, rawTime))
+        : edge === "start"
         ? Math.max(0, Math.min(annotation.end - 0.1, rawTime))
         : Math.min(timelineDuration, Math.max(annotation.start + 0.1, rawTime));
       if (value === lastValue) return;
       if (!captured) { rememberEditorState(); captured = true; }
       lastValue = value;
-      setAnnotations((previous) => previous.map((item) => item.id === annotation.id ? { ...item, [edge]: value } : item));
+      const times = edge === "move" ? { start: value, end: value + duration } : { [edge]: value };
+      setAnnotations((previous) => previous.map((item) => item.id === annotation.id ? { ...item, ...times } : item));
     };
     const stop = () => {
       document.removeEventListener("pointermove", move);
@@ -2898,15 +2904,16 @@ export function VideoEditorModal({
             {annotations.map((item, index) => <div key={item.id} data-testid={`video-editor-arrow-track-${item.id}`}
               style={{ height: 38, position: "relative", background: "#F8FAFC", border: "1px solid var(--color-border)", borderRadius: 8 }}>
               <button type="button" aria-label={`Pfeil ${index + 1}`} aria-pressed={selectedAnnotationId === item.id}
+                onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, "move")}
                 onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
                 style={{ position: "absolute", left: `${item.start / timelineDuration * 100}%`, width: `${(item.end - item.start) / timelineDuration * 100}%`,
-                  top: 3, bottom: 3, overflow: "hidden", whiteSpace: "nowrap", background: "#FCE7EF", color: "#881337",
+                  top: 3, bottom: 3, overflow: "hidden", whiteSpace: "nowrap", background: "#FCE7EF", color: "#881337", cursor: "grab", touchAction: "none",
                   border: selectedAnnotationId === item.id ? "2px solid #FC2667" : "1px solid #F9A8C0", borderRadius: 5 }}>
                 Pfeil {index + 1}
                 {(["start", "end"] as const).map((edge) => <span key={edge}
                   data-testid={`video-editor-arrow-${edge}-${item.id}`}
                   title={edge === "start" ? "Start des Pfeils ziehen" : "Ende des Pfeils ziehen"}
-                  onPointerDown={(e) => handleAnnotationTimelineResize(e, item, edge)}
+                  onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, edge)}
                   onClick={(e) => e.stopPropagation()}
                   style={{ position: "absolute", top: 0, bottom: 0, width: 8,
                     [edge === "start" ? "left" : "right"]: 0,
