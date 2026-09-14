@@ -25,9 +25,31 @@ interface EditorCoverOverlay {
   text?: string;
 }
 
+const annotationSymbols = ["check", "cross", "warning", "info", "star", "pointer", "plus", "question"] as const;
+type AnnotationSymbol = typeof annotationSymbols[number];
+const symbolLabels: Record<AnnotationSymbol, string> = {
+  check: "Haken", cross: "Kreuz", warning: "Warnung", info: "Info",
+  star: "Stern", pointer: "Hand", plus: "Plus", question: "Fragezeichen",
+};
+
+function SymbolShape({ symbol }: { symbol: AnnotationSymbol }) {
+  const paths = {
+    check: <path d="m3 8 3 3 7-7" />,
+    cross: <path d="m3 3 10 10M13 3 3 13" />,
+    warning: <><path d="M8 2 14 13H2ZM8 6v3" /><circle cx="8" cy="11" r=".4" fill="currentColor" /></>,
+    info: <><circle cx="8" cy="8" r="6" /><path d="M8 7v4" /><circle cx="8" cy="5" r=".4" fill="currentColor" /></>,
+    star: <path d="m8 2 1.8 3.8L14 6.4l-3 3 .7 4.2L8 11.6l-3.7 2 .7-4.2-3-3 4.2-.6Z" />,
+    pointer: <path d="M6 8V3a1 1 0 0 1 2 0v4-1a1 1 0 0 1 2 0v1a1 1 0 0 1 2 0v1a1 1 0 0 1 2 0v2c0 2-2 4-4 4H8c-2 0-3-2-4-3L2 9a1 1 0 0 1 1.5-1.3L6 10" />,
+    plus: <path d="M8 3v10M3 8h10" />,
+    question: <><circle cx="8" cy="8" r="6" /><path d="M6 6a2 2 0 1 1 3 1.7C8 8.2 8 8.5 8 9" /><circle cx="8" cy="11" r=".4" fill="currentColor" /></>,
+  };
+  return <g data-symbol={symbol} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{paths[symbol]}</g>;
+}
+
 interface EditorAnnotation {
   id: string;
-  type: "arrow" | "circle";
+  type: "arrow" | "circle" | "symbol";
+  symbol?: AnnotationSymbol;
   x: number;
   y: number;
   width: number;
@@ -91,10 +113,11 @@ function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], 
   });
 }
 
-function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" | "circle" }) {
+function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" | "circle" | "symbol" }) {
   const paths = {
     arrow: <path d="M2 13 13 2M5 2h8v8" />,
     circle: <circle cx="8" cy="8" r="5.5" />,
+    symbol: <SymbolShape symbol="star" />,
     trim: <><circle cx="3.5" cy="4" r="1.5" /><circle cx="3.5" cy="12" r="1.5" /><path d="m4.8 5 7.7 6.5M4.8 11l7.7-6.5" /></>,
     split: <><rect x="1.5" y="3" width="5" height="10" rx="1" /><rect x="9.5" y="3" width="5" height="10" rx="1" /><path d="M8 2.5v11" /></>,
     cover: <rect x="2" y="3" width="12" height="10" rx="1.5" />,
@@ -153,6 +176,8 @@ export function VideoEditorModal({
   const [annotations, setAnnotations] = useState<EditorAnnotation[]>([]);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [copiedAnnotation, setCopiedAnnotation] = useState<EditorAnnotation | null>(null);
+  const [showSymbolPicker, setShowSymbolPicker] = useState(false);
+  const symbolPickerButtonRef = useRef<HTMLButtonElement>(null);
   const annotationFrameRef = useRef<HTMLDivElement>(null);
   const cancelAnnotationDragRef = useRef<(() => void) | null>(null);
   function setSelectedCoverOverlayId(id: string | null) {
@@ -1404,20 +1429,21 @@ export function VideoEditorModal({
   }
 
   const selectedAnnotation = annotations.find((item) => item.id === selectedAnnotationId);
-  const annotationName = (item: EditorAnnotation) => item.type === "circle" ? "Kreis" : "Pfeil";
+  const annotationName = (item: EditorAnnotation) => item.type === "symbol" ? "Symbol" : item.type === "circle" ? "Kreis" : "Pfeil";
 
-  function addAnnotation(source?: EditorAnnotation, type: EditorAnnotation["type"] = "arrow") {
+  function addAnnotation(source?: EditorAnnotation, type: EditorAnnotation["type"] = "arrow", symbol?: AnnotationSymbol) {
     if (timelineDuration <= 0) return;
     const start = Math.min(timelinePlayheadTime, Math.max(0, timelineDuration - 0.1));
+    const defaultSize = type === "symbol" ? 18 : 30;
     const annotation: EditorAnnotation = source
       ? { ...source, id: crypto.randomUUID(),
           // Clipboard geometry uses the same frame-relative bounds as dragging.
           // Do not offset copies; only bring out-of-bounds positions back inside.
           x: Math.max(0, Math.min(100 - source.width, source.x)),
           y: Math.max(0, Math.min(100 - source.height, source.y)) }
-      : { id: crypto.randomUUID(), type, x: 35, y: 35,
-          width: type === "circle" ? Math.min(30, 30 * (videoFrameRect.height || 9) / (videoFrameRect.width || 16)) : 30,
-          height: type === "circle" ? Math.min(30, 30 * (videoFrameRect.width || 16) / (videoFrameRect.height || 9)) : 20,
+      : { id: crypto.randomUUID(), type, ...(type === "symbol" ? { symbol } : {}), x: 35, y: 35,
+          width: type !== "arrow" ? Math.min(defaultSize, defaultSize * (videoFrameRect.height || 9) / (videoFrameRect.width || 16)) : 30,
+          height: type !== "arrow" ? Math.min(defaultSize, defaultSize * (videoFrameRect.width || 16) / (videoFrameRect.height || 9)) : 20,
           start, end: Math.min(timelineDuration, start + 5), rotation: 0 };
     rememberEditorState();
     setAnnotations((previous) => [...previous, annotation]);
@@ -1918,15 +1944,21 @@ export function VideoEditorModal({
                   <svg aria-hidden="true" width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: "block", pointerEvents: "none" }}>
                     {/* Every vertex is within radius 44 of (50,50), so at any
                         angle the actual polygon stays inside this viewport. */}
-                    {item.type === "circle"
+                    {item.type === "symbol" && item.symbol
+                      ? <g transform={`rotate(${item.rotation} 50 50)`} style={{ color: item.color ?? "#FC2667" }}>
+                          {/* Entire stroked 16x16 icon remains inside radius 50,
+                              including at arbitrary rotations before scaling. */}
+                          <g transform="translate(18 18) scale(4)"><SymbolShape symbol={item.symbol} /></g>
+                        </g>
+                      : item.type === "circle"
                       ? <ellipse cx="50" cy="50" rx="47" ry="47" fill="none" stroke={item.color ?? "#FC2667"} strokeWidth="3" vectorEffect="non-scaling-stroke" />
                       : <polygon fill={item.color ?? "#FC2667"} points="8,44 65,44 65,28 94,50 65,72 65,56 8,56" transform={`rotate(${item.rotation} 50 50)`} />}
                   </svg>
-                  {selectedAnnotationId === item.id && item.type === "arrow" && <>
+                  {selectedAnnotationId === item.id && item.type !== "circle" && <>
                     <span aria-hidden="true" style={{ position: "absolute", right: 5, top: Math.max(-14, -videoFrameRect.height * item.y / 100),
                       width: 1, height: 18, background: "#FC2667", pointerEvents: "none" }} />
-                    <button type="button" aria-label="Pfeil drehen" title="Pfeil drehen"
-                      data-testid={`video-editor-arrow-rotate-${item.id}`}
+                    <button type="button" aria-label={`${annotationName(item)} drehen`} title={`${annotationName(item)} drehen`}
+                      data-testid={`video-editor-${item.type}-rotate-${item.id}`}
                       onPointerDown={(e) => handleAnnotationRotation(e, item)}
                       onClick={(e) => e.stopPropagation()}
                       style={{ position: "absolute", right: 0, top: Math.max(-18, -videoFrameRect.height * item.y / 100),
@@ -2174,6 +2206,26 @@ export function VideoEditorModal({
             </button>
             <span id="video-editor-tooltip-circle" role="tooltip" className="video-editor-tool-tooltip">Kreis hinzufügen</span>
           </span>
+          <span className="video-editor-tool" onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setShowSymbolPicker(false);
+          }} onKeyDown={(e) => {
+            if (e.key === "Escape" && showSymbolPicker) {
+              e.stopPropagation(); setShowSymbolPicker(false); symbolPickerButtonRef.current?.focus();
+            }
+          }}>
+            <button ref={symbolPickerButtonRef} type="button" className="video-editor-tool-button" aria-label="Symbol hinzufügen"
+              aria-describedby={showSymbolPicker ? undefined : "video-editor-tooltip-symbol"} aria-haspopup="dialog" aria-expanded={showSymbolPicker}
+              onClick={() => setShowSymbolPicker((previous) => !previous)}><EditorToolIcon name="symbol" /></button>
+            {!showSymbolPicker && <span id="video-editor-tooltip-symbol" role="tooltip" className="video-editor-tool-tooltip">Symbol hinzufügen</span>}
+            {showSymbolPicker && <div role="dialog" aria-label="Symbol auswählen"
+              style={{ position: "absolute", left: 0, top: "100%", zIndex: 50, display: "grid", gridTemplateColumns: "repeat(4, 32px)", gap: 4, padding: 8, background: "white", border: "1px solid var(--color-border)", borderRadius: 8 }}>
+              {annotationSymbols.map((symbol, index) => <button key={symbol} autoFocus={index === 0} type="button"
+                className="video-editor-tool-button" aria-label={symbolLabels[symbol]} title={symbolLabels[symbol]}
+                onClick={() => { addAnnotation(undefined, "symbol", symbol); setShowSymbolPicker(false); symbolPickerButtonRef.current?.focus(); }}>
+                <svg aria-hidden="true" width="20" height="20" viewBox="0 0 16 16"><SymbolShape symbol={symbol} /></svg>
+              </button>)}
+            </div>}
+          </span>
 
           {selectedClipId && (
             <button
@@ -2243,8 +2295,8 @@ export function VideoEditorModal({
           <label>Farbe <input type="color" aria-label={`${annotationName(selectedAnnotation)}farbe`} value={selectedAnnotation.color ?? "#FC2667"}
             onChange={(e) => updateAnnotation({ color: e.target.value })}
             style={{ width: 32, height: 28, padding: 2, cursor: "pointer" }} /></label>
-          {selectedAnnotation.type === "arrow" && <>
-          <label>Richtung <select aria-label="Pfeilrichtung" value={selectedAnnotation.rotation}
+          {selectedAnnotation.type !== "circle" && <>
+          <label>Richtung <select aria-label={`${annotationName(selectedAnnotation)}richtung`} value={selectedAnnotation.rotation}
             onChange={(e) => updateAnnotation({ rotation: Number(e.target.value) })}>
             {selectedAnnotation.rotation % 45 !== 0 && <option value={selectedAnnotation.rotation}>{selectedAnnotation.rotation}°</option>}
             {["Rechts", "Rechts unten", "Unten", "Links unten", "Links", "Links oben", "Oben", "Rechts oben"].map((label, index) =>
@@ -2932,7 +2984,7 @@ export function VideoEditorModal({
                 {annotationName(item)} {annotations.slice(0, index + 1).filter((a) => a.type === item.type).length}
                 {(["start", "end"] as const).map((edge) => <span key={edge}
                   data-testid={`video-editor-${item.type}-${edge}-${item.id}`}
-                  title={`${edge === "start" ? "Start" : "Ende"} ${item.type === "circle" ? "des Kreises" : "des Pfeils"} ziehen`}
+                  title={`${edge === "start" ? "Start" : "Ende"} ${item.type === "symbol" ? "des Symbols" : item.type === "circle" ? "des Kreises" : "des Pfeils"} ziehen`}
                   onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, edge)}
                   onClick={(e) => e.stopPropagation()}
                   style={{ position: "absolute", top: 0, bottom: 0, width: 8,

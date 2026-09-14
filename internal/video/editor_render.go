@@ -48,6 +48,7 @@ type editorCoverOverlay struct {
 type editorAnnotation struct {
 	ID       string  `json:"id"`
 	Type     string  `json:"type"`
+	Symbol   string  `json:"symbol,omitempty"`
 	X        float64 `json:"x"`
 	Y        float64 `json:"y"`
 	Width    float64 `json:"width"`
@@ -140,8 +141,15 @@ func validateEditTimeline(timeline *editTimeline) error {
 	annotationIDs := make(map[string]bool, len(timeline.Annotations))
 	for i := range timeline.Annotations {
 		annotation := &timeline.Annotations[i]
-		if strings.TrimSpace(annotation.ID) == "" || annotationIDs[annotation.ID] || (annotation.Type != "arrow" && annotation.Type != "circle") {
-			return fmt.Errorf("annotation requires a unique id and type arrow or circle")
+		if strings.TrimSpace(annotation.ID) == "" || annotationIDs[annotation.ID] || (annotation.Type != "arrow" && annotation.Type != "circle" && annotation.Type != "symbol") {
+			return fmt.Errorf("annotation requires a unique id and type arrow, circle or symbol")
+		}
+		if annotation.Type == "symbol" {
+			switch annotation.Symbol {
+			case "check", "cross", "warning", "info", "star", "pointer", "plus", "question":
+			default:
+				return fmt.Errorf("invalid annotation symbol")
+			}
 		}
 		annotationIDs[annotation.ID] = true
 		if annotation.Color != "" && !isEditorCoverColor(annotation.Color) {

@@ -36,7 +36,7 @@ let editorState: typeof emptyEditorState | {
         opacity?: number;
         text?: string;
       }>;
-      annotations?: Array<{ id: string; type: "arrow" | "circle"; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number; color?: string }>;
+      annotations?: Array<{ id: string; type: "arrow" | "circle" | "symbol"; symbol?: string; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number; color?: string }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
   renderError: string | null;
@@ -74,6 +74,257 @@ describe("VideoEditorModal multi-source preview", () => {
       return Promise.reject(new Error(`Unexpected API call: ${path}`));
     });
   });
+
+  it("suppresses only the symbol tooltip while its popover is open and restores it on close", async () => {
+    const user = userEvent.setup();
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    const button = screen.getByRole("button", { name: "Symbol hinzufügen" });
+    const tooltip = () => document.getElementById("video-editor-tooltip-symbol");
+    await user.hover(button);
+    expect(tooltip()).toHaveClass("video-editor-tool-tooltip");
+    expect(button).toHaveAttribute("aria-describedby", "video-editor-tooltip-symbol");
+    await user.unhover(button);
+    act(() => button.focus());
+    expect(button).toHaveFocus();
+    expect(tooltip()).toHaveTextContent("Symbol hinzufügen");
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("dialog", { name: "Symbol auswählen" })).toBeInTheDocument();
+    expect(tooltip()).not.toBeInTheDocument();
+    expect(button).not.toHaveAttribute("aria-describedby");
+    expect(document.getElementById("video-editor-tooltip-arrow")).toHaveClass("video-editor-tool-tooltip");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Symbol auswählen" })).not.toBeInTheDocument();
+    expect(button).toHaveFocus();
+    expect(tooltip()).toHaveClass("video-editor-tool-tooltip");
+    expect(button).toHaveAttribute("aria-describedby", "video-editor-tooltip-symbol");
+    await user.hover(button);
+    expect(tooltip()).toHaveTextContent("Symbol hinzufügen");
+    await user.click(button);
+    expect(tooltip()).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Haken" }));
+    expect(tooltip()).toHaveClass("video-editor-tool-tooltip");
+  });
+
+  it("creates all eight local symbols and preserves color and free rotation through copy and reload", async () => {
+    const user = userEvent.setup();
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    const choices = [["check", "Haken"], ["cross", "Kreuz"], ["warning", "Warnung"], ["info", "Info"], ["star", "Stern"], ["pointer", "Hand"], ["plus", "Plus"], ["question", "Fragezeichen"]];
+    for (const [index, [id, label]] of choices.entries()) {
+      await user.click(screen.getByRole("button", { name: "Symbol hinzufügen" }));
+      expect(screen.getByRole("dialog", { name: "Symbol auswählen" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: label }));
+      expect(screen.queryByRole("dialog", { name: "Symbol auswählen" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: `Symbol ${index + 1}` })).toHaveAttribute("aria-pressed", "true");
+      const shape = screen.getByTestId("video-editor-overlay-frame").querySelector(`[data-symbol="${id}"]`)!;
+      expect(shape).toHaveAttribute("fill", "none");
+      expect(shape.children.length).toBeGreaterThan(0);
+      expect(shape.closest("svg")).toHaveStyle({ pointerEvents: "none" });
+    }
+    const frame = screen.getByTestId("video-editor-overlay-frame");
+    vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 500 } as DOMRect);
+    const selected = frame.querySelector('[data-symbol="question"]')!.closest("svg")!.parentElement as HTMLElement;
+    const point = (angle: number) => ({
+      clientX: (parseFloat(selected.style.left) + parseFloat(selected.style.width) / 2) * 10 + Math.cos(angle * Math.PI / 180) * parseFloat(selected.style.width) * 5,
+      clientY: (parseFloat(selected.style.top) + parseFloat(selected.style.height) / 2) * 5 + Math.sin(angle * Math.PI / 180) * parseFloat(selected.style.height) * 2.5,
+    });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Symbol drehen" }), point(0));
+    fireEvent.pointerMove(document, point(20));
+    fireEvent.pointerMove(document, point(37));
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Symbolrichtung")).toHaveValue("37");
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Symbol 8" }));
+    expect(screen.getByLabelText("Symbolrichtung")).toHaveValue("0");
+    fireEvent.change(screen.getByLabelText("Symbolrichtung"), { target: { value: "45" } });
+    fireEvent.change(screen.getByLabelText("Symbolfarbe"), { target: { value: "#123abc" } });
+    expect(frame.querySelector('[data-symbol="question"]')!.parentElement?.parentElement).toHaveStyle({ color: "#123abc" });
+    expect(frame.querySelector('[data-symbol="check"]')!.parentElement?.parentElement).toHaveStyle({ color: "#FC2667" });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Symbol 8" }));
+    expect(screen.getByLabelText("Symbolfarbe")).toHaveValue("#fc2667");
+    fireEvent.change(screen.getByLabelText("Symbolfarbe"), { target: { value: "#123abc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Symbol kopieren" }));
+    fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
+    fireEvent.click(screen.getByRole("button", { name: "Symbol einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([, o]) => o?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations.map((a: { symbol: string }) => a.symbol)).toEqual([...choices.map(([id]) => id), "question"]);
+    expect(timeline.annotations[8]).toEqual({ ...timeline.annotations[7], id: timeline.annotations[8].id });
+    expect(timeline.annotations[8].id).not.toBe(timeline.annotations[7].id);
+    view.unmount(); editorState = { ...emptyEditorState, timeline };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Symbol 9" });
+    fireEvent.click(screen.getByRole("button", { name: "Symbol 9" }));
+    expect(screen.getByLabelText("Symbolfarbe")).toHaveValue("#123abc");
+    expect(screen.getByLabelText("Symbolrichtung")).toHaveValue("45");
+  });
+
+  it("creates symbols with independent numbering, copy/paste, deletion, reload and undo", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Symbol hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Haken" }));
+    const ring = view.container.querySelector('[data-symbol="check"]')!;
+    expect(ring).toHaveAttribute("fill", "none");
+    expect(ring.parentElement?.parentElement).toHaveStyle({ color: "#FC2667" });
+    expect(screen.getByLabelText("Symbol drehen")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Pfeilfarbe")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Pfeil drehen")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Symbol hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Haken" }));
+    expect(screen.getByRole("button", { name: "Symbol 2" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Pfeil 1" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Symbol kopieren" }));
+    fireEvent.click(screen.getByTestId("video-editor-annotation-tracks"));
+    fireEvent.click(screen.getByRole("button", { name: "Symbol einfügen" }));
+    expect(screen.getByRole("button", { name: "Symbol 3" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([, o]) => o?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations[3]).toEqual({ ...timeline.annotations[2], id: timeline.annotations[3].id });
+    expect(timeline.annotations[3].id).not.toBe(timeline.annotations[2].id);
+    fireEvent.click(screen.getByRole("button", { name: "Symbol löschen" }));
+    expect(screen.queryByRole("button", { name: "Symbol 3" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pfeil 1" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getByRole("button", { name: "Symbol 3" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.queryByRole("button", { name: "Symbol 3" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.queryByRole("button", { name: "Symbol 2" })).not.toBeInTheDocument();
+    view.unmount();
+    editorState = { ...emptyEditorState, timeline };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Symbol 3" });
+    expect(screen.getByRole("button", { name: "Pfeil 1" })).toBeInTheDocument();
+  });
+
+  it("drags and resizes a symbol into an oval with frame bounds and one undo per gesture", async () => {
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Symbol hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Haken" }));
+    const frame = screen.getByTestId("video-editor-overlay-frame");
+    const rect = vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 500 } as DOMRect);
+    const symbol = () => frame.querySelector('[data-testid^="video-editor-symbol-"]') as HTMLElement;
+    const originalWidth = symbol().style.width;
+    fireEvent.pointerDown(symbol(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 100, clientY: 50 });
+    fireEvent.pointerMove(document, { clientX: 200, clientY: 100 });
+    fireEvent.pointerUp(document);
+    expect(symbol()).toHaveStyle({ left: "55%", top: "55%" });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(symbol()).toHaveStyle({ left: "35%", top: "35%" });
+    fireEvent.click(screen.getByRole("button", { name: "Symbol 1" }));
+    const resize = () => frame.querySelector('[data-testid^="video-editor-symbol-resize-"]')!;
+    fireEvent.pointerDown(resize(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 100, clientY: 0 });
+    fireEvent.pointerUp(document);
+    expect(symbol().style.width).not.toBe(originalWidth);
+    expect(symbol()).toHaveStyle({ height: "18%" });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(symbol().style.width).toBe(originalWidth);
+    // A resized video frame must change pointer-to-percent conversion.
+    rect.mockReturnValue({ left: 0, top: 0, width: 500, height: 250 } as DOMRect);
+    fireEvent.pointerDown(symbol(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 50, clientY: 25 });
+    fireEvent.pointerUp(document);
+    expect(symbol()).toHaveStyle({ left: "45%", top: "45%" });
+    fireEvent.pointerDown(resize(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 5000, clientY: 5000 });
+    fireEvent.pointerUp(document);
+    expect(symbol()).toHaveStyle({ width: "55%", height: "55%" });
+    fireEvent.pointerDown(symbol(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: -5000, clientY: -5000 });
+    fireEvent.pointerUp(document);
+    expect(symbol()).toHaveStyle({ left: "0%", top: "0%" });
+  });
+
+  it("resizes and moves symbol timeline windows with live preview, undo and persistence", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Symbol hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Haken" }));
+    const track = view.container.querySelector('[data-testid^="video-editor-symbol-track-"]')!;
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({ left: -100, width: 2000 } as DOMRect);
+    const start = view.container.querySelector('[data-testid^="video-editor-symbol-start-"]')!;
+    const end = view.container.querySelector('[data-testid^="video-editor-symbol-end-"]')!;
+    const video = view.container.querySelector("video")!;
+    fireEvent.pointerDown(start, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 200 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Symbol Start")).toHaveValue(1);
+    expect(view.container.querySelector('[data-symbol="check"]')).toBeNull();
+    video.currentTime = 2; fireEvent.timeUpdate(video);
+    expect(view.container.querySelector('[data-symbol="check"]')).not.toBeNull();
+    fireEvent.pointerDown(end, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 200 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Symbol Ende")).toHaveValue(6);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Symbol 1" }), { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: 200 });
+    fireEvent.pointerMove(document, { clientX: 800 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Symbol Start")).toHaveValue(5);
+    expect(screen.getByLabelText("Symbol Ende")).toHaveValue(10);
+    expect(view.container.querySelector('[data-symbol="check"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Symbol 1" }));
+    expect(screen.getByLabelText("Symbol Start")).toHaveValue(1);
+    expect(screen.getByLabelText("Symbol Ende")).toHaveValue(6);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Symbol 1" }), { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Symbol Start")).toHaveValue(0);
+    expect(screen.getByLabelText("Symbol Ende")).toHaveValue(5);
+    fireEvent.click(screen.getByRole("button", { name: "Symbol kopieren" }));
+    fireEvent.click(screen.getByRole("button", { name: "Symbol einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([, o]) => o?.method === "PUT").at(-1)![1].body);
+    expect(timeline.annotations.map((a: { start: number; end: number }) => [a.start, a.end])).toEqual([[0, 5], [0, 5]]);
+    view.unmount(); editorState = { ...emptyEditorState, timeline };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Symbol 2" });
+    fireEvent.click(screen.getByRole("button", { name: "Symbol 2" }));
+    expect(screen.getByLabelText("Symbol Ende")).toHaveValue(5);
+  });
+
+  it("clamps symbol timeline handles without changing another symbol", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    fireEvent.click(screen.getByRole("button", { name: "Symbol hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Haken" }));
+    fireEvent.click(screen.getByRole("button", { name: "Symbol hinzufügen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Haken" }));
+    const tracks = view.container.querySelectorAll('[data-testid^="video-editor-symbol-track-"]');
+    vi.spyOn(tracks[0], "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
+    const start = tracks[0].querySelector('[data-testid^="video-editor-symbol-start-"]')!;
+    const end = tracks[0].querySelector('[data-testid^="video-editor-symbol-end-"]')!;
+    fireEvent.pointerDown(start, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    expect(screen.getByLabelText("Symbol Start")).toHaveValue(0);
+    fireEvent.pointerMove(document, { clientX: 5000 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Symbol Start")).toHaveValue(4.9);
+    fireEvent.pointerDown(end, { clientX: 0 });
+    fireEvent.pointerMove(document, { clientX: -5000 });
+    expect(screen.getByLabelText("Symbol Ende")).toHaveValue(5);
+    fireEvent.pointerMove(document, { clientX: 5000 });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Symbol Ende")).toHaveValue(10);
+    fireEvent.click(screen.getByRole("button", { name: "Symbol 2" }));
+    expect(screen.getByLabelText("Symbol Start")).toHaveValue(0);
+    expect(screen.getByLabelText("Symbol Ende")).toHaveValue(5);
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Symbol 1" }));
+    expect(screen.getByLabelText("Symbol Ende")).toHaveValue(5);
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Symbol 1" }));
+    expect(screen.getByLabelText("Symbol Start")).toHaveValue(0);
+  });
+
 
   it("creates circles with independent numbering, copy/paste, deletion, reload and undo", async () => {
     const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
@@ -1561,6 +1812,7 @@ describe("VideoEditorModal multi-source preview", () => {
         annotations: [
           { id: "arrow-frame", type: "arrow", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 37 },
           { id: "circle-frame", type: "circle", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 0 },
+          { id: "symbol-frame", type: "symbol", symbol: "star", x: 80, y: 80, width: 20, height: 20, start: 0, end: 20, rotation: 37 },
         ],
       },
       renderStatus: "none",
@@ -1591,6 +1843,8 @@ describe("VideoEditorModal multi-source preview", () => {
       expect(frame).toHaveStyle({ left: "0px", top: "18.75px", width: "1000px", height: "562.5px" });
       expect(screen.getByTestId("video-editor-arrow-arrow-frame").parentElement).toBe(frame);
       expect(screen.getByTestId("video-editor-circle-circle-frame").parentElement).toBe(frame);
+      expect(screen.getByTestId("video-editor-symbol-symbol-frame").parentElement).toBe(frame);
+      expect(screen.getByTestId("video-editor-symbol-symbol-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-circle-circle-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-arrow-arrow-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-cover-overlay-cover-frame")).toHaveStyle({
@@ -1608,6 +1862,8 @@ describe("VideoEditorModal multi-source preview", () => {
       expect(frame).toHaveStyle({ left: "0px", top: "131.25px", width: "600px", height: "337.5px" });
       expect(screen.getByTestId("video-editor-circle-circle-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-arrow-arrow-frame").querySelector("polygon")).toHaveAttribute("transform", "rotate(37 50 50)");
+      expect(screen.getByTestId("video-editor-symbol-symbol-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
+      expect(screen.getByTestId("video-editor-symbol-symbol-frame").querySelector("svg > g")).toHaveAttribute("transform", "rotate(37 50 50)");
       expect(screen.getByTestId("video-editor-arrow-arrow-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-cover-badge-cover-frame")).toHaveStyle({
         left: "80%", top: "80%",
@@ -2323,6 +2579,7 @@ describe("VideoEditorModal multi-source preview", () => {
       "Abdeckung hinzufügen",
       "Pfeil hinzufügen",
       "Kreis hinzufügen",
+      "Symbol hinzufügen",
       "Video einfügen",
       "Rückgängig",
       "Ansicht einpassen",

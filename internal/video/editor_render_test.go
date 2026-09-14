@@ -91,11 +91,11 @@ func TestValidateAndPersistArrowAnnotations(t *testing.T) {
 }
 
 func TestValidateAnnotationColor(t *testing.T) {
-	for _, annotationType := range []string{"arrow", "circle"} {
+	for _, annotationType := range []string{"arrow", "circle", "symbol"} {
 		t.Run(annotationType, func(t *testing.T) {
 			for _, color := range []string{"", "#FC2667", "#123abc", "#000000", "#FFFFFF"} {
 				timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
-				timeline.Annotations = []editorAnnotation{{ID: "annotation", Type: annotationType, Width: 20, Height: 20, End: 5, Rotation: 37, Color: color}}
+				timeline.Annotations = []editorAnnotation{{ID: "annotation", Type: annotationType, Symbol: "check", Width: 20, Height: 20, End: 5, Rotation: 37, Color: color}}
 				if err := validateEditTimeline(&timeline); err != nil {
 					t.Fatalf("color %q: %v", color, err)
 				}
@@ -110,12 +110,39 @@ func TestValidateAnnotationColor(t *testing.T) {
 			}
 			for _, color := range []string{"#fff", "#12345678", "red", "123456", "#gggggg", " #123456", "#123456;movie=x"} {
 				timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
-				timeline.Annotations = []editorAnnotation{{ID: "annotation", Type: annotationType, Width: 20, Height: 20, End: 5, Color: color}}
+				timeline.Annotations = []editorAnnotation{{ID: "annotation", Type: annotationType, Symbol: "check", Width: 20, Height: 20, End: 5, Color: color}}
 				if validateEditTimeline(&timeline) == nil {
 					t.Fatalf("accepted invalid color %q", color)
 				}
 			}
 		})
+	}
+}
+
+func TestSymbolPersistenceWithoutExport(t *testing.T) {
+	for _, symbol := range []string{"check", "cross", "warning", "info", "star", "pointer", "plus", "question"} {
+		timeline := validTimeline(editClip{ID: "one", SourceID: "source", SourceEnd: 10})
+		timeline.Annotations = []editorAnnotation{{ID: "symbol", Type: "symbol", Symbol: symbol, X: 12, Y: 23, Width: 20, Height: 20, Start: 1, End: 5, Rotation: 37, Color: "#123abc"}}
+		if err := validateEditTimeline(&timeline); err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(timeline)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored editTimeline
+		if err := json.Unmarshal(encoded, &restored); err != nil || restored.Annotations[0] != timeline.Annotations[0] {
+			t.Fatalf("symbol lost in persistence: %s %v", encoded, err)
+		}
+		if len(exportAnnotations(restored.Annotations)) != 0 {
+			t.Fatal("preview-only symbol entered export")
+		}
+		for _, invalid := range []string{"", "unknown", "<svg>"} {
+			timeline.Annotations[0].Symbol = invalid
+			if validateEditTimeline(&timeline) == nil {
+				t.Fatalf("accepted invalid symbol %q", invalid)
+			}
+		}
 	}
 }
 
