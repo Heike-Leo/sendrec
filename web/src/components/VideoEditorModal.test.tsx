@@ -321,6 +321,204 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
   });
 
+  const moveAudio = [
+    { id: "a", sourceClipId: "one", sourceVideoId: "original", sourceStart: 2, sourceEnd: 6, timelineStart: 4 },
+    { id: "b", sourceClipId: "two", sourceVideoId: "inserted", sourceStart: 30, sourceEnd: 34, timelineStart: 12 },
+  ];
+  async function mountAudioMove(segments = moveAudio) {
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: {
+      version: 1,
+      clips: [
+        { id: "one", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 },
+        { id: "two", sourceId: "inserted", sourceStart: 30, sourceEnd: 40, duration: 10 },
+      ], audioSegments: segments.map(item => ({ ...item })),
+    } };
+    const view = render(<VideoEditorModal videoId="original" duration={20} onClose={vi.fn()} />);
+    const bar = await screen.findByTestId("video-editor-audio-one");
+    const track = screen.getByTestId("video-editor-audio-track");
+    const scroller = track.parentElement!;
+    let width = 1000;
+    vi.spyOn(track, "getBoundingClientRect").mockImplementation(() => ({ width, left: -scroller.scrollLeft, top: 0 } as DOMRect));
+    return { ...view, bar, track, scroller, setWidth: (w: number) => { width = w; } };
+  }
+
+  it.each([-100, 100])("moves audio by %s px, commits only timelineStart, saves/reloads and undoes once", async dx => {
+    const ui = await mountAudioMove();
+    const other = screen.getByTestId("video-editor-audio-two").outerHTML;
+    const clips = screen.getAllByTestId(/^video-editor-clip-/).map(e => e.outerHTML);
+    const video = document.querySelector("video")!;
+    const time = video.currentTime;
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause"); pause.mockClear();
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play"); play.mockClear();
+    mockApiFetch.mockClear();
+    fireEvent.pointerDown(ui.bar, { clientX: 500, pointerId: 1 });
+    expect(ui.bar.style.cursor).toBe("grabbing");
+    expect(pause.mock.instances).toContain(video);
+    expect(pause.mock.instances).toContain(screen.getByTestId("video-editor-audio-preview"));
+    fireEvent.pointerMove(document, { clientX: 500 + dx, pointerId: 1 });
+    expect(ui.bar.style.left).toBe(`${(4 + dx / 50) * 5}%`);
+    expect(ui.bar).toHaveAttribute("data-timeline-start", "4");
+    expect(ui.bar).toHaveAttribute("data-source-start", "2");
+    expect(ui.bar).toHaveAttribute("data-source-end", "6");
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)); });
+    expect(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT")).toHaveLength(0);
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(video.currentTime).toBe(time);
+    expect(play).not.toHaveBeenCalled();
+    expect(ui.bar.style.cursor).toBe("grab");
+    expect(screen.getByTestId("video-editor-audio-two").outerHTML).toBe(other);
+    expect(screen.getAllByTestId(/^video-editor-clip-/).map(e => e.outerHTML)).toEqual(clips);
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(true));
+    const payload = JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body);
+    expect(payload.audioSegments).toEqual([{ ...moveAudio[0], timelineStart: 4 + dx / 50 }, moveAudio[1]]);
+    for (const action of ["Teilen", "Video einfügen", "Clip löschen"]) {
+      if (action === "Clip löschen") fireEvent.click(screen.getByTestId("video-editor-clip-one"));
+      fireEvent.click(screen.getByRole("button", { name: action }));
+      expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(ui.bar).toHaveAttribute("data-timeline-start", "4");
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Video einfügen" }));
+    expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
+    ui.unmount();
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: payload };
+    render(<VideoEditorModal videoId="original" duration={20} onClose={vi.fn()} />);
+    expect(await screen.findByTestId("video-editor-audio-one")).toHaveAttribute("data-timeline-start", String(4 + dx / 50));
+  });
+
+  it.each([
+    { target: "one", dx: -10000, result: 0 },
+    { target: "one", dx: 10000, result: 8 },
+    { target: "two", dx: -10000, result: 8 },
+    { target: "two", dx: 10000, result: 16 },
+  ])("clamps $target to $result without crossing neighbours in an unsorted array", async ({ target, dx, result }) => {
+    const ui = await mountAudioMove([...moveAudio].reverse());
+    const bar = screen.getByTestId(`video-editor-audio-${target}`);
+    fireEvent.pointerDown(bar, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 500 + dx, pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(bar).toHaveAttribute("data-timeline-start", String(result));
+    expect(Array.from(ui.track.children).map(e => e.getAttribute("data-audio-id"))).toEqual(["b", "a"]);
+  });
+
+  it("includes zoom width and horizontal scrolling for move", async () => {
+    const ui = await mountAudioMove();
+    fireEvent.click(screen.getByRole("button", { name: "Vergrößern" }));
+    ui.setWidth(2000);
+    fireEvent.pointerDown(ui.bar, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 600, pointerId: 1 });
+    ui.scroller.scrollLeft = 100;
+    fireEvent.scroll(ui.scroller);
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(ui.bar).toHaveAttribute("data-timeline-start", "6");
+  });
+
+  it.each(["click", "cancel", "return", "zoom", "geometry", "state", "undo", "unmount"])("discards move on %s without an audio commit", async reason => {
+    const ui = await mountAudioMove();
+    mockApiFetch.mockClear();
+    fireEvent.pointerDown(ui.bar, { clientX: 500, pointerId: 1 });
+    if (reason !== "click") fireEvent.pointerMove(document, { clientX: 600, pointerId: 1 });
+    if (reason === "cancel") fireEvent.pointerCancel(document, { pointerId: 1 });
+    if (reason === "return") fireEvent.pointerMove(document, { clientX: 500, pointerId: 1 });
+    if (reason === "zoom") fireEvent.click(screen.getByRole("button", { name: "Vergrößern" }));
+    if (reason === "geometry") ui.setWidth(2000);
+    if (reason === "state" || reason === "undo") {
+      fireEvent.click(screen.getByRole("button", { name: "+ Abdeckung" }));
+      if (reason === "undo") fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    }
+    if (reason === "unmount") ui.unmount();
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    if (reason !== "unmount") {
+      expect(ui.bar).toHaveAttribute("data-timeline-start", "4");
+      if (reason !== "state") expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+      ui.unmount();
+    }
+    if (!["state", "undo"].includes(reason)) expect(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT")).toHaveLength(0);
+  });
+
+  it("does not move or save a packed track and keeps clip actions available", async () => {
+    const ui = await mountAudioTrim();
+    mockApiFetch.mockClear();
+    fireEvent.pointerDown(ui.bar, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 10000, pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(ui.bar).toHaveAttribute("data-timeline-start", "0");
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    expect(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Video einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([p]) => p === "/api/videos")).toBe(true));
+  });
+
+  it("moves sub-100ms audio but disabled resize handles never start move", async () => {
+    const ui = await mountAudioMove([{ ...moveAudio[0], sourceEnd: 2.05 }]);
+    fireEvent.click(ui.bar);
+    const handle = screen.getByRole("button", { name: "Tonanfang kürzen" });
+    expect(handle).toBeDisabled();
+    fireEvent.pointerDown(handle, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 600, pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(ui.bar).toHaveAttribute("data-timeline-start", "4");
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    fireEvent.pointerDown(ui.bar, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 600, pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(ui.bar).toHaveAttribute("data-timeline-start", "6");
+    expect(ui.bar).toHaveAttribute("data-source-end", "2.05");
+  });
+
+  it("keeps protection after undoing a move, and releases it only after undoing the preceding trim", async () => {
+    const ui = await mountAudioTrim();
+    fireEvent.pointerDown(ui.end, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 400, pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(ui.bar).toHaveAttribute("data-source-end", "8");
+    fireEvent.pointerDown(ui.bar, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 550, pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(ui.bar).toHaveAttribute("data-timeline-start", "1");
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(ui.bar).toHaveAttribute("data-timeline-start", "0");
+    expect(ui.bar).toHaveAttribute("data-source-end", "8");
+    fireEvent.click(screen.getByRole("button", { name: "Video einfügen" }));
+    expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(ui.bar).toHaveAttribute("data-source-end", "10");
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Video einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([p]) => p === "/api/videos")).toBe(true));
+  });
+
+  it("never saves a move draft or resyncs preview while an earlier save is pending", async () => {
+    const ui = await mountAudioMove();
+    fireEvent.click(screen.getByRole("button", { name: "+ Abdeckung" }));
+    const sync = vi.spyOn(EditorAudioPreview.prototype, "sync");
+    fireEvent.pointerDown(ui.bar, { clientX: 500, pointerId: 1 });
+    sync.mockClear();
+    fireEvent.pointerMove(document, { clientX: 600, pointerId: 1 });
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(true));
+    const payload = JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body);
+    expect(payload.audioSegments).toEqual(moveAudio);
+    expect(sync).not.toHaveBeenCalled();
+    fireEvent.pointerCancel(document, { pointerId: 1 });
+    sync.mockRestore();
+  });
+
+  it.each([
+    { sourceEnd: 2 }, { sourceEnd: 1 }, { timelineStart: -1 },
+    { timelineStart: 18 }, { timelineStart: 10 },
+  ])("rejects invalid move geometry rather than repairing it: %j", async change => {
+    const ui = await mountAudioMove([{ ...moveAudio[0], ...change }, moveAudio[1]]);
+    const before = ui.bar.dataset.timelineStart;
+    fireEvent.pointerDown(ui.bar, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 600, pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(ui.bar).toHaveAttribute("data-timeline-start", before);
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+  });
+
   async function mountAudioPreview(segments: Array<{ id: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number }>) {
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: {
       version: 1,
