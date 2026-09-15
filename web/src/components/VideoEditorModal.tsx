@@ -343,13 +343,20 @@ export function VideoEditorModal({
       time: () => audioInputsRef.current.previewTimelineTime(),
       url: (id) => audioInputsRef.current.loadVideoUrl(id),
       error: setAudioPreviewError,
+      canCheckDrift: () => {
+        const video = videoRef.current;
+        return !!video && previewPlayingRef.current && !videoSwitchPendingRef.current &&
+          !sourceTransitionPendingRef.current && !videoBufferingRef.current &&
+          !video.paused && !video.seeking && !video.ended && !video.error && video.readyState >= 3;
+      },
     });
     audioPreviewRef.current = preview;
-    // Segment-boundary detection only; no periodic drift correction or repeated seeking.
+    // Keep the existing boundary timer; the controller throttles drift checks to 250 ms.
     const timer = window.setInterval(() => {
       if (previewPlayingRef.current && !videoSwitchPendingRef.current && !videoBufferingRef.current && !videoRef.current?.seeking) {
         audioInputsRef.current.tickAudioPreview();
       }
+      preview.checkDrift();
     }, 25);
     return () => {
       window.clearInterval(timer);

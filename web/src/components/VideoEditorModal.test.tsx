@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { VideoEditorModal } from "./VideoEditorModal";
+import { EditorAudioPreview } from "./editorAudioPreview";
 
 const mockApiFetch = vi.fn();
 
@@ -107,6 +108,81 @@ describe("VideoEditorModal multi-source preview", () => {
     fireEvent.loadedMetadata(audio);
     return { ...result, video, audio, onClose };
   }
+
+  it("checks drift from the existing timer without changing video, transport or persisted segments and cleans up", async () => {
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    const check = vi.spyOn(EditorAudioPreview.prototype, "checkDrift");
+    const clearTimer = vi.spyOn(window, "clearInterval");
+    try {
+      const { video, audio, unmount } = await mountAudioPreview([
+        { id: "a", sourceVideoId: "original", sourceStart: 10, sourceEnd: 20, timelineStart: 0 },
+      ]);
+      for (const media of [video, audio]) {
+        Object.defineProperty(media, "paused", { configurable: true, value: false });
+        Object.defineProperty(media, "readyState", { configurable: true, value: 4 });
+      }
+      video.currentTime = 1;
+      fireEvent.play(video);
+      fireEvent.playing(audio);
+      audio.currentTime = 11.4;
+      const writeVideoTime = vi.spyOn(video, "currentTime", "set");
+      const source = audio.src;
+      const plays = vi.mocked(audio.play).mock.calls.length;
+      const pauses = vi.mocked(audio.pause).mock.calls.length;
+      const loads = vi.mocked(audio.load).mock.calls.length;
+      const saves = mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").length;
+      await waitFor(() => expect(audio.currentTime).toBe(11));
+      expect(check).toHaveBeenCalled();
+      expect(writeVideoTime).not.toHaveBeenCalled();
+      expect(video.currentTime).toBe(1);
+      expect(video.muted).toBe(true);
+      expect(audio.src).toBe(source);
+      expect(audio.playbackRate).toBe(1);
+      expect(audio.play).toHaveBeenCalledTimes(plays);
+      expect(audio.pause).toHaveBeenCalledTimes(pauses);
+      expect(audio.load).toHaveBeenCalledTimes(loads);
+      expect(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT")).toHaveLength(saves);
+      unmount();
+      expect(clearTimer).toHaveBeenCalled();
+      const checks = check.mock.calls.length;
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
+      expect(check).toHaveBeenCalledTimes(checks);
+    } finally {
+      hidden.mockRestore(); check.mockRestore(); clearTimer.mockRestore();
+    }
+  });
+
+  it("blocks drift for paused, seeking, ended, unready and buffering video", async () => {
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    const check = vi.spyOn(EditorAudioPreview.prototype, "checkDrift");
+    try {
+      const { video, audio } = await mountAudioPreview([
+        { id: "a", sourceVideoId: "original", sourceStart: 10, sourceEnd: 20, timelineStart: 0 },
+      ]);
+      Object.defineProperty(audio, "paused", { configurable: true, value: false });
+      Object.defineProperty(audio, "readyState", { configurable: true, value: 4 });
+      const state = { paused: false, seeking: false, ended: false, readyState: 4 };
+      for (const key of Object.keys(state) as Array<keyof typeof state>) {
+        Object.defineProperty(video, key, { configurable: true, get: () => state[key] });
+      }
+      fireEvent.play(video); fireEvent.playing(audio);
+      await waitFor(() => expect(check).toHaveBeenCalled());
+      const preview = check.mock.contexts[0] as EditorAudioPreview;
+      const write = vi.spyOn(audio, "currentTime", "set");
+      let now = performance.now() + 1000;
+      for (const key of ["paused", "seeking", "ended", "readyState"] as const) {
+        Object.assign(state, { [key]: key === "readyState" ? 2 : true });
+        audio.currentTime = 10.5; write.mockClear();
+        preview.checkDrift(now); now += 250;
+        expect(write).not.toHaveBeenCalled();
+        Object.assign(state, { [key]: key === "readyState" ? 4 : false });
+      }
+      fireEvent.waiting(video);
+      audio.currentTime = 10.5; write.mockClear();
+      preview.checkDrift(now);
+      expect(write).not.toHaveBeenCalled();
+    } finally { hidden.mockRestore(); check.mockRestore(); }
+  });
 
   it("plays independent audio, keeps native video permanently muted and pauses both", async () => {
     const { video, audio } = await mountAudioPreview([

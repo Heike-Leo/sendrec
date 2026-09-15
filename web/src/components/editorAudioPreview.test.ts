@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EditorAudioPreview } from "./editorAudioPreview";
 
 const first = { id: "a", sourceVideoId: "one", sourceStart: 3, sourceEnd: 5, timelineStart: 0 };
@@ -18,6 +18,7 @@ describe("independent audio preview", () => {
   let url: ReturnType<typeof vi.fn<(id: string) => string | Promise<string>>>;
   let error: ReturnType<typeof vi.fn<(message: string | null) => void>>;
   function metadata() { audio.dispatchEvent(new Event("loadedmetadata")); }
+  afterEach(() => preview.dispose());
 
   beforeEach(() => {
     time = 0;
@@ -222,5 +223,254 @@ describe("independent audio preview", () => {
     expect(audio.play).not.toHaveBeenCalled();
     expect(audio.pause).toHaveBeenCalled();
     expect(audio.getAttribute("src")).toBeNull();
+  });
+});
+
+describe("audio preview drift control", () => {
+  let preview: EditorAudioPreview;
+  let audio: HTMLAudioElement;
+  let time: number;
+  let segments: typeof first[];
+  let videoReady: boolean;
+  let state: { paused: boolean; seeking: boolean; ended: boolean; readyState: number; currentSrc: string; error: MediaError | null };
+  let hidden: ReturnType<typeof vi.fn<() => boolean>>;
+  let writeTime: ReturnType<typeof vi.fn<(value: number) => void>>;
+  let readTime: ReturnType<typeof vi.fn<() => number>>;
+
+  function drift(value: number) {
+    audio.currentTime = 10 + time + value;
+    writeTime.mockClear();
+  }
+  function visibility(value: boolean) {
+    hidden.mockReturnValue(value);
+    document.dispatchEvent(new Event("visibilitychange"));
+  }
+  function restart() {
+    preview.sync(true, true);
+    audio.dispatchEvent(new Event("playing"));
+    writeTime.mockClear();
+  }
+
+  beforeEach(() => {
+    hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    time = 1;
+    videoReady = true;
+    segments = [{ ...first, sourceStart: 10, sourceEnd: 40 }];
+    state = { paused: false, seeking: false, ended: false, readyState: 4, currentSrc: "", error: null };
+    audio = document.createElement("audio");
+    for (const key of Object.keys(state) as Array<keyof typeof state>) {
+      Object.defineProperty(audio, key, { configurable: true, get: () => state[key] });
+    }
+    vi.spyOn(audio, "pause").mockImplementation(() => {});
+    vi.spyOn(audio, "load").mockImplementation(() => {});
+    vi.spyOn(audio, "play").mockResolvedValue();
+    readTime = vi.fn(() => time);
+    preview = new EditorAudioPreview(audio, {
+      segments: () => segments, time: readTime,
+      url: (id) => `https://media.example/${id}.mp4`,
+      error: vi.fn(), canCheckDrift: () => videoReady,
+    });
+    preview.sync(true, true);
+    audio.dispatchEvent(new Event("loadedmetadata"));
+    audio.dispatchEvent(new Event("playing"));
+    writeTime = vi.spyOn(audio, "currentTime", "set");
+  });
+  afterEach(() => { preview.dispose(); vi.restoreAllMocks(); });
+
+  it.each([0, 0.099, -0.099, 0.1, -0.1])("never seeks within tolerance (%s seconds)", (value) => {
+    drift(value);
+    preview.checkDrift(0);
+    preview.checkDrift(250);
+    expect(writeTime).not.toHaveBeenCalled();
+  });
+
+  it.each([0.15, -0.15])("requires two consecutive same-direction measurements (%s)", (value) => {
+    drift(value);
+    preview.checkDrift(0);
+    expect(writeTime).not.toHaveBeenCalled();
+    preview.checkDrift(250);
+    expect(writeTime).toHaveBeenCalledExactlyOnceWith(11);
+  });
+
+  it.each([0.25, -0.25, 0.5, -0.5])("corrects large drift directly (%s)", (value) => {
+    drift(value);
+    preview.checkDrift(0);
+    expect(writeTime).toHaveBeenCalledExactlyOnceWith(11);
+  });
+
+  it("runs no drift measurements between the 250-ms checks", () => {
+    drift(0.15);
+    preview.checkDrift(0);
+    readTime.mockClear();
+    for (let now = 25; now < 250; now += 25) preview.checkDrift(now);
+    expect(readTime).not.toHaveBeenCalled();
+    expect(writeTime).not.toHaveBeenCalled();
+    preview.checkDrift(250);
+    expect(writeTime).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not confirm alternating directions or measurements inside tolerance", () => {
+    drift(0.15); preview.checkDrift(0);
+    drift(-0.15); preview.checkDrift(250);
+    drift(0.05); preview.checkDrift(500);
+    drift(-0.15); preview.checkDrift(750);
+    expect(writeTime).not.toHaveBeenCalled();
+    preview.checkDrift(1000);
+    expect(writeTime).toHaveBeenCalledTimes(1);
+  });
+
+  it("enforces the full one-second cooldown while explicit transport remains available", () => {
+    drift(0.4); preview.checkDrift(0);
+    drift(0.4);
+    preview.checkDrift(250); preview.checkDrift(500); preview.checkDrift(750);
+    expect(writeTime).not.toHaveBeenCalled();
+    preview.sync(false, true); // Explicit seek/synchronization is not cooldown-limited.
+    expect(writeTime).toHaveBeenCalledExactlyOnceWith(11);
+    restart();
+    drift(0.4); preview.checkDrift(1000);
+    expect(writeTime).toHaveBeenCalledExactlyOnceWith(11);
+  });
+
+  it.each(["play", "pause", "seek", "buffer", "segment", "source"])("discards prior confirmation on %s", (action) => {
+    drift(0.15); preview.checkDrift(0);
+    if (action === "pause") preview.stop();
+    if (action === "seek") audio.dispatchEvent(new Event("seeking"));
+    if (action === "buffer") {
+      audio.dispatchEvent(new Event("waiting"));
+      audio.dispatchEvent(new Event("playing"));
+    }
+    if (action === "segment" || action === "source") {
+      segments = [{ ...segments[0], id: "new", sourceVideoId: action === "source" ? "two" : "one" }];
+    }
+    if (["play", "pause", "segment", "source"].includes(action)) {
+      preview.sync(true, true);
+      audio.dispatchEvent(new Event("loadedmetadata"));
+      audio.dispatchEvent(new Event("playing"));
+    }
+    drift(0.15); preview.checkDrift(250);
+    expect(writeTime).not.toHaveBeenCalled();
+    preview.checkDrift(500);
+    expect(writeTime).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["video", "paused", "seeking", "ended", "unready", "error", "buffer", "gap", "empty", "ambiguous", "source", "currentSrc", "segment", "loading", "starting"])("blocks correction in invalid state: %s", (condition) => {
+    if (condition === "video") videoReady = false;
+    if (condition === "paused") state.paused = true;
+    if (condition === "seeking") state.seeking = true;
+    if (condition === "ended") state.ended = true;
+    if (condition === "unready") state.readyState = 2;
+    if (condition === "error") state.error = { code: 3 } as MediaError;
+    if (condition === "buffer") audio.dispatchEvent(new Event("waiting"));
+    if (condition === "gap") time = 31;
+    if (condition === "empty") segments = [];
+    if (condition === "ambiguous") segments.push({ ...segments[0], id: "duplicate" });
+    if (condition === "source") audio.src = "https://media.example/wrong.mp4";
+    if (condition === "currentSrc") state.currentSrc = "https://media.example/stale.mp4";
+    if (condition === "segment") segments[0] = { ...segments[0], id: "next" };
+    if (condition === "loading") {
+      segments[0] = { ...segments[0], sourceVideoId: "two" };
+      state.readyState = 0;
+      preview.sync(true, true);
+    }
+    if (condition === "starting") preview.sync(true, true); // No playing event yet.
+    drift(0.5);
+    preview.checkDrift(0); preview.checkDrift(250);
+    expect(writeTime).not.toHaveBeenCalled();
+  });
+
+  it("blocked playback is not repaired or restarted by drift checks", async () => {
+    vi.mocked(audio.play).mockRejectedValueOnce(new DOMException("blocked", "NotAllowedError"));
+    preview.sync(true, true);
+    await Promise.resolve(); await Promise.resolve();
+    drift(0.5);
+    const plays = vi.mocked(audio.play).mock.calls.length;
+    preview.checkDrift(0); preview.checkDrift(250);
+    expect(writeTime).not.toHaveBeenCalled();
+    expect(audio.play).toHaveBeenCalledTimes(plays);
+  });
+
+  it("recalculates the target immediately before correction", () => {
+    drift(0.5);
+    readTime.mockReturnValueOnce(1).mockReturnValueOnce(1.02);
+    preview.checkDrift(0);
+    expect(writeTime).toHaveBeenCalledExactlyOnceWith(11.02);
+  });
+
+  it("does not write if the fresh master time has crossed the segment boundary", () => {
+    drift(0.5);
+    readTime.mockReturnValueOnce(1).mockReturnValueOnce(30);
+    preview.checkDrift(0);
+    expect(writeTime).not.toHaveBeenCalled();
+  });
+
+  it("suspends hidden-tab checks and performs one resync on return even below tolerance", () => {
+    visibility(true);
+    drift(0.5); preview.checkDrift(0);
+    expect(writeTime).not.toHaveBeenCalled();
+    visibility(false);
+    drift(0.02); preview.checkDrift(250);
+    expect(writeTime).toHaveBeenCalledExactlyOnceWith(11);
+    preview.checkDrift(1250);
+    document.dispatchEvent(new Event("visibilitychange")); // Still visible, not another return.
+    preview.checkDrift(1500);
+    expect(writeTime).toHaveBeenCalledTimes(1);
+  });
+
+  it("defers return resync through loading until the correct new segment is playing", () => {
+    visibility(true); visibility(false);
+    segments = [{ ...segments[0], id: "next", sourceVideoId: "two", sourceStart: 20, sourceEnd: 50 }];
+    preview.sync(true, true);
+    drift(0.5); preview.checkDrift(0);
+    expect(writeTime).not.toHaveBeenCalled();
+    audio.dispatchEvent(new Event("loadedmetadata"));
+    audio.dispatchEvent(new Event("playing"));
+    audio.currentTime = 21.02;
+    writeTime.mockClear();
+    preview.checkDrift(250);
+    expect(writeTime).toHaveBeenCalledExactlyOnceWith(21);
+  });
+
+  it("return while paused neither resynchronizes nor starts playback", () => {
+    preview.stop(); state.paused = true;
+    visibility(true); visibility(false);
+    drift(0.5);
+    vi.mocked(audio.play).mockClear();
+    preview.checkDrift(0); preview.checkDrift(250);
+    expect(writeTime).not.toHaveBeenCalled();
+    expect(audio.play).not.toHaveBeenCalled();
+  });
+
+  it("return resync also respects the correction cooldown", () => {
+    drift(0.5); preview.checkDrift(0);
+    visibility(true); visibility(false);
+    drift(0.02); preview.checkDrift(250);
+    expect(writeTime).not.toHaveBeenCalled();
+    preview.checkDrift(1000);
+    expect(writeTime).toHaveBeenCalledExactlyOnceWith(11);
+  });
+
+  it("correction does not change source, playbackRate, segments or call transport", () => {
+    const snapshot = JSON.stringify(segments);
+    const source = audio.src;
+    vi.mocked(audio.load).mockClear(); vi.mocked(audio.pause).mockClear(); vi.mocked(audio.play).mockClear();
+    drift(-0.5); preview.checkDrift(0);
+    expect(audio.currentTime).toBe(11);
+    expect(audio.src).toBe(source);
+    expect(audio.playbackRate).toBe(1);
+    expect(JSON.stringify(segments)).toBe(snapshot);
+    expect(audio.load).not.toHaveBeenCalled();
+    expect(audio.pause).not.toHaveBeenCalled();
+    expect(audio.play).not.toHaveBeenCalled();
+  });
+
+  it("dispose removes the listener and makes late checks inert", () => {
+    const remove = vi.spyOn(document, "removeEventListener");
+    visibility(true); visibility(false);
+    preview.dispose();
+    drift(0.5);
+    visibility(true); visibility(false);
+    preview.checkDrift(0); preview.checkDrift(1000);
+    expect(writeTime).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
   });
 });
