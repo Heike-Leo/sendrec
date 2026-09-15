@@ -250,6 +250,7 @@ export function VideoEditorModal({
   const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null);
   const [audioResizeDraft, setAudioResizeDraft] = useState<EditorAudioSegment | null>(null);
   const [movingAudioId, setMovingAudioId] = useState<string | null>(null);
+  const [audioGestureActive, setAudioGestureActive] = useState(false);
   const cancelAudioResizeRef = useRef<(() => void) | null>(null);
   const audioTrackRef = useRef<HTMLDivElement>(null);
 
@@ -750,6 +751,7 @@ export function VideoEditorModal({
       if (maximum - minimum <= 0.000001) return;
       setMovingAudioId(segment.id);
     }
+    setAudioGestureActive(true);
     pausePreview();
     videoRef.current?.pause();
     const initial = { ...segment };
@@ -782,6 +784,7 @@ export function VideoEditorModal({
       cancelAudioResizeRef.current = null;
       setAudioResizeDraft(null);
       setMovingAudioId(null);
+      setAudioGestureActive(false);
     };
     const cancel = () => { if (!ended) cleanup(); };
     const update = () => {
@@ -1261,6 +1264,16 @@ export function VideoEditorModal({
         annotations: annotations.map((annotation) => ({ ...annotation })),
       },
     ]);
+  }
+
+  function handleDeleteAudio() {
+    if (cancelAudioResizeRef.current || !selectedAudioId) return;
+    if (!audioSegments.some(segment => segment.id === selectedAudioId)) return;
+    pausePreview();
+    videoRef.current?.pause();
+    rememberEditorState();
+    setAudioSegments(previous => previous.filter(segment => segment.id !== selectedAudioId));
+    setSelectedAudioId(null);
   }
 
   function handleUndo() {
@@ -3615,6 +3628,17 @@ export function VideoEditorModal({
           ); })}
         </div>
 
+        </div>
+
+        <div style={{ minHeight: 36, display: "flex", alignItems: "center" }}>
+          {audioSegments.some(segment => segment.id === selectedAudioId) && (
+            <button type="button" className="video-editor-tool-button" onClick={handleDeleteAudio}
+              disabled={audioGestureActive}
+              style={{ width: "auto", gap: 6, padding: "0 8px" }}>
+              <EditorToolIcon name="delete" />
+              Ton löschen
+            </button>
+          )}
         </div>
 
         <div
