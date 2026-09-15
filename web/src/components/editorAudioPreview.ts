@@ -1,11 +1,21 @@
 // Playback-only view of the existing persisted segments. No separate timeline state.
 interface AudioSegment {
+  volume?: number;
   muted?: boolean;
   id: string;
   sourceVideoId: string;
   sourceStart: number;
   sourceEnd: number;
   timelineStart: number;
+}
+
+export function validAudioVolume(volume: number | undefined): boolean {
+  return volume === undefined || (Number.isFinite(volume) && volume >= 0 && volume <= 1);
+}
+
+// Gain is not transport state: changing it must never reload or seek media.
+export function audioTransportKey(segments: readonly AudioSegment[]): string {
+  return JSON.stringify(segments.map(({ volume: _volume, ...segment }) => segment));
 }
 
 interface PreviewOptions {
@@ -33,6 +43,23 @@ export class EditorAudioPreview {
   private driftDirection = 0;
   private wasHidden = document.hidden;
   private visibilityResyncPending = false;
+  private volumeDraft: { id: string; value: number } | null = null;
+
+  setVolumeDraft(draft: { id: string; value: number } | null, apply = true) {
+    this.volumeDraft = draft;
+    if (apply) this.updateVolume();
+  }
+
+  updateVolume() {
+    if (this.disposed) return;
+    const time = this.options.time();
+    const active = this.options.segments().find(item => time >= item.timelineStart &&
+      time < item.timelineStart + item.sourceEnd - item.sourceStart);
+    if (!active || active.muted === true) return;
+    const value = this.volumeDraft?.id === active.id ? this.volumeDraft.value : active.volume;
+    if (!validAudioVolume(value)) return;
+    if (this.audio.volume !== (value ?? 1)) this.audio.volume = value ?? 1;
+  }
 
   constructor(private audio: HTMLAudioElement, private options: PreviewOptions) {
     audio.addEventListener("playing", this.guardPlayback);
@@ -69,7 +96,7 @@ export class EditorAudioPreview {
       time < item.timelineStart + item.sourceEnd - item.sourceStart,
     );
     if (active.length !== 1 || active[0].muted === true || active[0].sourceVideoId !== this.source ||
-      JSON.stringify(active[0]) !== JSON.stringify(this.segment)) return null;
+      audioTransportKey([active[0]]) !== audioTransportKey([this.segment])) return null;
     const target = active[0].sourceStart + time - active[0].timelineStart;
     return Number.isFinite(target) && Number.isFinite(this.audio.currentTime) ? target : null;
   }
@@ -168,8 +195,14 @@ export class EditorAudioPreview {
       this.stop();
       return;
     }
+    if (!validAudioVolume(segment.volume)) {
+      this.stop();
+      this.options.error("Ungültige Audio-Lautstärke.");
+      return;
+    }
+    this.updateVolume();
     if (!force && wasPlaying === playing && previous &&
-      JSON.stringify(previous) === JSON.stringify(segment)) return;
+      audioTransportKey([previous]) === audioTransportKey([segment])) return;
 
     this.resetDriftConfirmation();
 
@@ -210,6 +243,7 @@ export class EditorAudioPreview {
         this.audio.currentTime = segment.sourceStart + now - segment.timelineStart;
         this.pending = false;
         if (this.playing) {
+          this.updateVolume();
           this.alignOnPlaying = true;
           // Called synchronously for a ready, cached source (important for user activation).
           void this.audio.play().then(() => {

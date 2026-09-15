@@ -18,6 +18,9 @@ describe("audio coupling guard", () => {
   it("matches by clip ID, ignoring audio IDs and storage order", () => {
     expect(isAudioStillCoupled(clips, [...audio].reverse().map(a => ({ ...a, id: `new-${a.id}` })))).toBe(true);
   });
+  it.each([undefined, 1, 0.9999999, 0.5, 0, NaN, Infinity, -0.1, 1.1])("checks coupled volume %s with tolerance", volume => {
+    expect(isAudioStillCoupled(clips, [{ ...audio[0], volume }, audio[1]])).toBe(volume === undefined || volume === 1 || volume === 0.9999999);
+  });
   it("treats only muted:true as independent, without overlooking changed geometry after unmute", () => {
     expect(isAudioStillCoupled(clips, audio)).toBe(true);
     expect(isAudioStillCoupled(clips, audio.map(a => ({ ...a, muted: false })))).toBe(true);
@@ -89,7 +92,7 @@ let editorState: typeof emptyEditorState | {
         opacity?: number;
         text?: string;
       }>;
-      audioSegments?: Array<{ id: string; sourceClipId: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number; muted?: boolean }>;
+      audioSegments?: Array<{ id: string; sourceClipId: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number; muted?: boolean; volume?: number }>;
       annotations?: Array<{ id: string; type: "arrow" | "circle" | "symbol" | "line"; symbol?: string; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number; color?: string }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
@@ -761,7 +764,122 @@ describe("VideoEditorModal multi-source preview", () => {
     await waitFor(() => expect(play).toHaveBeenCalled());
   });
 
-  async function mountAudioPreview(segments: Array<{ id: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number; muted?: boolean }>) {
+  it.each([0, 0.5, 1])("commits one volume transaction, saves/reloads %s, and undoes without restarting transport", async volume => {
+    const segment = { id: "only", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0, volume: 0.4 };
+    const ui = await mountAudioPreview([segment]);
+    fireEvent.click(screen.getByTestId("video-editor-audio-clip-1"));
+    const slider = screen.getByRole("slider", { name: "Audio-Lautstärke" });
+    expect(slider).toHaveValue("40");
+    fireEvent.play(ui.video);
+    await act(async () => {});
+    const seek = vi.spyOn(ui.audio, "currentTime", "set");
+    const play = vi.spyOn(ui.audio, "play"); play.mockClear();
+    const pause = vi.spyOn(ui.audio, "pause"); pause.mockClear();
+    const load = vi.spyOn(ui.audio, "load"); load.mockClear();
+    mockApiFetch.mockClear();
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: "20" } });
+    fireEvent.change(slider, { target: { value: String(volume * 100) } });
+    expect(ui.audio.volume).toBe(volume);
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)); });
+    expect(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT")).toHaveLength(0);
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(ui.audio.volume).toBe(volume);
+    expect(seek).not.toHaveBeenCalled(); expect(play).not.toHaveBeenCalled();
+    expect(pause).not.toHaveBeenCalled(); expect(load).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(true));
+    const payload = JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body);
+    expect(payload.audioSegments).toEqual([{ ...segment, sourceClipId: "clip-1", volume }]);
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(slider).toHaveValue("40"); expect(ui.audio.volume).toBe(0.4);
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    ui.unmount();
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: payload };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByTestId("video-editor-audio-clip-1"));
+    expect(screen.getByRole("slider", { name: "Audio-Lautstärke" })).toHaveValue(String(volume * 100));
+  });
+
+  it.each(["cancel", "unchanged", "keyboard"])("handles volume %s as one transaction or no change", async mode => {
+    const ui = await mountAudioPreview([{ id: "a", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0 }]);
+    fireEvent.click(screen.getByTestId("video-editor-audio-clip-1"));
+    const slider = screen.getByRole("slider", { name: "Audio-Lautstärke" });
+    mockApiFetch.mockClear();
+    if (mode === "keyboard") fireEvent.keyDown(slider, { key: "ArrowLeft" });
+    else fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: "30" } });
+    if (mode === "cancel") fireEvent.pointerCancel(document, { pointerId: 1 });
+    if (mode === "unchanged") {
+      fireEvent.change(slider, { target: { value: "100" } });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+    }
+    if (mode === "keyboard") {
+      fireEvent.keyDown(slider, { key: "ArrowLeft", repeat: true });
+      fireEvent.change(slider, { target: { value: "29" } });
+      fireEvent.keyUp(slider, { key: "ArrowLeft" });
+      expect(slider).toHaveValue("29");
+      fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    }
+    expect(slider).toHaveValue("100"); expect(ui.audio.volume).toBe(1);
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)); });
+    expect(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT")).toHaveLength(0);
+  });
+
+  it("blocks coupled edits for volume changes and restores coupling at 100 percent", async () => {
+    const ui = await mountAudioTrim();
+    const slider = screen.getByRole("slider", { name: "Audio-Lautstärke" });
+    fireEvent.pointerDown(slider, { pointerId: 1 });
+    fireEvent.change(slider, { target: { value: "40" } });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    const clip = screen.getByTestId("video-editor-clip-one");
+    vi.spyOn(clip.parentElement!, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
+    await act(async () => { fireEvent.click(clip, { clientX: 100 }); });
+    for (const action of ["Teilen", "Video einfügen", "Clip löschen"]) {
+      fireEvent.click(screen.getByRole("button", { name: action }));
+      expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
+    }
+    expect(ui.track.children).toHaveLength(2);
+    fireEvent.pointerDown(slider, { pointerId: 2 });
+    fireEvent.change(slider, { target: { value: "100" } });
+    fireEvent.pointerUp(document, { pointerId: 2 });
+    fireEvent.click(screen.getByRole("button", { name: "Teilen" }));
+    expect(screen.getAllByTestId(/^video-editor-clip-/)).toHaveLength(3);
+  });
+
+  it.each(["move", "start", "end"] as const)("mutually excludes volume and %s, retaining gain through audio operations", async mode => {
+    const ui = await mountAudioMove(); fireEvent.click(ui.bar);
+    const slider = screen.getByRole("slider", { name: "Audio-Lautstärke" });
+    const target = mode === "move" ? ui.bar : screen.getByRole("button", { name: mode === "start" ? "Tonanfang kürzen" : "Tonende kürzen" });
+    fireEvent.pointerDown(target, { pointerId: 1, clientX: 500 });
+    expect(slider).toBeDisabled();
+    fireEvent.change(slider, { target: { value: "30" } });
+    fireEvent.pointerCancel(document, { pointerId: 1 });
+    expect(slider).toHaveValue("100");
+    fireEvent.pointerDown(slider, { pointerId: 2 });
+    fireEvent.change(slider, { target: { value: "50" } });
+    expect(screen.getByRole("button", { name: "Ton aus" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Ton löschen" })).toBeDisabled();
+    fireEvent.pointerDown(target, { pointerId: 3, clientX: 500 });
+    fireEvent.pointerMove(document, { pointerId: 3, clientX: 550 });
+    fireEvent.pointerUp(document, { pointerId: 3 });
+    expect(ui.bar).toHaveAttribute("data-timeline-start", "4");
+    fireEvent.pointerUp(document, { pointerId: 2 });
+    fireEvent.pointerDown(target, { pointerId: 4, clientX: 500 });
+    fireEvent.pointerMove(document, { pointerId: 4, clientX: mode === "end" ? 450 : 550 });
+    fireEvent.pointerUp(document, { pointerId: 4 });
+    fireEvent.click(screen.getByRole("button", { name: "Ton aus" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ton an" }));
+    expect(slider).toHaveValue("50");
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(true));
+    const saved = JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body);
+    expect(saved.audioSegments[0].volume).toBe(0.5); expect(saved.audioSegments[1]).toEqual(moveAudio[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Ton löschen" }));
+    expect(screen.queryByTestId("video-editor-audio-one")).not.toBeInTheDocument();
+  });
+
+  async function mountAudioPreview(segments: Array<{ id: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number; muted?: boolean; volume?: number }>) {
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: {
       version: 1,
       clips: [{ id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],

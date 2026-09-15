@@ -126,6 +126,39 @@ func TestAudioMuteGraph(t *testing.T) {
 	}
 }
 
+func TestAudioVolumeValidationAndGraph(t *testing.T) {
+	clips := []editClip{{ID: "c", SourceID: "main", SourceEnd: 3, Duration: 3}}
+	sources := map[string]sourceVideo{"main": {HasAudio: true, Duration: 3}}
+	indexes := map[string]int{"main": 0}
+	base := editorAudioSegment{ID: "a", SourceClipID: "c", SourceVideoID: "main", SourceEnd: 3}
+	audio := []editorAudioSegment{base}
+	legacy := strings.Join(timelineAudioFilters(clips, &audio, indexes, sources), ";")
+	for _, value := range []float64{0, 0.5, 1, -0.1, 1.1, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		audio[0] = base
+		audio[0].Volume = &value
+		timeline := editTimeline{Version: 1, Clips: clips, AudioSegments: &audio}
+		invalid := math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1
+		if (validateEditTimeline(&timeline) != nil) != invalid || (validateRenderAudio(timeline, sources) != nil) != invalid {
+			t.Fatalf("validation: %g", value)
+		}
+		if invalid {
+			continue
+		}
+		graph := strings.Join(timelineAudioFilters(clips, &audio, indexes, sources), ";")
+		if value == 1 && graph != legacy {
+			t.Fatal("100 percent changed legacy path")
+		}
+		if value != 1 && !strings.Contains(graph, fmt.Sprintf("channel_layouts=stereo,volume=%.9f,apad", value)) {
+			t.Fatal(graph)
+		}
+		audio[0].Muted = true
+		graph = strings.Join(timelineAudioFilters(clips, &audio, indexes, sources), ";")
+		if strings.Contains(graph, ":a:0]") || !strings.Contains(graph, "anullsrc") {
+			t.Fatal("mute lost priority")
+		}
+	}
+}
+
 func TestAudioTimelineFFmpegIntegration(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg unavailable")
@@ -165,10 +198,15 @@ func TestAudioTimelineFFmpegIntegration(t *testing.T) {
 		{ID: "c", SourceClipID: "c", SourceVideoID: "main", SourceStart: 2, SourceEnd: 4, TimelineStart: 2},
 	}
 	allMuted := []editorAudioSegment{{ID: "only", SourceClipID: "c", SourceVideoID: "main", SourceEnd: 4, Muted: true}}
+	half, zero := 0.5, 0.0
+	volume := append([]editorAudioSegment{}, muted...)
+	volume[1].Muted = false
+	volume[1].Volume = &half
+	zeroVolume := []editorAudioSegment{{ID: "zero", SourceClipID: "c", SourceVideoID: "main", SourceEnd: 4, Volume: &zero}}
 	for _, tc := range []struct {
 		name  string
 		audio *[]editorAudioSegment
-	}{{"segments", &segments}, {"empty", &empty}, {"legacy", nil}, {"muted", &muted}, {"all-muted", &allMuted}} {
+	}{{"segments", &segments}, {"empty", &empty}, {"legacy", nil}, {"muted", &muted}, {"all-muted", &allMuted}, {"volume", &volume}, {"zero-volume", &zeroVolume}} {
 		t.Run(tc.name, func(t *testing.T) {
 			output := filepath.Join(dir, tc.name+".mp4")
 			run(buildAnnotatedTimelineRenderArgs(inputs, clips, indexes, sources, output, nil, nil, tc.audio)...)
@@ -198,6 +236,13 @@ func TestAudioTimelineFFmpegIntegration(t *testing.T) {
 			for _, at := range []float64{.05, .4, .85, 1.05, 1.4, 1.9, 2.5, 3.5} {
 				rms, freq := measure(at)
 				want := 0.
+				gain := 1.0
+				if tc.name == "volume" {
+					want = 440
+					if at >= 1 && at < 2 {
+						gain = 0.5
+					}
+				}
 				if tc.name == "legacy" {
 					want = 440
 				}
@@ -216,7 +261,7 @@ func TestAudioTimelineFFmpegIntegration(t *testing.T) {
 					if rms > .001 {
 						t.Fatalf("expected silence at %g, rms=%g", at, rms)
 					}
-				} else if rms < .04 || rms > .10 || math.Abs(freq-want) > 20 {
+				} else if rms < .04*gain || rms > .10*gain || math.Abs(freq-want) > 20 {
 					t.Fatalf("tone/level at %g: rms=%g freq=%g want=%g", at, rms, freq, want)
 				}
 			}

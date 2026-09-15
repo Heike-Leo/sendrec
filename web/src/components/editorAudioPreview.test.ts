@@ -14,7 +14,7 @@ describe("independent audio preview", () => {
   let audio: HTMLAudioElement;
   let preview: EditorAudioPreview;
   let time: number;
-  let segments: (typeof first & { muted?: boolean })[];
+  let segments: (typeof first & { muted?: boolean; volume?: number })[];
   let url: ReturnType<typeof vi.fn<(id: string) => string | Promise<string>>>;
   let error: ReturnType<typeof vi.fn<(message: string | null) => void>>;
   function metadata() { audio.dispatchEvent(new Event("loadedmetadata")); }
@@ -40,6 +40,52 @@ describe("independent audio preview", () => {
     expect(audio.src).toBe("https://media.example/one.mp4");
     expect(audio.currentTime).toBe(3.75);
     expect(audio.play).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, 1, 0.5, 0])("uses volume %s without changing transport on gain edits", volume => {
+    segments[0] = { ...first, volume };
+    preview.sync(true);
+    metadata();
+    expect(audio.volume).toBe(volume ?? 1);
+    const seek = vi.spyOn(audio, "currentTime", "set");
+    vi.mocked(audio.pause).mockClear(); vi.mocked(audio.play).mockClear(); vi.mocked(audio.load).mockClear();
+    segments[0] = { ...segments[0], volume: 0.4 };
+    preview.updateVolume();
+    preview.sync(true);
+    expect(audio.volume).toBe(0.4);
+    expect(seek).not.toHaveBeenCalled();
+    expect(audio.pause).not.toHaveBeenCalled();
+    expect(audio.play).not.toHaveBeenCalled();
+    expect(audio.load).not.toHaveBeenCalled();
+  });
+
+  it("keeps a live draft tied to its ID across a seamless same-source transition and mute", () => {
+    segments = [{ ...first, volume: 0.8 }, { ...second, sourceVideoId: "one", sourceStart: 5, sourceEnd: 7, volume: 0.3 }];
+    preview.sync(true); metadata();
+    preview.setVolumeDraft({ id: "a", value: 0.2 });
+    expect(audio.volume).toBe(0.2);
+    time = 2;
+    preview.sync(true);
+    expect(audio.volume).toBe(0.3);
+    expect(audio.load).toHaveBeenCalledTimes(1);
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    preview.setVolumeDraft(null);
+    segments[1] = { ...segments[1], muted: true };
+    preview.sync(true, true);
+    preview.setVolumeDraft({ id: "b", value: 0.1 });
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    preview.setVolumeDraft(null);
+    segments[1] = { ...segments[1], muted: false };
+    preview.sync(true, true);
+    expect(audio.volume).toBe(0.3);
+  });
+
+  it.each([NaN, Infinity, -Infinity, -0.1, 1.1])("rejects invalid volume %s", volume => {
+    segments[0] = { ...first, volume };
+    preview.sync(true);
+    metadata();
+    expect(audio.play).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith("Ungültige Audio-Lautstärke.");
   });
 
   it.each([undefined, false, true])("handles muted=%s without loading a muted source", muted => {
@@ -265,7 +311,7 @@ describe("audio preview drift control", () => {
   let preview: EditorAudioPreview;
   let audio: HTMLAudioElement;
   let time: number;
-  let segments: (typeof first & { muted?: boolean })[];
+  let segments: (typeof first & { muted?: boolean; volume?: number })[];
   let videoReady: boolean;
   let state: { paused: boolean; seeking: boolean; ended: boolean; readyState: number; currentSrc: string; error: MediaError | null };
   let hidden: ReturnType<typeof vi.fn<() => boolean>>;
@@ -325,6 +371,14 @@ describe("audio preview drift control", () => {
     preview.checkDrift(0);
     preview.checkDrift(250);
     expect(writeTime).not.toHaveBeenCalled();
+  });
+
+  it("preserves drift confirmation across pure volume changes", () => {
+    drift(0.15); preview.checkDrift(0);
+    segments[0] = { ...segments[0], volume: 0.5 };
+    preview.updateVolume(); preview.sync(true);
+    preview.checkDrift(250);
+    expect(writeTime).toHaveBeenCalledExactlyOnceWith(11);
   });
 
   it.each([0.15, -0.15])("requires two consecutive same-direction measurements (%s)", (value) => {

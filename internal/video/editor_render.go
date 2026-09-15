@@ -60,13 +60,14 @@ type editorAnnotation struct {
 }
 
 type editorAudioSegment struct {
-	Muted         bool    `json:"muted"`
-	ID            string  `json:"id"`
-	SourceClipID  string  `json:"sourceClipId"`
-	SourceVideoID string  `json:"sourceVideoId"`
-	SourceStart   float64 `json:"sourceStart"`
-	SourceEnd     float64 `json:"sourceEnd"`
-	TimelineStart float64 `json:"timelineStart"`
+	Volume        *float64 `json:"volume,omitempty"`
+	Muted         bool     `json:"muted"`
+	ID            string   `json:"id"`
+	SourceClipID  string   `json:"sourceClipId"`
+	SourceVideoID string   `json:"sourceVideoId"`
+	SourceStart   float64  `json:"sourceStart"`
+	SourceEnd     float64  `json:"sourceEnd"`
+	TimelineStart float64  `json:"timelineStart"`
 }
 
 type editTimeline struct {
@@ -148,6 +149,9 @@ func validateEditTimeline(timeline *editTimeline) error {
 		}
 		ids := make(map[string]bool)
 		for _, segment := range *timeline.AudioSegments {
+			if err := validateAudioVolume(segment.Volume); err != nil {
+				return err
+			}
 			if strings.TrimSpace(segment.ID) == "" || ids[segment.ID] || strings.TrimSpace(segment.SourceClipID) == "" || strings.TrimSpace(segment.SourceVideoID) == "" {
 				return fmt.Errorf("audio segment requires unique id and source references")
 			}

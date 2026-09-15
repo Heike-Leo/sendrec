@@ -38,7 +38,8 @@ func (a audioJSONArgument) Match(value any) bool {
 
 func TestAudioSegmentsPersistence(t *testing.T) {
 	legacy := `[{"id":"audio:a","sourceClipId":"a","sourceVideoId":"video-main","sourceStart":0,"sourceEnd":20,"timelineStart":0}]`
-	for _, audio := range []string{"", "[]", legacy, strings.Replace(legacy, `"id":`, `"muted":true,"id":`, 1), strings.Replace(legacy, `"id":`, `"muted":false,"id":`, 1)} {
+	for _, audio := range []string{"", "[]", legacy, strings.Replace(legacy, `"id":`, `"muted":true,"id":`, 1), strings.Replace(legacy, `"id":`, `"muted":false,"id":`, 1),
+		strings.Replace(legacy, `"id":`, `"volume":0,"id":`, 1), strings.Replace(legacy, `"id":`, `"volume":0.5,"id":`, 1), strings.Replace(legacy, `"id":`, `"volume":1,"id":`, 1)} {
 		t.Run("audio="+audio, func(t *testing.T) {
 			expected := audio
 			if audio != "" {

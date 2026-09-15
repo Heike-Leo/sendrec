@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
 import { formatDuration } from "../utils/format";
 import type { Video } from "../types/video";
-import { EditorAudioPreview } from "./editorAudioPreview";
+import { EditorAudioPreview, audioTransportKey, validAudioVolume } from "./editorAudioPreview";
 
 interface EditorClip {
   id: string;
@@ -13,6 +13,7 @@ interface EditorClip {
 }
 
 interface EditorAudioSegment {
+  volume?: number;
   muted?: boolean;
   id: string;
   sourceClipId: string;
@@ -48,7 +49,8 @@ export function isAudioStillCoupled(clips: EditorClip[], audioSegments: EditorAu
   const sameTime = (a: number, b: number) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 0.000001;
   return expected.every((segment) => {
     const actual = byClip.get(segment.sourceClipId);
-    return actual !== undefined && actual.muted !== true && actual.sourceVideoId === segment.sourceVideoId &&
+    return actual !== undefined && actual.muted !== true && validAudioVolume(actual.volume) &&
+      Math.abs((actual.volume ?? 1) - 1) <= 1e-6 && actual.sourceVideoId === segment.sourceVideoId &&
       sameTime(actual.sourceStart, segment.sourceStart) &&
       sameTime(actual.sourceEnd, segment.sourceEnd) &&
       sameTime(actual.timelineStart, segment.timelineStart);
@@ -253,6 +255,8 @@ export function VideoEditorModal({
   const [movingAudioId, setMovingAudioId] = useState<string | null>(null);
   const [audioGestureActive, setAudioGestureActive] = useState(false);
   const cancelAudioResizeRef = useRef<(() => void) | null>(null);
+  const [audioVolumeDraft, setAudioVolumeDraft] = useState<{ id: string; value: number } | null>(null);
+  const volumeGestureRef = useRef<{ change: (value: number) => void; finish: () => void; cancel: () => void } | null>(null);
   const audioTrackRef = useRef<HTMLDivElement>(null);
 
   function updateCoupledClips(update: (previous: EditorClip[]) => EditorClip[]) {
@@ -389,9 +393,11 @@ export function VideoEditorModal({
     };
   }, []);
 
+  const audioTransport = audioTransportKey(audioSegments);
   useEffect(() => {
     if (!videoSwitchPendingRef.current) audioPreviewRef.current?.sync(previewPlayingRef.current, true);
-  }, [audioSegments, videoUrl]);
+  }, [audioTransport, videoUrl]);
+  useEffect(() => { audioPreviewRef.current?.updateVolume(); }, [audioSegments]);
 
   function pausePreview() {
     previewPlayingRef.current = false;
@@ -404,6 +410,7 @@ export function VideoEditorModal({
   }
 
   function closeEditor() {
+    volumeGestureRef.current?.cancel();
     cancelAudioResizeRef.current?.();
     pausePreview();
     videoRef.current?.pause();
@@ -647,6 +654,7 @@ export function VideoEditorModal({
           }
         }
         const restoredAudio = state.timeline?.audioSegments ?? coupledAudio(restoredClips);
+        if (restoredAudio.some(segment => !validAudioVolume(segment.volume))) throw new Error("Ungültige Audio-Lautstärke.");
         setAudioSegments(restoredAudio);
         const restoredPayload = serializeTimeline(restoredClips, restoredOverlays, restoredAnnotations, restoredAudio);
         latestTimelinePayloadRef.current = restoredPayload;
@@ -712,6 +720,8 @@ export function VideoEditorModal({
     cancelAudioResizeRef.current?.();
   }, [clips, audioSegments, timelineZoom]);
   useEffect(() => () => cancelAudioResizeRef.current?.(), []);
+  useEffect(() => { volumeGestureRef.current?.cancel(); }, [selectedAudioId, clips, audioSegments, coverOverlays, annotations, editorHistory]);
+  useEffect(() => () => volumeGestureRef.current?.cancel(), []);
   useEffect(() => {
     if (movingAudioId !== null) cancelAudioResizeRef.current?.();
   }, [coverOverlays, annotations, editorHistory]);
@@ -719,6 +729,7 @@ export function VideoEditorModal({
   function handleAudioResize(e: React.PointerEvent<HTMLElement>, segment: EditorAudioSegment, edge: "start" | "end" | "move") {
     e.preventDefault();
     e.stopPropagation();
+    if (volumeGestureRef.current) return;
     if (edge === "move" && (e.target as Element).closest("[data-audio-resize-handle]")) return;
     cancelAudioResizeRef.current?.();
     setSelectedAudioId(segment.id);
@@ -836,12 +847,16 @@ export function VideoEditorModal({
     latestTimelinePayloadRef.current = payload;
 
     if (!editorStateLoadedRef.current) return;
-    if (payload === lastSavedTimelinePayloadRef.current) return;
-
-    timelineSavePendingRef.current = true;
     if (overlaySaveTimerRef.current !== null) {
       window.clearTimeout(overlaySaveTimerRef.current);
+      overlaySaveTimerRef.current = null;
     }
+    if (payload === lastSavedTimelinePayloadRef.current) {
+      timelineSavePendingRef.current = false;
+      return;
+    }
+
+    timelineSavePendingRef.current = true;
     overlaySaveTimerRef.current = window.setTimeout(() => {
       overlaySaveTimerRef.current = null;
       void apiFetch(`/api/videos/${videoId}/editor`, {
@@ -1268,7 +1283,7 @@ export function VideoEditorModal({
   }
 
   function handleDeleteAudio() {
-    if (cancelAudioResizeRef.current || !selectedAudioId) return;
+    if (volumeGestureRef.current || cancelAudioResizeRef.current || !selectedAudioId) return;
     if (!audioSegments.some(segment => segment.id === selectedAudioId)) return;
     pausePreview();
     videoRef.current?.pause();
@@ -1277,8 +1292,57 @@ export function VideoEditorModal({
     setSelectedAudioId(null);
   }
 
+  function beginAudioVolume(pointerId?: number) {
+    if (volumeGestureRef.current || cancelAudioResizeRef.current || !selectedAudioId) return;
+    const selected = audioSegments.find(segment => segment.id === selectedAudioId);
+    if (!selected || !validAudioVolume(selected.volume)) return;
+    const inputs = audioResizeInputsRef.current;
+    let value = selected.volume ?? 1;
+    let ended = false;
+    const cleanup = (restoreVolume = true) => {
+      ended = true;
+      volumeGestureRef.current = null;
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", cancelled);
+      window.removeEventListener("blur", cancel);
+      setAudioVolumeDraft(null);
+      audioPreviewRef.current?.setVolumeDraft(null, restoreVolume);
+    };
+    const cancel = () => { if (!ended) cleanup(); };
+    const finish = () => {
+      if (ended) return;
+      const current = audioResizeInputsRef.current;
+      if (current.audioSegments !== inputs.audioSegments || current.clips !== inputs.clips ||
+        current.editorHistory !== inputs.editorHistory) { cancel(); return; }
+      const changed = Math.abs(value - (selected.volume ?? 1)) > 1e-9;
+      // Keep the live gain until React publishes the committed value; no old-gain blip.
+      cleanup(!changed);
+      if (!changed) return;
+      current.rememberEditorState();
+      setAudioSegments(previous => previous.map(segment => segment.id === selected.id ? { ...segment, volume: value } : segment));
+    };
+    const up = (event: PointerEvent) => { if (event.pointerId === pointerId) finish(); };
+    const cancelled = (event: PointerEvent) => { if (event.pointerId === pointerId) cancel(); };
+    volumeGestureRef.current = {
+      cancel, finish,
+      change: next => {
+        if (ended || !validAudioVolume(next)) return;
+        value = next;
+        const draft = { id: selected.id, value };
+        setAudioVolumeDraft(draft);
+        audioPreviewRef.current?.setVolumeDraft(draft);
+      },
+    };
+    setAudioVolumeDraft({ id: selected.id, value });
+    if (pointerId !== undefined) {
+      document.addEventListener("pointerup", up);
+      document.addEventListener("pointercancel", cancelled);
+    }
+    window.addEventListener("blur", cancel);
+  }
+
   function handleToggleAudioMute() {
-    if (cancelAudioResizeRef.current || !selectedAudioId) return;
+    if (volumeGestureRef.current || cancelAudioResizeRef.current || !selectedAudioId) return;
     const selected = audioSegments.find(segment => segment.id === selectedAudioId);
     if (!selected) return;
     pausePreview();
@@ -1289,6 +1353,7 @@ export function VideoEditorModal({
   }
 
   function handleUndo() {
+    volumeGestureRef.current?.cancel();
     cancelAudioResizeRef.current?.();
     if (editorHistory.length === 0) return;
 
@@ -3645,18 +3710,45 @@ export function VideoEditorModal({
         <div style={{ minHeight: 36, display: "flex", alignItems: "center", gap: 6 }}>
           {audioSegments.some(segment => segment.id === selectedAudioId) && (
             <button type="button" className="video-editor-tool-button" onClick={handleToggleAudioMute}
-              disabled={audioGestureActive}
+              disabled={audioGestureActive || audioVolumeDraft !== null}
               style={{ width: "auto", padding: "0 8px" }}>
               {audioSegments.find(segment => segment.id === selectedAudioId)?.muted === true ? "Ton an" : "Ton aus"}
             </button>
           )}
           {audioSegments.some(segment => segment.id === selectedAudioId) && (
             <button type="button" className="video-editor-tool-button" onClick={handleDeleteAudio}
-              disabled={audioGestureActive}
+              disabled={audioGestureActive || audioVolumeDraft !== null}
               style={{ width: "auto", gap: 6, padding: "0 8px" }}>
               <EditorToolIcon name="delete" />
               Ton löschen
             </button>
+          )}
+          {audioSegments.some(segment => segment.id === selectedAudioId) && (
+            <label className="video-editor-cover-time-label">
+              Lautstärke{" "}
+              <input type="range" aria-label="Audio-Lautstärke" min={0} max={100} step={1}
+                className="video-editor-opacity-slider" style={{ width: 88 }}
+                disabled={audioGestureActive}
+                value={Math.round((audioVolumeDraft?.value ?? audioSegments.find(segment => segment.id === selectedAudioId)?.volume ?? 1) * 100)}
+                onPointerDown={event => beginAudioVolume(event.pointerId)}
+                onKeyDown={event => {
+                  if (event.key === "Escape" && volumeGestureRef.current) {
+                    event.preventDefault(); event.stopPropagation(); volumeGestureRef.current.cancel();
+                  } else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) beginAudioVolume();
+                }}
+                onKeyUp={event => {
+                  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) volumeGestureRef.current?.finish();
+                }}
+                onBlur={() => volumeGestureRef.current?.finish()}
+                onChange={event => {
+                  if (cancelAudioResizeRef.current) return;
+                  beginAudioVolume();
+                  volumeGestureRef.current?.change(Number(event.target.value) / 100);
+                }} />
+              <span className="video-editor-opacity-value">
+                {Math.round((audioVolumeDraft?.value ?? audioSegments.find(segment => segment.id === selectedAudioId)?.volume ?? 1) * 100)} %
+              </span>
+            </label>
           )}
         </div>
 

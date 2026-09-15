@@ -10,6 +10,13 @@ import (
 // Match the existing source-duration tolerance: at most one millisecond.
 const editorAudioTolerance = .001
 
+func validateAudioVolume(volume *float64) error {
+	if volume != nil && (math.IsNaN(*volume) || math.IsInf(*volume, 0) || *volume < 0 || *volume > 1) {
+		return fmt.Errorf("audio segment volume must be finite and between 0 and 1")
+	}
+	return nil
+}
+
 func renderAudioSegments(clips []editClip, stored *[]editorAudioSegment) []editorAudioSegment {
 	if stored != nil {
 		return append([]editorAudioSegment{}, (*stored)...)
@@ -52,6 +59,9 @@ func validateRenderAudio(timeline editTimeline, sources map[string]sourceVideo) 
 	sort.SliceStable(segments, func(i, j int) bool { return segments[i].TimelineStart < segments[j].TimelineStart })
 	end := 0.0
 	for _, s := range segments {
+		if err := validateAudioVolume(s.Volume); err != nil {
+			return err
+		}
 		for _, v := range []float64{s.SourceStart, s.SourceEnd, s.TimelineStart} {
 			if math.IsNaN(v) || math.IsInf(v, 0) {
 				return fmt.Errorf("audio segment times must be finite")
@@ -123,7 +133,11 @@ func timelineAudioFilters(clips []editClip, stored *[]editorAudioSegment, indexe
 		count := end - start
 		if sources[s.SourceVideoID].HasAudio && !s.Muted {
 			sourceStart := s.SourceStart + math.Max(0, float64(start)/48000-s.TimelineStart)
-			appendPart(fmt.Sprintf("[%d:a:0]atrim=start=%.9f:end=%.9f,asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS", indexes[s.SourceVideoID], sourceStart, s.SourceEnd, count, count))
+			gain := ""
+			if s.Volume != nil && *s.Volume != 1 {
+				gain = fmt.Sprintf(",volume=%.9f", *s.Volume)
+			}
+			appendPart(fmt.Sprintf("[%d:a:0]atrim=start=%.9f:end=%.9f,asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo%s,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS", indexes[s.SourceVideoID], sourceStart, s.SourceEnd, gain, count, count))
 		} else {
 			silence(count)
 		}
