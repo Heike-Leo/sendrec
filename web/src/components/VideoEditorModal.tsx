@@ -3222,6 +3222,29 @@ export function VideoEditorModal({
           />
         </div>
 
+        <div data-testid="video-editor-audio-track" role="group" aria-label="Originalton (mit Video gekoppelt)"
+          style={{ position: "relative", height: 36, marginTop: 4, width: `${timelineZoom * 100}%`, minWidth: "100%",
+            borderRadius: 8, background: "var(--color-border)", overflow: "hidden", userSelect: "none" }}>
+          {clipLayout.map(({ clip, clipDuration, timelineStart }, index) => (
+            <div key={clip.id} data-testid={`video-editor-audio-${clip.id}`}
+              data-clip-id={clip.id} data-source-video-id={clip.sourceVideoId}
+              data-source-start={clip.start} data-source-end={clip.end}
+              title={`Originalton · Clip ${index + 1} · mit Video gekoppelt`}
+              style={{ position: "absolute", top: 4, bottom: 4,
+                left: `${timelineDuration > 0 ? timelineStart / timelineDuration * 100 : 0}%`,
+                width: `${timelineDuration > 0 ? clipDuration / timelineDuration * 100 : 0}%`,
+                boxSizing: "border-box", border: "1px solid rgba(255,255,255,0.35)", background: "#334155",
+                color: "#fff", fontSize: 12, padding: "0 12px", display: "flex", alignItems: "center",
+                gap: 6, whiteSpace: "nowrap", overflow: "hidden" }}>
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
+                strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <path d="M2 6h3l4-3v10l-4-3H2ZM12 5a5 5 0 0 1 0 6" />
+              </svg>
+              <span>Originalton · {index + 1}</span>
+            </div>
+          ))}
+        </div>
+
         </div>
 
         <div

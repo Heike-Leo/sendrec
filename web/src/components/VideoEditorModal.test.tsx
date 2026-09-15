@@ -5,6 +5,21 @@ import { VideoEditorModal } from "./VideoEditorModal";
 
 const mockApiFetch = vi.fn();
 
+function expectCoupledAudio() {
+  const track = screen.getByTestId("video-editor-audio-track");
+  const videoTrack = screen.getByTestId("video-editor-timeline");
+  expect(videoTrack.nextElementSibling).toBe(track);
+  expect(track.style.width).toBe(videoTrack.style.width);
+  const segments = track.querySelectorAll<HTMLElement>("[data-clip-id]");
+  expect(segments.length).toBe(screen.getAllByTestId(/^video-editor-clip-/).length);
+  for (const segment of segments) {
+    const clip = screen.getByTestId(`video-editor-clip-${segment.dataset.clipId}`);
+    expect(segment.style.left).toBe(clip.style.left);
+    expect(segment.style.width).toBe(clip.style.width);
+  }
+  expect(track.querySelector("button, input, audio")).toBeNull();
+}
+
 const emptyEditorState = {
   timeline: { version: 0, clips: [] },
   renderStatus: "none",
@@ -2742,6 +2757,30 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(timelineOverlay).toHaveStyle({ width: "16.666666666666664%" });
   });
 
+  it("derives original audio from clip IDs including repeated sources without additional persisted state", async () => {
+    const clips = [
+      { id: "one", sourceId: "original", sourceStart: 2, sourceEnd: 7, duration: 5 },
+      { id: "two", sourceId: "inserted", sourceStart: 4, sourceEnd: 14, duration: 10 },
+      { id: "three", sourceId: "original", sourceStart: 20, sourceEnd: 25, duration: 5 },
+    ];
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1, clips } };
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-audio-three");
+    expectCoupledAudio();
+    for (const clip of clips) {
+      const segment = screen.getByTestId(`video-editor-audio-${clip.id}`);
+      expect(segment).toHaveAttribute("data-source-video-id", clip.sourceId);
+      expect(segment).toHaveAttribute("data-source-start", String(clip.sourceStart));
+      expect(segment).toHaveAttribute("data-source-end", String(clip.sourceEnd));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Vergrößern" }));
+    expectCoupledAudio();
+    expect(screen.getByTestId("video-editor-audio-track")).toHaveStyle({ width: "200%" });
+    expect(document.querySelectorAll("video")).toHaveLength(1);
+    expect(document.querySelector("audio")).toBeNull();
+    expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+  });
+
   it("keeps overlays intact when undoing an existing clip action", async () => {
     const user = userEvent.setup();
     editorState = {
@@ -2768,9 +2807,13 @@ describe("VideoEditorModal multi-source preview", () => {
     await user.click(await screen.findByRole("button", { name: /Inserted source/ }));
     await user.click(screen.getByRole("button", { name: "Hier einfügen" }));
     expect(screen.getByText("Eingefügt: Inserted source")).toBeInTheDocument();
+    expectCoupledAudio();
+    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(2);
 
     await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
     expect(screen.queryByText("Eingefügt: Inserted source")).not.toBeInTheDocument();
+    expectCoupledAudio();
+    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1);
     expect(screen.getByTestId("video-editor-cover-overlay-cover-a")).toBeInTheDocument();
   });
 
@@ -2973,6 +3016,12 @@ describe("VideoEditorModal multi-source preview", () => {
 
     expect(screen.getByText("Clip 1")).toHaveStyle({ width: "33.33333%" });
     expect(screen.getByText("Clip 2")).toHaveStyle({ width: "66.66667%" });
+    expectCoupledAudio();
+    const audioSegments = screen.getByTestId("video-editor-audio-track").children;
+    expect(audioSegments).toHaveLength(2);
+    expect(audioSegments[0]).toHaveAttribute("data-source-video-id", "original");
+    expect(audioSegments[1]).toHaveAttribute("data-source-video-id", "original");
+    expect(audioSegments[0].getAttribute("data-source-end")).toBe(audioSegments[1].getAttribute("data-source-start"));
   });
 
   it("keeps trim dragging precise while zoomed to 10x", async () => {
