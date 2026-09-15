@@ -139,6 +139,7 @@ interface VideoEditorModalProps {
 const TIMELINE_ZOOM_LEVELS = [1, 2, 5, 10] as const;
 const TIMELINE_TICK_STEPS = [0.1, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
 const OVERLAY_SAVE_DEBOUNCE_MS = 400;
+const INDEPENDENT_AUDIO_WARNING = "Die Tonspur wurde unabhängig vom Video bearbeitet. Änderungen an der Videostruktur würden diese Audiobearbeitung überschreiben.";
 const VISIBLE_OVERLAY_TRACKS = 4;
 const OVERLAY_TRACK_HEIGHT = 38;
 const OVERLAY_TRACK_GAP = 4;
@@ -246,6 +247,10 @@ export function VideoEditorModal({
     },
   ]);
   const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
+  const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null);
+  const [audioResizeDraft, setAudioResizeDraft] = useState<EditorAudioSegment | null>(null);
+  const cancelAudioResizeRef = useRef<(() => void) | null>(null);
+  const audioTrackRef = useRef<HTMLDivElement>(null);
 
   function updateCoupledClips(update: (previous: EditorClip[]) => EditorClip[]) {
     const next = update(clips);
@@ -396,6 +401,7 @@ export function VideoEditorModal({
   }
 
   function closeEditor() {
+    cancelAudioResizeRef.current?.();
     pausePreview();
     videoRef.current?.pause();
     onClose();
@@ -696,6 +702,96 @@ export function VideoEditorModal({
     (sum, clip) => sum + Math.max(0, clip.end - clip.start),
     0,
   );
+
+  const audioResizeInputsRef = useRef({ clips, audioSegments, timelineZoom, rememberEditorState });
+  audioResizeInputsRef.current = { clips, audioSegments, timelineZoom, rememberEditorState };
+  useEffect(() => {
+    cancelAudioResizeRef.current?.();
+  }, [clips, audioSegments, timelineZoom]);
+  useEffect(() => () => cancelAudioResizeRef.current?.(), []);
+
+  function handleAudioResize(e: React.PointerEvent<HTMLButtonElement>, segment: EditorAudioSegment, edge: "start" | "end") {
+    e.preventDefault();
+    e.stopPropagation();
+    cancelAudioResizeRef.current?.();
+    setSelectedAudioId(segment.id);
+    const track = audioTrackRef.current;
+    const scroller = track?.parentElement;
+    const rect = track?.getBoundingClientRect();
+    if (!track || !scroller || !rect || rect.width <= 0 || timelineDuration <= 0 ||
+      segment.sourceEnd - segment.sourceStart < 0.1) return;
+    pausePreview();
+    videoRef.current?.pause();
+    const initial = { ...segment };
+    const inputs = audioResizeInputsRef.current;
+    const startX = e.clientX;
+    const startScroll = scroller.scrollLeft;
+    const pointerId = e.pointerId;
+    let pointerX = startX;
+    let draft = initial;
+    let ended = false;
+    const valid = () => {
+      const current = audioResizeInputsRef.current;
+      const bounds = track.getBoundingClientRect();
+      return current.clips === inputs.clips && current.audioSegments === inputs.audioSegments &&
+        current.timelineZoom === inputs.timelineZoom && track.isConnected &&
+        Math.abs(bounds.width - rect.width) < 0.01 &&
+        Math.abs(bounds.left + scroller.scrollLeft - rect.left - startScroll) < 0.01 &&
+        Math.abs(bounds.top - rect.top) < 0.01;
+    };
+    const cleanup = () => {
+      ended = true;
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", cancelPointer);
+      scroller.removeEventListener("scroll", update);
+      window.removeEventListener("resize", cancel);
+      window.removeEventListener("blur", cancel);
+      observer?.disconnect();
+      cancelAudioResizeRef.current = null;
+      setAudioResizeDraft(null);
+    };
+    const cancel = () => { if (!ended) cleanup(); };
+    const update = () => {
+      if (ended) return;
+      if (!valid()) { cancel(); return; }
+      const deltaTime = (pointerX - startX + scroller.scrollLeft - startScroll) / rect.width * timelineDuration;
+      if (edge === "end") {
+        draft = { ...initial, sourceEnd: Math.max(initial.sourceStart + 0.1, Math.min(initial.sourceEnd, initial.sourceEnd + deltaTime)) };
+      } else {
+        const delta = Math.max(0, Math.min(initial.sourceEnd - initial.sourceStart - 0.1, deltaTime));
+        draft = { ...initial, sourceStart: initial.sourceStart + delta, timelineStart: initial.timelineStart + delta };
+      }
+      setAudioResizeDraft(draft);
+    };
+    const move = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId) return;
+      pointerX = event.clientX;
+      update();
+    };
+    const cancelPointer = (event: PointerEvent) => { if (event.pointerId === pointerId) cancel(); };
+    const finish = (event: PointerEvent) => {
+      if (event.pointerId !== pointerId || ended) return;
+      if (!valid()) { cancel(); return; }
+      const changed = Math.abs(draft.sourceStart - initial.sourceStart) > 0.000001 ||
+        Math.abs(draft.sourceEnd - initial.sourceEnd) > 0.000001;
+      cleanup();
+      if (!changed) return;
+      audioResizeInputsRef.current.rememberEditorState();
+      const changes = edge === "end" ? { sourceEnd: draft.sourceEnd } :
+        { sourceStart: draft.sourceStart, timelineStart: draft.timelineStart };
+      setAudioSegments(previous => previous.map(item => item.id === initial.id ? { ...item, ...changes } : item));
+    };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => { if (!valid()) cancel(); });
+    observer?.observe(track);
+    cancelAudioResizeRef.current = cancel;
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", cancelPointer);
+    scroller.addEventListener("scroll", update);
+    window.addEventListener("resize", cancel);
+    window.addEventListener("blur", cancel);
+  }
 
   useEffect(() => {
     const payload = serializeTimeline(clips, coverOverlays, annotations, audioSegments);
@@ -1117,7 +1213,7 @@ export function VideoEditorModal({
 
   function allowCoupledClipAction() {
     if (isAudioStillCoupled(clips, audioSegments)) return true;
-    setError("Die Tonspur wurde unabhängig vom Video bearbeitet. Änderungen an der Videostruktur würden diese Audiobearbeitung überschreiben.");
+    setError(INDEPENDENT_AUDIO_WARNING);
     return false;
   }
 
@@ -1134,6 +1230,7 @@ export function VideoEditorModal({
   }
 
   function handleUndo() {
+    cancelAudioResizeRef.current?.();
     if (editorHistory.length === 0) return;
 
     const previousState = editorHistory[editorHistory.length - 1];
@@ -2058,7 +2155,7 @@ export function VideoEditorModal({
           </button>
         </div>
 
-        {error && (
+        {error && error !== INDEPENDENT_AUDIO_WARNING && (
           <div
             style={{
               color: "var(--color-error)",
@@ -2406,6 +2503,16 @@ export function VideoEditorModal({
                 })}
               </div>
             </div>
+          </div>
+        )}
+
+        {error === INDEPENDENT_AUDIO_WARNING && (
+          <div role="alert" data-testid="video-editor-audio-guard-warning"
+            style={{ marginBottom: 8, padding: "8px 10px", borderRadius: 6,
+              border: "1px solid #F7C2D2", borderLeft: "3px solid #E6467A",
+              background: "#FFF7FA", color: "#0F172A",
+              fontSize: 13, lineHeight: 1.4 }}>
+            {error}
           </div>
         )}
 
@@ -3434,17 +3541,24 @@ export function VideoEditorModal({
           />
         </div>
 
-        <div data-testid="video-editor-audio-track" role="group" aria-label="Originalton (mit Video gekoppelt)"
+        <div ref={audioTrackRef} data-testid="video-editor-audio-track" role="group" aria-label="Originalton"
           style={{ position: "relative", height: 36, marginTop: 4, width: `${timelineZoom * 100}%`, minWidth: "100%",
             borderRadius: 8, background: "var(--color-border)", overflow: "hidden", userSelect: "none" }}>
-          {audioSegments.map((segment, index) => (
+          {audioSegments.map((segment, index) => {
+            const visual = audioResizeDraft?.id === segment.id ? audioResizeDraft : segment;
+            return (
             <div key={segment.id} data-testid={`video-editor-audio-${segment.sourceClipId}`}
+              onPointerDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); setSelectedAudioId(segment.id); }}
               data-audio-id={segment.id} data-clip-id={segment.sourceClipId} data-source-video-id={segment.sourceVideoId}
               data-source-start={segment.sourceStart} data-source-end={segment.sourceEnd}
-              title={`Originalton · Clip ${index + 1} · mit Video gekoppelt`}
+              data-timeline-start={segment.timelineStart}
+              title={`Originalton · Segment ${index + 1}`}
               style={{ position: "absolute", top: 4, bottom: 4,
-                left: `${timelineDuration > 0 ? segment.timelineStart / timelineDuration * 100 : 0}%`,
-                width: `${timelineDuration > 0 ? (segment.sourceEnd - segment.sourceStart) / timelineDuration * 100 : 0}%`,
+                left: `${timelineDuration > 0 ? visual.timelineStart / timelineDuration * 100 : 0}%`,
+                width: `${timelineDuration > 0 ? (visual.sourceEnd - visual.sourceStart) / timelineDuration * 100 : 0}%`,
+                cursor: "pointer", outline: selectedAudioId === segment.id ? "1px solid #FC2667" : undefined,
+                outlineOffset: -1,
                 boxSizing: "border-box", border: "1px solid rgba(255,255,255,0.35)", background: "#334155",
                 color: "#fff", fontSize: 12, padding: "0 12px", display: "flex", alignItems: "center",
                 gap: 6, whiteSpace: "nowrap", overflow: "hidden" }}>
@@ -3453,8 +3567,17 @@ export function VideoEditorModal({
                 <path d="M2 6h3l4-3v10l-4-3H2ZM12 5a5 5 0 0 1 0 6" />
               </svg>
               <span>Originalton · {index + 1}</span>
+              {selectedAudioId === segment.id && (["start", "end"] as const).map(edge => (
+                <button key={edge} type="button" aria-label={edge === "start" ? "Tonanfang kürzen" : "Tonende kürzen"}
+                  disabled={segment.sourceEnd - segment.sourceStart < 0.1}
+                  onPointerDown={e => handleAudioResize(e, segment, edge)}
+                  onClick={e => { e.preventDefault(); e.stopPropagation(); }}
+                  style={{ position: "absolute", top: 0, bottom: 0, [edge === "start" ? "left" : "right"]: 0,
+                    width: "min(8px, 40%)", padding: 0, border: 0, borderRadius: 2,
+                    background: "rgba(255,255,255,0.5)", cursor: "ew-resize", touchAction: "none" }} />
+              ))}
             </div>
-          ))}
+          ); })}
         </div>
 
         </div>

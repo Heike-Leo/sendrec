@@ -146,6 +146,11 @@ describe("VideoEditorModal multi-source preview", () => {
     mockApiFetch.mockClear();
     fireEvent.click(screen.getByRole("button", { name: action }));
     expect(screen.getByText(/Die Tonspur wurde unabhängig vom Video bearbeitet/)).toBeInTheDocument();
+    const warning = screen.getByTestId("video-editor-audio-guard-warning");
+    expect(warning).toHaveAttribute("role", "alert");
+    expect(warning.nextElementSibling).toContainElement(screen.getByRole("button", { name: "Teilen" }));
+    expect(warning.nextElementSibling).toContainElement(screen.getByRole("button", { name: "Clip löschen" }));
+    expect(screen.getAllByText(/Die Tonspur wurde unabhängig vom Video bearbeitet/)).toHaveLength(1);
     expect(screen.getAllByTestId(/^video-editor-clip-/)).toHaveLength(2);
     expect(screen.getByTestId("video-editor-audio-track").innerHTML).toBe(beforeAudio);
     expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
@@ -153,6 +158,167 @@ describe("VideoEditorModal multi-source preview", () => {
     view.unmount();
     expect(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT")).toHaveLength(0);
     expect(mockApiFetch.mock.calls.filter(([path]) => path === "/api/videos")).toHaveLength(0);
+  });
+
+  async function mountAudioTrim(short = false) {
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: {
+      version: 1,
+      clips: [
+        { id: "one", sourceId: "original", sourceStart: 0, sourceEnd: short ? 0.05 : 10, duration: short ? 0.05 : 10 },
+        { id: "two", sourceId: "inserted", sourceStart: 30, sourceEnd: 40, duration: 10 },
+      ],
+    } };
+    const view = render(<VideoEditorModal videoId="original" duration={20} onClose={vi.fn()} />);
+    const bar = await screen.findByTestId("video-editor-audio-one");
+    const track = screen.getByTestId("video-editor-audio-track");
+    const scroller = track.parentElement!;
+    let width = 1000;
+    vi.spyOn(track, "getBoundingClientRect").mockImplementation(() => ({ width, left: -scroller.scrollLeft, top: 0 } as DOMRect));
+    fireEvent.click(bar);
+    const start = screen.getByRole("button", { name: "Tonanfang kürzen" });
+    const end = screen.getByRole("button", { name: "Tonende kürzen" });
+    return { ...view, bar, track, scroller, start, end, setWidth: (value: number) => { width = value; } };
+  }
+
+  it.each(["start", "end"] as const)("trims audio %s with draft isolation, one undo, save/reload and clip guard", async edge => {
+    const ui = await mountAudioTrim();
+    const other = screen.getByTestId("video-editor-audio-two").outerHTML;
+    const clips = screen.getAllByTestId(/^video-editor-clip-/).map(e => e.outerHTML);
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play");
+    play.mockClear();
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause");
+    pause.mockClear();
+    mockApiFetch.mockClear();
+    fireEvent.pointerDown(ui[edge], { clientX: 500, pointerId: 1 });
+    expect(pause.mock.instances).toContain(document.querySelector("video"));
+    expect(pause.mock.instances).toContain(screen.getByTestId("video-editor-audio-preview"));
+    fireEvent.pointerMove(document, { clientX: edge === "start" ? 600 : 400, pointerId: 1 });
+    expect(ui.bar.style.width).toBe("40%");
+    expect(ui.bar).toHaveAttribute("data-source-start", "0");
+    expect(ui.bar).toHaveAttribute("data-source-end", "10");
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)); });
+    expect(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT")).toHaveLength(0);
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    const expected = { id: "audio:one", sourceClipId: "one", sourceVideoId: "original",
+      sourceStart: edge === "start" ? 2 : 0, sourceEnd: edge === "end" ? 8 : 10, timelineStart: edge === "start" ? 2 : 0 };
+    expect(ui.bar).toHaveAttribute("data-source-start", String(expected.sourceStart));
+    expect(ui.bar).toHaveAttribute("data-source-end", String(expected.sourceEnd));
+    expect(ui.bar).toHaveAttribute("data-timeline-start", String(expected.timelineStart));
+    expect(screen.getByTestId("video-editor-audio-two").outerHTML).toBe(other);
+    expect(screen.getAllByTestId(/^video-editor-clip-/).map(e => e.outerHTML)).toEqual(clips);
+    expect(play).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(true));
+    const payload = JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body);
+    expect(payload.audioSegments[0]).toEqual(expected);
+    expect(payload.audioSegments[1]).toMatchObject({ sourceVideoId: "inserted", sourceStart: 30, sourceEnd: 40, timelineStart: 10 });
+    for (const action of ["Teilen", "Video einfügen", "Clip löschen"]) {
+      if (action === "Clip löschen") fireEvent.click(screen.getByTestId("video-editor-clip-one"));
+      fireEvent.click(screen.getByRole("button", { name: action }));
+      expect(screen.getByText(/Die Tonspur wurde unabhängig/)).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(ui.bar).toHaveAttribute("data-source-start", "0");
+    expect(ui.bar).toHaveAttribute("data-source-end", "10");
+    expect(ui.bar).toHaveAttribute("data-timeline-start", "0");
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Video einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([path]) => path === "/api/videos")).toBe(true));
+    ui.unmount();
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: payload };
+    render(<VideoEditorModal videoId="original" duration={20} onClose={vi.fn()} />);
+    expect(await screen.findByTestId("video-editor-audio-one")).toHaveAttribute("data-source-end", String(expected.sourceEnd));
+    expect(screen.getByTestId("video-editor-audio-one")).toHaveAttribute("data-timeline-start", String(expected.timelineStart));
+  });
+
+  it.each(["click", "cancel", "return", "outward", "zoom", "geometry", "unmount", "undo"])("discards audio resize on %s without save/history", async reason => {
+    const ui = await mountAudioTrim();
+    mockApiFetch.mockClear();
+    fireEvent.pointerDown(ui.end, { clientX: 500, pointerId: 1 });
+    if (reason !== "click") fireEvent.pointerMove(document, { clientX: reason === "outward" ? 700 : 400, pointerId: 1 });
+    if (reason === "return") fireEvent.pointerMove(document, { clientX: 500, pointerId: 1 });
+    if (reason === "cancel") fireEvent.pointerCancel(document, { pointerId: 1 });
+    if (reason === "zoom") fireEvent.click(screen.getByRole("button", { name: "Vergrößern" }));
+    if (reason === "geometry") ui.setWidth(2000);
+    if (reason === "unmount") ui.unmount();
+    // A real earlier action makes Undo available without altering audio.
+    if (reason === "undo") {
+      fireEvent.click(screen.getByRole("button", { name: "+ Abdeckung" }));
+      fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    }
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    if (reason !== "unmount") {
+      expect(ui.bar).toHaveAttribute("data-source-end", "10");
+      expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+      ui.unmount();
+    }
+    if (reason !== "undo") expect(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT")).toHaveLength(0);
+  });
+
+  it.each(["start", "end"] as const)("clamps %s to 100 ms and disallows later re-extension", async edge => {
+    const ui = await mountAudioTrim();
+    fireEvent.pointerDown(ui[edge], { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: edge === "start" ? 5000 : -5000, pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(Number(ui.bar.dataset.sourceEnd) - Number(ui.bar.dataset.sourceStart)).toBeCloseTo(0.1, 8);
+    const before = ui.bar.outerHTML;
+    fireEvent.pointerDown(ui[edge], { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: edge === "start" ? -5000 : 5000, pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(ui.bar.outerHTML).toBe(before);
+  });
+
+  it("keeps sub-100ms legacy audio unchanged and handles disabled", async () => {
+    const ui = await mountAudioTrim(true);
+    expect(ui.start).toBeDisabled();
+    expect(ui.end).toBeDisabled();
+    expect(ui.bar).toHaveAttribute("data-source-end", "0.05");
+  });
+
+  it("uses measured zoom width and includes scroll delta without double-counting zoom", async () => {
+    const ui = await mountAudioTrim();
+    fireEvent.click(screen.getByRole("button", { name: "Vergrößern" }));
+    ui.setWidth(2000);
+    fireEvent.pointerDown(ui.start, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 600, pointerId: 1 });
+    ui.scroller.scrollLeft = 100;
+    fireEvent.scroll(ui.scroller);
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(ui.bar).toHaveAttribute("data-source-start", "2");
+    expect(ui.bar).toHaveAttribute("data-timeline-start", "2");
+    expect(Number(ui.bar.dataset.timelineStart) + Number(ui.bar.dataset.sourceEnd) - Number(ui.bar.dataset.sourceStart)).toBe(10);
+  });
+
+  it("keeps drafts out of an already pending save and does not resync audio on pointermove", async () => {
+    const ui = await mountAudioTrim();
+    fireEvent.click(screen.getByRole("button", { name: "+ Abdeckung" }));
+    const sync = vi.spyOn(EditorAudioPreview.prototype, "sync");
+    fireEvent.pointerDown(ui.start, { clientX: 500, pointerId: 1 });
+    sync.mockClear();
+    fireEvent.pointerMove(document, { clientX: 600, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 650, pointerId: 1 });
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(true));
+    const payload = JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body);
+    expect(payload.audioSegments[0]).toMatchObject({ sourceStart: 0, sourceEnd: 10, timelineStart: 0 });
+    expect(sync).not.toHaveBeenCalled();
+    fireEvent.pointerCancel(document, { pointerId: 1 });
+    expect(ui.bar.style.left).toBe("0%");
+    sync.mockRestore();
+  });
+
+  it("discards a stale audio gesture when a coupled clip action changes the segment state", async () => {
+    const ui = await mountAudioTrim();
+    fireEvent.pointerDown(ui.end, { clientX: 500, pointerId: 1 });
+    fireEvent.pointerMove(document, { clientX: 400, pointerId: 1 });
+    fireEvent.click(screen.getByTestId("video-editor-clip-two"));
+    fireEvent.click(screen.getByRole("button", { name: "Clip löschen" }));
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(ui.bar).toHaveAttribute("data-source-end", "10");
+    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
   });
 
   async function mountAudioPreview(segments: Array<{ id: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number }>) {
