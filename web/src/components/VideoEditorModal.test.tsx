@@ -1,10 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { VideoEditorModal } from "./VideoEditorModal";
+import { VideoEditorModal, isAudioStillCoupled } from "./VideoEditorModal";
 import { EditorAudioPreview } from "./editorAudioPreview";
 
 const mockApiFetch = vi.fn();
+
+describe("audio coupling guard", () => {
+  const clips = [
+    { id: "one", sourceVideoId: "original", start: 2, end: 7 },
+    { id: "two", sourceVideoId: "original", start: 10, end: 15 },
+  ];
+  const audio = [
+    { id: "a", sourceClipId: "one", sourceVideoId: "original", sourceStart: 2, sourceEnd: 7, timelineStart: 0 },
+    { id: "b", sourceClipId: "two", sourceVideoId: "original", sourceStart: 10, sourceEnd: 15, timelineStart: 5 },
+  ];
+  it("matches by clip ID, ignoring audio IDs and storage order", () => {
+    expect(isAudioStillCoupled(clips, [...audio].reverse().map(a => ({ ...a, id: `new-${a.id}` })))).toBe(true);
+  });
+  it.each([
+    { timelineStart: 0.01 }, { sourceStart: 2.01 }, { sourceEnd: 6.99 },
+    { sourceVideoId: "inserted" }, { sourceClipId: "other" }, { sourceEnd: NaN },
+  ])("rejects independently changed geometry/source: %j", (change) => {
+    expect(isAudioStillCoupled(clips, [{ ...audio[0], ...change }, audio[1]])).toBe(false);
+  });
+  it("rejects empty, missing, extra and duplicate segment assignments", () => {
+    for (const segments of [[], [audio[0]], [...audio, audio[0]], [audio[0], audio[0]]]) {
+      expect(isAudioStillCoupled(clips, segments)).toBe(false);
+    }
+  });
+  it("tolerates arithmetic rounding and recomputes after restoring an undo snapshot", () => {
+    const snapshot = audio.map(a => ({ ...a }));
+    expect(isAudioStillCoupled(clips, audio.map(a => ({ ...a, timelineStart: a.timelineStart + 1e-8 })))).toBe(true);
+    expect(isAudioStillCoupled(clips, [{ ...audio[0], timelineStart: 0.1 }, audio[1]])).toBe(false);
+    expect(isAudioStillCoupled(clips, snapshot)).toBe(true);
+  });
+});
 
 function expectCoupledAudio() {
   const track = screen.getByTestId("video-editor-audio-track");
@@ -90,6 +121,38 @@ describe("VideoEditorModal multi-source preview", () => {
       }
       return Promise.reject(new Error(`Unexpected API call: ${path}`));
     });
+  });
+
+  it.each(["Teilen", "Video einfügen", "Clip löschen"])("blocks %s for independent audio without history or saves", async (action) => {
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: {
+      version: 1,
+      clips: [
+        { id: "one", sourceId: "original", sourceStart: 0, sourceEnd: 5, duration: 5 },
+        { id: "two", sourceId: "original", sourceStart: 5, sourceEnd: 10, duration: 5 },
+      ],
+      audioSegments: [
+        { id: "a", sourceClipId: "one", sourceVideoId: "original", sourceStart: 0, sourceEnd: 4, timelineStart: 1 },
+        { id: "b", sourceClipId: "two", sourceVideoId: "original", sourceStart: 5, sourceEnd: 10, timelineStart: 5 },
+      ],
+    } };
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    const first = await screen.findByTestId("video-editor-clip-one");
+    fireEvent.click(first);
+    const track = screen.getByTestId("video-editor-timeline");
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
+    fireEvent.click(track, { clientX: 250 });
+    const beforeAudio = screen.getByTestId("video-editor-audio-track").innerHTML;
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    mockApiFetch.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: action }));
+    expect(screen.getByText(/Die Tonspur wurde unabhängig vom Video bearbeitet/)).toBeInTheDocument();
+    expect(screen.getAllByTestId(/^video-editor-clip-/)).toHaveLength(2);
+    expect(screen.getByTestId("video-editor-audio-track").innerHTML).toBe(beforeAudio);
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)); });
+    view.unmount();
+    expect(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT")).toHaveLength(0);
+    expect(mockApiFetch.mock.calls.filter(([path]) => path === "/api/videos")).toHaveLength(0);
   });
 
   async function mountAudioPreview(segments: Array<{ id: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number }>) {

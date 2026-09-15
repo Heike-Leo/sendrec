@@ -38,6 +38,22 @@ function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[] = []):
   });
 }
 
+export function isAudioStillCoupled(clips: EditorClip[], audioSegments: EditorAudioSegment[]): boolean {
+  const expected = coupledAudio(clips);
+  if (expected.length !== audioSegments.length) return false;
+  const byClip = new Map(audioSegments.map((segment) => [segment.sourceClipId, segment]));
+  if (byClip.size !== audioSegments.length) return false;
+  // One microsecond tolerates arithmetic noise, not meaningful audio edits.
+  const sameTime = (a: number, b: number) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 0.000001;
+  return expected.every((segment) => {
+    const actual = byClip.get(segment.sourceClipId);
+    return actual !== undefined && actual.sourceVideoId === segment.sourceVideoId &&
+      sameTime(actual.sourceStart, segment.sourceStart) &&
+      sameTime(actual.sourceEnd, segment.sourceEnd) &&
+      sameTime(actual.timelineStart, segment.timelineStart);
+  });
+}
+
 interface EditorCoverOverlay {
   id: string;
   x: number;
@@ -975,6 +991,7 @@ export function VideoEditorModal({
   ]);
 
   async function handleOpenInsertPicker() {
+    if (!allowCoupledClipAction()) return;
     setShowInsertPicker(true);
     setLoadingLibrary(true);
     setError(null);
@@ -1002,6 +1019,7 @@ export function VideoEditorModal({
   }
 
   function handleInsertSelectedVideo() {
+    if (!allowCoupledClipAction()) return;
     if (!selectedInsertVideo) {
       setError("Bitte zuerst ein Video auswählen.");
       return;
@@ -1097,6 +1115,12 @@ export function VideoEditorModal({
     setError(null);
   }
 
+  function allowCoupledClipAction() {
+    if (isAudioStillCoupled(clips, audioSegments)) return true;
+    setError("Die Tonspur wurde unabhängig vom Video bearbeitet. Änderungen an der Videostruktur würden diese Audiobearbeitung überschreiben.");
+    return false;
+  }
+
   function rememberEditorState() {
     setEditorHistory((history) => [
       ...history.slice(-49),
@@ -1138,6 +1162,7 @@ export function VideoEditorModal({
   }
 
   function handleSplit() {
+    if (!allowCoupledClipAction()) return;
     const minimumDistance = 0.1;
 
     const position =
@@ -1771,6 +1796,7 @@ export function VideoEditorModal({
   }
 
   function handleDeleteSelectedClip() {
+    if (!allowCoupledClipAction()) return;
     if (!selectedClipId) {
       setError("Bitte zuerst einen Clip auswählen.");
       return;
