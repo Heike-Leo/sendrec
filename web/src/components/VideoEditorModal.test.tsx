@@ -18,6 +18,12 @@ describe("audio coupling guard", () => {
   it("matches by clip ID, ignoring audio IDs and storage order", () => {
     expect(isAudioStillCoupled(clips, [...audio].reverse().map(a => ({ ...a, id: `new-${a.id}` })))).toBe(true);
   });
+  it("treats only muted:true as independent, without overlooking changed geometry after unmute", () => {
+    expect(isAudioStillCoupled(clips, audio)).toBe(true);
+    expect(isAudioStillCoupled(clips, audio.map(a => ({ ...a, muted: false })))).toBe(true);
+    expect(isAudioStillCoupled(clips, [{ ...audio[0], muted: true }, audio[1]])).toBe(false);
+    expect(isAudioStillCoupled(clips, [{ ...audio[0], muted: false, timelineStart: 1 }, audio[1]])).toBe(false);
+  });
   it.each([
     { timelineStart: 0.01 }, { sourceStart: 2.01 }, { sourceEnd: 6.99 },
     { sourceVideoId: "inserted" }, { sourceClipId: "other" }, { sourceEnd: NaN },
@@ -83,7 +89,7 @@ let editorState: typeof emptyEditorState | {
         opacity?: number;
         text?: string;
       }>;
-      audioSegments?: Array<{ id: string; sourceClipId: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number }>;
+      audioSegments?: Array<{ id: string; sourceClipId: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number; muted?: boolean }>;
       annotations?: Array<{ id: string; type: "arrow" | "circle" | "symbol" | "line"; symbol?: string; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number; color?: string }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
@@ -589,12 +595,15 @@ describe("VideoEditorModal multi-source preview", () => {
   it("hides deletion for stale selection after the selected audio disappears through a coupled clip edit", async () => {
     const ui = await mountAudioTrim();
     const oldButton = screen.getByRole("button", { name: "Ton löschen" });
+    const oldToggle = screen.getByRole("button", { name: "Ton aus" });
     const clip = screen.getByTestId("video-editor-clip-one");
     vi.spyOn(clip.parentElement!, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
     await act(async () => { fireEvent.click(clip, { clientX: 100 }); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Clip löschen" })); });
     expect(screen.queryByRole("button", { name: "Ton löschen" })).not.toBeInTheDocument();
     fireEvent.click(oldButton);
+    expect(screen.queryByRole("button", { name: "Ton aus" })).not.toBeInTheDocument();
+    fireEvent.click(oldToggle);
     expect(ui.track.children).toHaveLength(1);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" })); });
     expect(ui.track.children).toHaveLength(2);
@@ -659,7 +668,100 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(ui.video.muted).toBe(true);
   });
 
-  async function mountAudioPreview(segments: Array<{ id: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number }>) {
+  it.each([true, false])("toggles selected audio only, persists/reloads muted:%s and restores exact undo state", async muted => {
+    const ui = await mountAudioMove([moveAudio[0], { ...moveAudio[1], sourceVideoId: "original" }]);
+    expect(screen.queryByRole("button", { name: "Ton aus" })).not.toBeInTheDocument();
+    fireEvent.click(ui.bar);
+    const clips = screen.getAllByTestId(/^video-editor-clip-/).map(e => e.outerHTML);
+    const other = screen.getByTestId("video-editor-audio-two").outerHTML;
+    if (!muted) fireEvent.click(screen.getByRole("button", { name: "Ton aus" }));
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause"); pause.mockClear();
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play"); play.mockClear();
+    mockApiFetch.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: muted ? "Ton aus" : "Ton an" }));
+    expect(pause.mock.instances).toContain(document.querySelector("video"));
+    expect(pause.mock.instances).toContain(screen.getByTestId("video-editor-audio-preview"));
+    expect(play).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: muted ? "Ton an" : "Ton aus" })).toBeEnabled();
+    expect(ui.bar.textContent?.includes("stumm")).toBe(muted);
+    expect(screen.getByTestId("video-editor-audio-two").outerHTML).toBe(other);
+    expect(screen.getAllByTestId(/^video-editor-clip-/).map(e => e.outerHTML)).toEqual(clips);
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(true));
+    const payload = JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body);
+    expect(payload.audioSegments).toEqual([{ ...moveAudio[0], muted }, { ...moveAudio[1], sourceVideoId: "original" }]);
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getByRole("button", { name: muted ? "Ton aus" : "Ton an" })).toBeEnabled();
+    if (!muted) fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    mockApiFetch.mockClear();
+    ui.unmount();
+    expect(JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body).audioSegments[0]).toEqual(moveAudio[0]);
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: payload };
+    render(<VideoEditorModal videoId="original" duration={20} onClose={vi.fn()} />);
+    const bar = await screen.findByTestId("video-editor-audio-one");
+    fireEvent.click(bar);
+    expect(screen.getByRole("button", { name: muted ? "Ton an" : "Ton aus" })).toBeEnabled();
+    expect(bar.textContent?.includes("stumm")).toBe(muted);
+  });
+
+  it.each(["move", "start", "end"] as const)("locks mute during %s from pointerdown and retains mute through editing/deletion", async mode => {
+    const ui = await mountAudioMove();
+    fireEvent.click(ui.bar);
+    fireEvent.click(screen.getByRole("button", { name: "Ton aus" }));
+    const toggle = screen.getByRole("button", { name: "Ton an" });
+    const target = mode === "move" ? ui.bar : screen.getByRole("button", { name: mode === "start" ? "Tonanfang kürzen" : "Tonende kürzen" });
+    fireEvent.pointerDown(target, { clientX: 500, pointerId: 1 });
+    expect(toggle).toBeDisabled();
+    fireEvent.click(toggle);
+    fireEvent.pointerMove(document, { clientX: mode === "end" ? 450 : 550, pointerId: 1 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+    expect(toggle).toBeEnabled();
+    expect(ui.bar).toHaveTextContent("stumm");
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(true));
+    expect(JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body).audioSegments[0].muted).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Ton löschen" }));
+    expect(screen.queryByTestId("video-editor-audio-one")).not.toBeInTheDocument();
+    for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    expect(screen.getByTestId("video-editor-audio-one")).not.toHaveTextContent("stumm");
+  });
+
+  it("protects coupled clip edits after mute and lifts the guard on unmute or undo", async () => {
+    const ui = await mountAudioTrim();
+    fireEvent.click(screen.getByRole("button", { name: "Ton aus" }));
+    const clip = screen.getByTestId("video-editor-clip-one");
+    vi.spyOn(clip.parentElement!, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
+    await act(async () => { fireEvent.click(clip, { clientX: 100 }); });
+    for (const action of ["Teilen", "Video einfügen", "Clip löschen"]) {
+      fireEvent.click(screen.getByRole("button", { name: action }));
+      expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
+    }
+    expect(ui.track.children).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Ton an" }));
+    fireEvent.click(screen.getByRole("button", { name: "Teilen" }));
+    expect(screen.getAllByTestId(/^video-editor-clip-/)).toHaveLength(3);
+    for (let i = 0; i < 3; i++) await act(async () => { fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" })); });
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Video einfügen" }));
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([p]) => p === "/api/videos")).toBe(true));
+  });
+
+  it("keeps the only muted segment visible while play stays silent and video remains muted", async () => {
+    const ui = await mountAudioPreview([{ id: "only", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0 }]);
+    fireEvent.click(screen.getByTestId("video-editor-audio-clip-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Ton aus" }));
+    const play = vi.spyOn(ui.audio, "play"); play.mockClear();
+    fireEvent.play(ui.video);
+    expect(play).not.toHaveBeenCalled();
+    expect(ui.video.muted).toBe(true);
+    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Ton an" }));
+    expect(play).not.toHaveBeenCalled();
+    fireEvent.play(ui.video);
+    await waitFor(() => expect(play).toHaveBeenCalled());
+  });
+
+  async function mountAudioPreview(segments: Array<{ id: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number; muted?: boolean }>) {
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: {
       version: 1,
       clips: [{ id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],

@@ -95,6 +95,37 @@ func TestAudioRenderValidationAndSources(t *testing.T) {
 	}
 }
 
+func TestAudioMuteGraph(t *testing.T) {
+	clips := []editClip{{ID: "c", SourceID: "main", SourceEnd: 3, Duration: 3}}
+	sources := map[string]sourceVideo{"main": {HasAudio: true}}
+	indexes := map[string]int{"main": 0}
+	audio := []editorAudioSegment{
+		{ID: "a", SourceVideoID: "main", SourceEnd: 1},
+		{ID: "b", SourceVideoID: "main", SourceStart: 1, SourceEnd: 2, TimelineStart: 1, Muted: true},
+		{ID: "c", SourceVideoID: "main", SourceStart: 2, SourceEnd: 3, TimelineStart: 2},
+	}
+	before := append([]editorAudioSegment{}, audio...)
+	graph := strings.Join(timelineAudioFilters(clips, &audio, indexes, sources), ";")
+	if strings.Count(graph, "[0:a:0]") != 2 || !strings.Contains(graph, "anullsrc=r=48000:cl=stereo,atrim=end_sample=48000") || !strings.Contains(graph, "atrim=start=2.000000000") {
+		t.Fatal(graph)
+	}
+	if !reflect.DeepEqual(before, audio) {
+		t.Fatal("mute changed geometry")
+	}
+	only := []editorAudioSegment{{SourceVideoID: "main", SourceEnd: 3, Muted: true}}
+	graph = strings.Join(timelineAudioFilters(clips, &only, indexes, sources), ";")
+	if strings.Contains(graph, ":a:0]") || !strings.Contains(graph, "atrim=end_sample=144000") {
+		t.Fatal(graph)
+	}
+	for i := range audio {
+		audio[i].Muted = false
+	}
+	graph = strings.Join(timelineAudioFilters(clips, &audio, indexes, sources), ";")
+	if strings.Count(graph, "[0:a:0]") != 3 {
+		t.Fatal("unmute failed", graph)
+	}
+}
+
 func TestAudioTimelineFFmpegIntegration(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg unavailable")
@@ -128,10 +159,16 @@ func TestAudioTimelineFFmpegIntegration(t *testing.T) {
 		{ID: "silent", SourceClipID: "c", SourceVideoID: "silent", SourceEnd: .4, TimelineStart: 1.8},
 	}
 	empty := []editorAudioSegment{}
+	muted := []editorAudioSegment{
+		{ID: "a", SourceClipID: "c", SourceVideoID: "main", SourceEnd: 1},
+		{ID: "b", SourceClipID: "c", SourceVideoID: "main", SourceStart: 1, SourceEnd: 2, TimelineStart: 1, Muted: true},
+		{ID: "c", SourceClipID: "c", SourceVideoID: "main", SourceStart: 2, SourceEnd: 4, TimelineStart: 2},
+	}
+	allMuted := []editorAudioSegment{{ID: "only", SourceClipID: "c", SourceVideoID: "main", SourceEnd: 4, Muted: true}}
 	for _, tc := range []struct {
 		name  string
 		audio *[]editorAudioSegment
-	}{{"segments", &segments}, {"empty", &empty}, {"legacy", nil}} {
+	}{{"segments", &segments}, {"empty", &empty}, {"legacy", nil}, {"muted", &muted}, {"all-muted", &allMuted}} {
 		t.Run(tc.name, func(t *testing.T) {
 			output := filepath.Join(dir, tc.name+".mp4")
 			run(buildAnnotatedTimelineRenderArgs(inputs, clips, indexes, sources, output, nil, nil, tc.audio)...)
@@ -162,6 +199,9 @@ func TestAudioTimelineFFmpegIntegration(t *testing.T) {
 				rms, freq := measure(at)
 				want := 0.
 				if tc.name == "legacy" {
+					want = 440
+				}
+				if tc.name == "muted" && (at < 1 || at >= 2) {
 					want = 440
 				}
 				if tc.name == "segments" {

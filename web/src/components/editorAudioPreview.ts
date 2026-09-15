@@ -1,5 +1,6 @@
 // Playback-only view of the existing persisted segments. No separate timeline state.
 interface AudioSegment {
+  muted?: boolean;
   id: string;
   sourceVideoId: string;
   sourceStart: number;
@@ -67,7 +68,7 @@ export class EditorAudioPreview {
       item.sourceEnd > item.sourceStart && time >= item.timelineStart &&
       time < item.timelineStart + item.sourceEnd - item.sourceStart,
     );
-    if (active.length !== 1 || active[0].sourceVideoId !== this.source ||
+    if (active.length !== 1 || active[0].muted === true || active[0].sourceVideoId !== this.source ||
       JSON.stringify(active[0]) !== JSON.stringify(this.segment)) return null;
     const target = active[0].sourceStart + time - active[0].timelineStart;
     return Number.isFinite(target) && Number.isFinite(this.audio.currentTime) ? target : null;
@@ -163,7 +164,7 @@ export class EditorAudioPreview {
     const previous = this.segment;
     const wasPlaying = this.playing;
     this.playing = playing;
-    if (!segment) {
+    if (!segment || segment.muted === true) {
       this.stop();
       return;
     }

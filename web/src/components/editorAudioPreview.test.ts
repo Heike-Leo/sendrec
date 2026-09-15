@@ -14,7 +14,7 @@ describe("independent audio preview", () => {
   let audio: HTMLAudioElement;
   let preview: EditorAudioPreview;
   let time: number;
-  let segments: typeof first[];
+  let segments: (typeof first & { muted?: boolean })[];
   let url: ReturnType<typeof vi.fn<(id: string) => string | Promise<string>>>;
   let error: ReturnType<typeof vi.fn<(message: string | null) => void>>;
   function metadata() { audio.dispatchEvent(new Event("loadedmetadata")); }
@@ -40,6 +40,41 @@ describe("independent audio preview", () => {
     expect(audio.src).toBe("https://media.example/one.mp4");
     expect(audio.currentTime).toBe(3.75);
     expect(audio.play).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, false, true])("handles muted=%s without loading a muted source", muted => {
+    segments[0] = { ...first, muted };
+    preview.sync(true, true);
+    metadata();
+    expect(audio.play).toHaveBeenCalledTimes(muted === true ? 0 : 1);
+    expect(url).toHaveBeenCalledTimes(muted === true ? 0 : 1);
+    expect(segments).toHaveLength(2);
+  });
+
+  it.each(["url", "metadata", "play"])("mute invalidates pending %s and the next audible same-source segment starts correctly", async stage => {
+    const pendingUrl = deferred<string>();
+    const pendingPlay = deferred<void>();
+    if (stage === "url") url.mockReturnValueOnce(pendingUrl.promise);
+    if (stage === "play") vi.mocked(audio.play).mockReturnValueOnce(pendingPlay.promise);
+    segments[1] = { ...second, sourceVideoId: "one" };
+    preview.sync(true);
+    if (stage === "play") metadata();
+    segments[0] = { ...first, muted: true };
+    preview.sync(true, true);
+    vi.mocked(audio.play).mockClear();
+    vi.mocked(audio.pause).mockClear();
+    pendingUrl.resolve("https://media.example/one.mp4");
+    pendingPlay.resolve();
+    await Promise.all([pendingUrl.promise, pendingPlay.promise]);
+    metadata();
+    audio.dispatchEvent(new Event("playing"));
+    expect(audio.play).not.toHaveBeenCalled();
+    expect(audio.pause).toHaveBeenCalled();
+    time = 2.5;
+    preview.sync(true);
+    metadata();
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    expect(audio.currentTime).toBe(10.5);
   });
 
   it("pause invalidates an outstanding URL request", async () => {
@@ -230,7 +265,7 @@ describe("audio preview drift control", () => {
   let preview: EditorAudioPreview;
   let audio: HTMLAudioElement;
   let time: number;
-  let segments: typeof first[];
+  let segments: (typeof first & { muted?: boolean })[];
   let videoReady: boolean;
   let state: { paused: boolean; seeking: boolean; ended: boolean; readyState: number; currentSrc: string; error: MediaError | null };
   let hidden: ReturnType<typeof vi.fn<() => boolean>>;
@@ -279,6 +314,14 @@ describe("audio preview drift control", () => {
 
   it.each([0, 0.099, -0.099, 0.1, -0.1])("never seeks within tolerance (%s seconds)", (value) => {
     drift(value);
+    preview.checkDrift(0);
+    preview.checkDrift(250);
+    expect(writeTime).not.toHaveBeenCalled();
+  });
+
+  it("ignores drift once the active segment is muted, even before transport sync", () => {
+    drift(0.5);
+    segments[0] = { ...segments[0], muted: true };
     preview.checkDrift(0);
     preview.checkDrift(250);
     expect(writeTime).not.toHaveBeenCalled();

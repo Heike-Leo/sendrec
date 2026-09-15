@@ -60,6 +60,7 @@ type editorAnnotation struct {
 }
 
 type editorAudioSegment struct {
+	Muted         bool    `json:"muted"`
 	ID            string  `json:"id"`
 	SourceClipID  string  `json:"sourceClipId"`
 	SourceVideoID string  `json:"sourceVideoId"`

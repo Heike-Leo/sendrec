@@ -37,8 +37,21 @@ func (a audioJSONArgument) Match(value any) bool {
 }
 
 func TestAudioSegmentsPersistence(t *testing.T) {
-	for _, audio := range []string{"", "[]", `[{"id":"audio:a","sourceClipId":"a","sourceVideoId":"video-main","sourceStart":0,"sourceEnd":20,"timelineStart":0}]`} {
+	legacy := `[{"id":"audio:a","sourceClipId":"a","sourceVideoId":"video-main","sourceStart":0,"sourceEnd":20,"timelineStart":0}]`
+	for _, audio := range []string{"", "[]", legacy, strings.Replace(legacy, `"id":`, `"muted":true,"id":`, 1), strings.Replace(legacy, `"id":`, `"muted":false,"id":`, 1)} {
 		t.Run("audio="+audio, func(t *testing.T) {
+			expected := audio
+			if audio != "" {
+				var normalized []editorAudioSegment
+				if err := json.Unmarshal([]byte(audio), &normalized); err != nil {
+					t.Fatal(err)
+				}
+				encoded, err := json.Marshal(normalized)
+				if err != nil {
+					t.Fatal(err)
+				}
+				expected = string(encoded)
+			}
 			mock, err := pgxmock.NewPool()
 			if err != nil {
 				t.Fatal(err)
@@ -50,7 +63,7 @@ func TestAudioSegmentsPersistence(t *testing.T) {
 				body += `,"audioSegments":` + audio
 			}
 			body += `}`
-			mock.ExpectExec(`UPDATE videos SET edit_timeline = \$1, updated_at = now\(\)`).WithArgs(audioJSONArgument{audio}, "video-main", testUserID).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+			mock.ExpectExec(`UPDATE videos SET edit_timeline = \$1, updated_at = now\(\)`).WithArgs(audioJSONArgument{expected}, "video-main", testUserID).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 			mock.ExpectQuery(`SELECT COALESCE\(edit_timeline`).WithArgs("video-main", testUserID).WillReturnRows(pgxmock.NewRows([]string{"edit_timeline", "edit_render_status", "edit_render_error", "edit_render_video_id"}).AddRow([]byte(body), "none", nil, nil))
 			router := chi.NewRouter()
 			router.With(newAuthMiddleware()).Put("/api/videos/{id}/editor", handler.SaveEditorTimeline)
@@ -68,7 +81,7 @@ func TestAudioSegmentsPersistence(t *testing.T) {
 			if err := json.Unmarshal(loaded.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}
-			if !(audioJSONArgument{audio}).Match(response.Timeline) {
+			if !(audioJSONArgument{expected}).Match(response.Timeline) {
 				t.Fatal("audio field changed", loaded.Body.String())
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {

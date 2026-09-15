@@ -121,7 +121,7 @@ func timelineAudioFilters(clips []editClip, stored *[]editorAudioSegment, indexe
 		}
 		silence(start - cursor)
 		count := end - start
-		if sources[s.SourceVideoID].HasAudio {
+		if sources[s.SourceVideoID].HasAudio && !s.Muted {
 			sourceStart := s.SourceStart + math.Max(0, float64(start)/48000-s.TimelineStart)
 			appendPart(fmt.Sprintf("[%d:a:0]atrim=start=%.9f:end=%.9f,asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS", indexes[s.SourceVideoID], sourceStart, s.SourceEnd, count, count))
 		} else {

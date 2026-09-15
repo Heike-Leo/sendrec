@@ -13,6 +13,7 @@ interface EditorClip {
 }
 
 interface EditorAudioSegment {
+  muted?: boolean;
   id: string;
   sourceClipId: string;
   sourceVideoId: string;
@@ -47,7 +48,7 @@ export function isAudioStillCoupled(clips: EditorClip[], audioSegments: EditorAu
   const sameTime = (a: number, b: number) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 0.000001;
   return expected.every((segment) => {
     const actual = byClip.get(segment.sourceClipId);
-    return actual !== undefined && actual.sourceVideoId === segment.sourceVideoId &&
+    return actual !== undefined && actual.muted !== true && actual.sourceVideoId === segment.sourceVideoId &&
       sameTime(actual.sourceStart, segment.sourceStart) &&
       sameTime(actual.sourceEnd, segment.sourceEnd) &&
       sameTime(actual.timelineStart, segment.timelineStart);
@@ -1274,6 +1275,17 @@ export function VideoEditorModal({
     rememberEditorState();
     setAudioSegments(previous => previous.filter(segment => segment.id !== selectedAudioId));
     setSelectedAudioId(null);
+  }
+
+  function handleToggleAudioMute() {
+    if (cancelAudioResizeRef.current || !selectedAudioId) return;
+    const selected = audioSegments.find(segment => segment.id === selectedAudioId);
+    if (!selected) return;
+    pausePreview();
+    videoRef.current?.pause();
+    rememberEditorState();
+    setAudioSegments(previous => previous.map(segment => segment.id === selected.id
+      ? { ...segment, muted: selected.muted !== true } : segment));
   }
 
   function handleUndo() {
@@ -3614,7 +3626,7 @@ export function VideoEditorModal({
                 strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                 <path d="M2 6h3l4-3v10l-4-3H2ZM12 5a5 5 0 0 1 0 6" />
               </svg>
-              <span>Originalton · {index + 1}</span>
+              <span>Originalton · {index + 1}{segment.muted === true ? " · stumm" : ""}</span>
               {selectedAudioId === segment.id && (["start", "end"] as const).map(edge => (
                 <button key={edge} type="button" data-audio-resize-handle={edge} aria-label={edge === "start" ? "Tonanfang kürzen" : "Tonende kürzen"}
                   disabled={segment.sourceEnd - segment.sourceStart < 0.1}
@@ -3630,7 +3642,14 @@ export function VideoEditorModal({
 
         </div>
 
-        <div style={{ minHeight: 36, display: "flex", alignItems: "center" }}>
+        <div style={{ minHeight: 36, display: "flex", alignItems: "center", gap: 6 }}>
+          {audioSegments.some(segment => segment.id === selectedAudioId) && (
+            <button type="button" className="video-editor-tool-button" onClick={handleToggleAudioMute}
+              disabled={audioGestureActive}
+              style={{ width: "auto", padding: "0 8px" }}>
+              {audioSegments.find(segment => segment.id === selectedAudioId)?.muted === true ? "Ton an" : "Ton aus"}
+            </button>
+          )}
           {audioSegments.some(segment => segment.id === selectedAudioId) && (
             <button type="button" className="video-editor-tool-button" onClick={handleDeleteAudio}
               disabled={audioGestureActive}
