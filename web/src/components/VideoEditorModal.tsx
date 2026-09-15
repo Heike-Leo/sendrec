@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
 import { formatDuration } from "../utils/format";
 import type { Video } from "../types/video";
+import { EditorAudioPreview } from "./editorAudioPreview";
 
 interface EditorClip {
   id: string;
@@ -238,11 +239,19 @@ export function VideoEditorModal({
   const [error, setError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const audioPreviewRef = useRef<EditorAudioPreview | null>(null);
+  const previewPlayingRef = useRef(false);
+  const videoSwitchPendingRef = useRef(false);
+  const videoBufferingRef = useRef(false);
+  const internalPauseRef = useRef(false);
+  const [audioPreviewError, setAudioPreviewError] = useState<string | null>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const nextClipIdRef = useRef(2);
   const timelineRef = useRef<HTMLDivElement>(null);
   const draggingTrimRef = useRef<"start" | "end" | null>(null);
   const videoUrlsRef = useRef<Record<string, string>>({});
+  const videoUrlRequestsRef = useRef<Record<string, Promise<string>>>({});
   const activeSourceVideoIdRef = useRef(videoId);
   const activeClipIdRef = useRef("clip-1");
   const sourceSwitchGenerationRef = useRef(0);
@@ -291,18 +300,82 @@ export function VideoEditorModal({
     );
   }
 
-  async function loadVideoUrl(sourceVideoId: string) {
+  function loadVideoUrl(sourceVideoId: string): string | Promise<string> {
     if (videoUrlsRef.current[sourceVideoId]) {
       return videoUrlsRef.current[sourceVideoId];
     }
 
-    const res = await apiFetch<{ downloadUrl: string }>(`/api/videos/${sourceVideoId}/download`);
-    if (!res?.downloadUrl) {
-      throw new Error("Video konnte nicht geladen werden.");
+    if (!videoUrlRequestsRef.current[sourceVideoId]) {
+      videoUrlRequestsRef.current[sourceVideoId] = apiFetch<{ downloadUrl: string }>(`/api/videos/${sourceVideoId}/download`)
+        .then((res) => {
+          if (!res?.downloadUrl) throw new Error("Video konnte nicht geladen werden.");
+          videoUrlsRef.current[sourceVideoId] = res.downloadUrl;
+          return res.downloadUrl;
+        }).finally(() => { delete videoUrlRequestsRef.current[sourceVideoId]; });
     }
+    return videoUrlRequestsRef.current[sourceVideoId];
+  }
 
-    videoUrlsRef.current[sourceVideoId] = res.downloadUrl;
-    return res.downloadUrl;
+  function previewTimelineTime() {
+    const clip = clips.find((item) => item.id === activeClipIdRef.current);
+    const offset = clip ? timelineStartForClip(clip.id) : null;
+    if (!clip || offset === null || !videoRef.current) return timelinePlayheadTime;
+    return offset + Math.max(0, Math.min(clip.end - clip.start, videoRef.current.currentTime - clip.start));
+  }
+
+  function tickAudioPreview() {
+    const video = videoRef.current;
+    const clip = clips.find((item) => item.id === activeClipIdRef.current);
+    if (video && !video.paused && clip && video.currentTime >= clip.end) {
+      advancePreviewToNextClip();
+      return;
+    }
+    audioPreviewRef.current?.sync(true);
+  }
+
+  const audioInputsRef = useRef({ audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview });
+  audioInputsRef.current = { audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview };
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const preview = new EditorAudioPreview(audio, {
+      segments: () => audioInputsRef.current.audioSegments,
+      time: () => audioInputsRef.current.previewTimelineTime(),
+      url: (id) => audioInputsRef.current.loadVideoUrl(id),
+      error: setAudioPreviewError,
+    });
+    audioPreviewRef.current = preview;
+    // Segment-boundary detection only; no periodic drift correction or repeated seeking.
+    const timer = window.setInterval(() => {
+      if (previewPlayingRef.current && !videoSwitchPendingRef.current && !videoBufferingRef.current && !videoRef.current?.seeking) {
+        audioInputsRef.current.tickAudioPreview();
+      }
+    }, 25);
+    return () => {
+      window.clearInterval(timer);
+      preview.dispose();
+      audioPreviewRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!videoSwitchPendingRef.current) audioPreviewRef.current?.sync(previewPlayingRef.current, true);
+  }, [audioSegments, videoUrl]);
+
+  function pausePreview() {
+    previewPlayingRef.current = false;
+    videoBufferingRef.current = false;
+    audioPreviewRef.current?.stop();
+    ++sourceSwitchGenerationRef.current;
+    cancelPendingSourceLoadRef.current?.();
+    videoSwitchPendingRef.current = false;
+    sourceTransitionPendingRef.current = false;
+  }
+
+  function closeEditor() {
+    pausePreview();
+    videoRef.current?.pause();
+    onClose();
   }
 
   async function switchPreviewSource(
@@ -310,6 +383,7 @@ export function VideoEditorModal({
     sourceTime: number,
     clipId?: string,
     resumePlayback?: boolean,
+    continuousTransition = false,
   ) {
     const video = videoRef.current;
     if (!video) return;
@@ -318,6 +392,10 @@ export function VideoEditorModal({
     cancelPendingSourceLoadRef.current?.();
     cancelPendingSourceLoadRef.current = null;
     const shouldResume = resumePlayback ?? !video.paused;
+    const preservePlayback = continuousTransition && !video.paused && activeSourceVideoIdRef.current === sourceVideoId;
+    previewPlayingRef.current = shouldResume;
+    videoSwitchPendingRef.current = true;
+    if (!preservePlayback) audioPreviewRef.current?.stop();
 
     try {
       const url = await loadVideoUrl(sourceVideoId);
@@ -326,12 +404,16 @@ export function VideoEditorModal({
       if (clipId) activeClipIdRef.current = clipId;
 
       if (activeSourceVideoIdRef.current === sourceVideoId && video.src === url) {
-        video.currentTime = sourceTime;
-        if (shouldResume) await video.play();
+        if (!preservePlayback) video.currentTime = sourceTime;
+        if (!preservePlayback && shouldResume && previewPlayingRef.current) await video.play();
+        if (generation !== sourceSwitchGenerationRef.current) return;
+        videoSwitchPendingRef.current = false;
+        audioPreviewRef.current?.sync(previewPlayingRef.current, !preservePlayback);
         sourceTransitionPendingRef.current = false;
         return;
       }
 
+      if (!video.paused) internalPauseRef.current = true;
       video.pause();
       activeSourceVideoIdRef.current = sourceVideoId;
       setVideoUrl(url);
@@ -376,11 +458,17 @@ export function VideoEditorModal({
       });
 
       if (generation !== sourceSwitchGenerationRef.current) return;
-      if (shouldResume) await video.play();
+      if (shouldResume && previewPlayingRef.current) await video.play();
+      if (generation !== sourceSwitchGenerationRef.current) return;
+      videoSwitchPendingRef.current = false;
+      audioPreviewRef.current?.sync(previewPlayingRef.current, true);
       sourceTransitionPendingRef.current = false;
       setError(null);
     } catch (err) {
       if (generation !== sourceSwitchGenerationRef.current) return;
+      videoSwitchPendingRef.current = false;
+      previewPlayingRef.current = false;
+      audioPreviewRef.current?.stop();
       sourceTransitionPendingRef.current = false;
       setError(
         err instanceof Error ? err.message : "Video konnte nicht geladen werden.",
@@ -392,15 +480,10 @@ export function VideoEditorModal({
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch<{ downloadUrl: string }>(`/api/videos/${videoId}/download`)
-      .then((res) => {
+    Promise.resolve(loadVideoUrl(videoId))
+      .then((url) => {
         if (cancelled) return;
-        if (res?.downloadUrl) {
-          setVideoUrl(res.downloadUrl);
-          videoUrlsRef.current[videoId] = res.downloadUrl;
-        } else {
-          setError("Video konnte nicht geladen werden.");
-        }
+        setVideoUrl(url);
       })
       .catch(() => {
         if (!cancelled) setError("Video konnte nicht geladen werden.");
@@ -579,7 +662,7 @@ export function VideoEditorModal({
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") closeEditor();
     }
 
     document.addEventListener("keydown", handleKeyDown);
@@ -715,6 +798,7 @@ export function VideoEditorModal({
     const currentIndex = clips.findIndex((clip) => clip.id === activeClipIdRef.current);
     if (currentIndex < 0) return;
     if (currentIndex >= clips.length - 1) {
+      pausePreview();
       videoRef.current?.pause();
       setTimelinePlayheadTime(timelineDuration);
       return;
@@ -733,6 +817,8 @@ export function VideoEditorModal({
       nextClip.start,
       nextClip.id,
       true,
+      nextClip.sourceVideoId === clips[currentIndex].sourceVideoId &&
+        Math.abs(nextClip.start - clips[currentIndex].end) < 1e-7,
     );
   }
 
@@ -1760,7 +1846,7 @@ export function VideoEditorModal({
       });
 
       onTrimStarted?.();
-      onClose();
+      closeEditor();
     } catch (err) {
       setError(
         err instanceof Error
@@ -1880,7 +1966,7 @@ export function VideoEditorModal({
         padding: 16,
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) closeEditor();
       }}
     >
       <div
@@ -1925,7 +2011,7 @@ export function VideoEditorModal({
 
           <button
             type="button"
-            onClick={onClose}
+            onClick={closeEditor}
             style={{
               background: "transparent",
               border: "1px solid var(--color-border)",
@@ -1950,6 +2036,21 @@ export function VideoEditorModal({
           </div>
         )}
 
+        <audio ref={audioRef} preload="auto" hidden data-testid="video-editor-audio-preview" />
+        {audioPreviewError && (
+          <div role="alert">
+            {audioPreviewError}
+            <button type="button" onClick={() => {
+              setAudioPreviewError(null);
+              previewPlayingRef.current = true;
+              audioPreviewRef.current?.sync(true, true);
+              void videoRef.current?.play().catch(() => {
+                pausePreview();
+                setAudioPreviewError("Wiedergabe konnte nicht gestartet werden.");
+              });
+            }}>Wiedergabe mit Ton starten</button>
+          </div>
+        )}
         {videoUrl && (
           <div
             ref={previewContainerRef}
@@ -1959,7 +2060,40 @@ export function VideoEditorModal({
             <video
               ref={videoRef}
               controls
-              onLoadedMetadata={updateVisibleVideoFrame}
+              muted
+              onVolumeChange={(e) => {
+                if (!e.currentTarget.muted) e.currentTarget.muted = true;
+                if (e.currentTarget.volume !== 0) e.currentTarget.volume = 0;
+              }}
+              onPlay={() => {
+                previewPlayingRef.current = true;
+                if (!videoSwitchPendingRef.current) audioPreviewRef.current?.sync(true, true);
+              }}
+              onWaiting={() => {
+                videoBufferingRef.current = true;
+                audioPreviewRef.current?.stop();
+              }}
+              onPlaying={() => {
+                const wasBuffering = videoBufferingRef.current;
+                videoBufferingRef.current = false;
+                if (wasBuffering && previewPlayingRef.current && !videoSwitchPendingRef.current) {
+                  audioPreviewRef.current?.sync(true, true);
+                }
+              }}
+              onPause={(e) => {
+                if (internalPauseRef.current) { internalPauseRef.current = false; return; }
+                if (!e.currentTarget.ended) pausePreview();
+              }}
+              onSeeking={() => { audioPreviewRef.current?.stop(); }}
+              onSeeked={() => {
+                if (!videoSwitchPendingRef.current) audioPreviewRef.current?.sync(previewPlayingRef.current, true);
+              }}
+              onLoadedMetadata={(e) => {
+                e.currentTarget.muted = true;
+                e.currentTarget.defaultMuted = true;
+                e.currentTarget.volume = 0;
+                updateVisibleVideoFrame();
+              }}
               onTimeUpdate={(e) => {
                 const sourceTime = e.currentTarget.currentTime;
                 const activeClip = clips.find(
@@ -1973,6 +2107,9 @@ export function VideoEditorModal({
                 if (clipTimelineStart === null) return;
 
                 setCurrentTime(sourceTime);
+                if (!videoSwitchPendingRef.current && !videoBufferingRef.current && !e.currentTarget.seeking) {
+                  audioPreviewRef.current?.sync(previewPlayingRef.current);
+                }
                 setTimelinePlayheadTime(
                   Math.max(
                     clipTimelineStart,
@@ -1985,7 +2122,7 @@ export function VideoEditorModal({
 
                 if (
                   !e.currentTarget.paused &&
-                  sourceTime >= activeClip.end - 0.05
+                  sourceTime >= activeClip.end
                 ) {
                   advancePreviewToNextClip();
                 }

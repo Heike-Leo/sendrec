@@ -91,6 +91,233 @@ describe("VideoEditorModal multi-source preview", () => {
     });
   });
 
+  async function mountAudioPreview(segments: Array<{ id: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number }>) {
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: {
+      version: 1,
+      clips: [{ id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],
+      audioSegments: segments.map((segment) => ({ ...segment, sourceClipId: "clip-1" })),
+    } };
+    const onClose = vi.fn();
+    const result = render(<VideoEditorModal videoId="original" duration={10} onClose={onClose} />);
+    await waitFor(() => expect(document.querySelector("video")?.src).toContain("original.mp4"));
+    const video = document.querySelector("video")!;
+    const audio = screen.getByTestId("video-editor-audio-preview") as HTMLAudioElement;
+    if (segments.length) await waitFor(() => expect(audio.src).not.toBe(""));
+    Object.defineProperty(audio, "readyState", { configurable: true, value: 1 });
+    fireEvent.loadedMetadata(audio);
+    return { ...result, video, audio, onClose };
+  }
+
+  it("plays independent audio, keeps native video permanently muted and pauses both", async () => {
+    const { video, audio } = await mountAudioPreview([
+      { id: "independent", sourceVideoId: "inserted", sourceStart: 12, sourceEnd: 22, timelineStart: 0 },
+    ]);
+    expect(video.muted).toBe(true);
+    video.muted = false;
+    video.volume = 1;
+    fireEvent.volumeChange(video);
+    expect(video.muted).toBe(true);
+    expect(video.volume).toBe(0);
+    video.currentTime = 1.25;
+    fireEvent.play(video);
+    expect(audio.src).toContain("inserted.mp4");
+    expect(video.src).toContain("original.mp4");
+    expect(audio.currentTime).toBe(13.25);
+    expect(vi.mocked(audio.play).mock.contexts).toContain(audio);
+    fireEvent.pause(video);
+    expect(vi.mocked(audio.pause).mock.contexts).toContain(audio);
+    const calls = vi.mocked(audio.play).mock.calls.length;
+    fireEvent.loadedMetadata(audio);
+    expect(vi.mocked(audio.play).mock.calls.length).toBe(calls);
+  });
+
+  it("native seeks select the audio segment rather than the visible source", async () => {
+    const { video, audio } = await mountAudioPreview([
+      { id: "a", sourceVideoId: "original", sourceStart: 4, sourceEnd: 6, timelineStart: 0 },
+      { id: "b", sourceVideoId: "inserted", sourceStart: 20, sourceEnd: 28, timelineStart: 2 },
+    ]);
+    fireEvent.play(video);
+    fireEvent.seeking(video);
+    video.currentTime = 3;
+    fireEvent.seeked(video);
+    await waitFor(() => expect(audio.src).toContain("inserted.mp4"));
+    fireEvent.loadedMetadata(audio);
+    expect(audio.currentTime).toBe(21);
+    expect(video.src).toContain("original.mp4");
+  });
+
+  it("timeline and keyboard seeks update audio while preserving paused playback", async () => {
+    const { video, audio } = await mountAudioPreview([
+      { id: "a", sourceVideoId: "original", sourceStart: 10, sourceEnd: 20, timelineStart: 0 },
+    ]);
+    const timeline = screen.getByTestId("video-editor-timeline");
+    vi.spyOn(timeline, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
+    fireEvent.click(timeline, { clientX: 500 });
+    await waitFor(() => expect(video.currentTime).toBe(5));
+    expect(audio.currentTime).toBe(15);
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    await waitFor(() => expect(audio.currentTime).toBeCloseTo(15.1));
+    expect(vi.mocked(audio.play).mock.contexts.filter((item) => item === audio)).toHaveLength(0);
+  });
+
+  it("segment transitions and gaps do not switch or stop the visible video", async () => {
+    const { video, audio } = await mountAudioPreview([
+      { id: "a", sourceVideoId: "original", sourceStart: 0, sourceEnd: 2, timelineStart: 0 },
+      { id: "b", sourceVideoId: "original", sourceStart: 7, sourceEnd: 9, timelineStart: 4 },
+    ]);
+    fireEvent.play(video);
+    video.currentTime = 3;
+    fireEvent.timeUpdate(video);
+    const videoPauses = vi.mocked(video.pause).mock.contexts.filter((item) => item === video).length;
+    expect(vi.mocked(audio.pause).mock.contexts).toContain(audio);
+    video.currentTime = 4.25;
+    fireEvent.timeUpdate(video);
+    expect(audio.currentTime).toBe(7.25);
+    expect(vi.mocked(video.pause).mock.contexts.filter((item) => item === video)).toHaveLength(videoPauses);
+    expect(mockApiFetch.mock.calls.filter(([path]) => path === "/api/videos/original/download")).toHaveLength(1);
+  });
+
+  it("pause during an outstanding audio URL load prevents a delayed start", async () => {
+    let resolveUrl!: (value: { downloadUrl: string }) => void;
+    const pending = new Promise<{ downloadUrl: string }>((resolve) => { resolveUrl = resolve; });
+    const originalApi = mockApiFetch.getMockImplementation()!;
+    mockApiFetch.mockImplementation((path, options) => path === "/api/videos/inserted/download"
+      ? pending : originalApi(path, options));
+    const { video, audio } = await mountAudioPreview([
+      { id: "a", sourceVideoId: "original", sourceStart: 0, sourceEnd: 2, timelineStart: 0 },
+      { id: "b", sourceVideoId: "inserted", sourceStart: 10, sourceEnd: 18, timelineStart: 2 },
+    ]);
+    fireEvent.play(video);
+    video.currentTime = 3;
+    fireEvent.seeking(video);
+    fireEvent.seeked(video);
+    fireEvent.pause(video);
+    const plays = vi.mocked(audio.play).mock.contexts.filter((item) => item === audio).length;
+    await act(async () => { resolveUrl({ downloadUrl: "https://media.example/inserted.mp4" }); await pending; });
+    fireEvent.loadedMetadata(audio);
+    expect(vi.mocked(audio.play).mock.contexts.filter((item) => item === audio)).toHaveLength(plays);
+    expect(audio.src).toContain("original.mp4");
+  });
+
+  it("video buffering suspends audio and resynchronizes on continued playback", async () => {
+    const { video, audio } = await mountAudioPreview([
+      { id: "a", sourceVideoId: "original", sourceStart: 10, sourceEnd: 20, timelineStart: 0 },
+    ]);
+    fireEvent.play(video);
+    fireEvent.waiting(video);
+    video.currentTime = 1.5;
+    const plays = vi.mocked(audio.play).mock.contexts.filter((item) => item === audio).length;
+    fireEvent.timeUpdate(video);
+    expect(vi.mocked(audio.play).mock.contexts.filter((item) => item === audio)).toHaveLength(plays);
+    fireEvent.playing(video);
+    expect(audio.currentTime).toBe(11.5);
+    expect(vi.mocked(audio.play).mock.contexts.filter((item) => item === audio)).toHaveLength(plays + 1);
+  });
+
+  it("a video source transition keeps using an independent audio source and pause still works", async () => {
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: {
+      version: 1,
+      clips: [
+        { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 2, duration: 2 },
+        { id: "clip-2", sourceId: "inserted", sourceStart: 8, sourceEnd: 16, duration: 8 },
+      ],
+      audioSegments: [{ id: "a", sourceClipId: "clip-1", sourceVideoId: "original", sourceStart: 20, sourceEnd: 30, timelineStart: 0 }],
+    } };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    const audio = await screen.findByTestId("video-editor-audio-preview") as HTMLAudioElement;
+    await waitFor(() => expect(audio.src).toContain("original.mp4"));
+    const video = document.querySelector("video")!;
+    Object.defineProperty(audio, "readyState", { configurable: true, value: 1 });
+    Object.defineProperty(video, "paused", { configurable: true, value: false });
+    fireEvent.loadedMetadata(audio);
+    fireEvent.play(video);
+    video.currentTime = 2.01;
+    fireEvent.timeUpdate(video);
+    await waitFor(() => expect(video.src).toContain("inserted.mp4"));
+    fireEvent.pause(video); // Internal pause while changing the visible source.
+    fireEvent.loadedMetadata(video);
+    await waitFor(() => expect(video.currentTime).toBe(8));
+    await waitFor(() => expect(audio.currentTime).toBe(22));
+    expect(audio.src).toContain("original.mp4");
+    fireEvent.pause(video); // Real pause after the source transition.
+    const plays = vi.mocked(audio.play).mock.contexts.filter((item) => item === audio).length;
+    video.currentTime = 8.5;
+    fireEvent.timeUpdate(video);
+    expect(vi.mocked(audio.play).mock.contexts.filter((item) => item === audio)).toHaveLength(plays);
+  });
+
+  it("a contiguous video split does not pause, reload or restart its contiguous audio", async () => {
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: {
+      version: 1,
+      clips: [
+        { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 2, duration: 2 },
+        { id: "clip-2", sourceId: "original", sourceStart: 2, sourceEnd: 10, duration: 8 },
+      ],
+      audioSegments: [
+        { id: "a", sourceClipId: "clip-1", sourceVideoId: "original", sourceStart: 0, sourceEnd: 2, timelineStart: 0 },
+        { id: "b", sourceClipId: "clip-2", sourceVideoId: "original", sourceStart: 2, sourceEnd: 10, timelineStart: 2 },
+      ],
+    } };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    const audio = await screen.findByTestId("video-editor-audio-preview") as HTMLAudioElement;
+    await waitFor(() => expect(audio.src).toContain("original.mp4"));
+    const video = document.querySelector("video")!;
+    Object.defineProperty(audio, "readyState", { configurable: true, value: 1 });
+    Object.defineProperty(video, "paused", { configurable: true, value: false });
+    fireEvent.loadedMetadata(audio);
+    fireEvent.play(video);
+    vi.mocked(audio.pause).mockClear();
+    vi.mocked(audio.load).mockClear();
+    const plays = vi.mocked(audio.play).mock.contexts.filter((item) => item === audio).length;
+    video.currentTime = 1.96;
+    fireEvent.timeUpdate(video);
+    expect(video.currentTime).toBe(1.96); // Do not skip the last 50 ms of a clip.
+    audio.currentTime = 2.01;
+    video.currentTime = 2.01;
+    await act(async () => { fireEvent.timeUpdate(video); });
+    expect(audio.currentTime).toBe(2.01);
+    expect(video.currentTime).toBe(2.01);
+    expect(vi.mocked(audio.play).mock.contexts.filter((item) => item === audio)).toHaveLength(plays);
+    expect(vi.mocked(audio.pause).mock.contexts.filter((item) => item === audio)).toHaveLength(0);
+    expect(vi.mocked(audio.load).mock.contexts.filter((item) => item === audio)).toHaveLength(0);
+  });
+
+  it("explicitly empty audio segments keep video silent without a fallback", async () => {
+    const { video, audio } = await mountAudioPreview([]);
+    fireEvent.play(video);
+    video.currentTime = 3;
+    fireEvent.timeUpdate(video);
+    expect(video.muted).toBe(true);
+    expect(audio.getAttribute("src")).toBeNull();
+    expect(vi.mocked(audio.play).mock.contexts.filter((item) => item === audio)).toHaveLength(0);
+  });
+
+  it("offers an explicit user-action retry when the browser blocks audio playback", async () => {
+    const { video, audio } = await mountAudioPreview([
+      { id: "a", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0 },
+    ]);
+    vi.spyOn(audio, "play").mockRejectedValueOnce(new DOMException("blocked", "NotAllowedError"));
+    fireEvent.play(video);
+    const retry = await screen.findByRole("button", { name: "Wiedergabe mit Ton starten" });
+    expect(screen.getByRole("alert")).toHaveTextContent("Browser blockiert");
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(video.muted).toBe(true);
+  });
+
+  it("close and unmount stop audio even when the parent does not immediately remove the editor", async () => {
+    const { video, audio, onClose, unmount } = await mountAudioPreview([
+      { id: "a", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0 },
+    ]);
+    fireEvent.play(video);
+    vi.mocked(audio.pause).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Schließen" }));
+    expect(onClose).toHaveBeenCalled();
+    expect(vi.mocked(audio.pause).mock.contexts).toContain(audio);
+    unmount();
+    expect(audio.getAttribute("src")).toBeNull();
+  });
+
   it("suppresses only the symbol tooltip while its popover is open and restores it on close", async () => {
     const user = userEvent.setup();
     render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
@@ -2830,7 +3057,8 @@ describe("VideoEditorModal multi-source preview", () => {
     expectCoupledAudio();
     expect(screen.getByTestId("video-editor-audio-track")).toHaveStyle({ width: "200%" });
     expect(document.querySelectorAll("video")).toHaveLength(1);
-    expect(document.querySelector("audio")).toBeNull();
+    expect(document.querySelectorAll("audio")).toHaveLength(1);
+    expect(document.querySelector("audio")).not.toHaveAttribute("controls");
     expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
   });
 
