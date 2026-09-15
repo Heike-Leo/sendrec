@@ -51,6 +51,7 @@ let editorState: typeof emptyEditorState | {
         opacity?: number;
         text?: string;
       }>;
+      audioSegments?: Array<{ id: string; sourceClipId: string; sourceVideoId: string; sourceStart: number; sourceEnd: number; timelineStart: number }>;
       annotations?: Array<{ id: string; type: "arrow" | "circle" | "symbol" | "line"; symbol?: string; x: number; y: number; width: number; height: number; start: number; end: number; rotation: number; color?: string }>;
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
@@ -2757,7 +2758,58 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(timelineOverlay).toHaveStyle({ width: "16.666666666666664%" });
   });
 
-  it("derives original audio from clip IDs including repeated sources without additional persisted state", async () => {
+  it.each([false, true])("loads stored audio exactly, including explicitly empty arrays (%s)", async (empty) => {
+    const audioSegments = empty ? [] : [{ id: "custom-audio", sourceClipId: "saved", sourceVideoId: "original", sourceStart: 3, sourceEnd: 8, timelineStart: 2 }];
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "saved", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }], audioSegments } };
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-saved");
+    const track = screen.getByTestId("video-editor-audio-track");
+    expect(track.children).toHaveLength(empty ? 0 : 1);
+    if (!empty) {
+      expect(track.children[0]).toHaveAttribute("data-audio-id", "custom-audio");
+      expect(track.children[0]).toHaveStyle({ left: "20%", width: "50%" });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "+ Abdeckung" }));
+    await waitFor(() => {
+      const save = mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT").at(-1);
+      expect(save).toBeDefined();
+      expect(JSON.parse(save![1].body).audioSegments).toEqual(audioSegments);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
+    const request = mockApiFetch.mock.calls.find(([path]) => path === "/api/videos/original/editor/render");
+    expect(JSON.parse(request![1].body).audioSegments).toEqual(audioSegments);
+  });
+
+  it("deletes coupled audio with its clip and restores both with one undo", async () => {
+    const user = userEvent.setup();
+    await renderWithInsertedVideo();
+    expectCoupledAudio();
+    const before = Array.from(screen.getByTestId("video-editor-audio-track").children).map((e) => e.getAttribute("data-audio-id"));
+    // Insertion selects the inserted clip.
+    await user.click(screen.getByRole("button", { name: "Clip löschen" }));
+    expectCoupledAudio();
+    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expectCoupledAudio();
+    expect(Array.from(screen.getByTestId("video-editor-audio-track").children).map((e) => e.getAttribute("data-audio-id"))).toEqual(before);
+  });
+
+  it("includes derived audio in the pending keepalive save and restores it on reload", async () => {
+    const view = render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-audio-clip-1");
+    fireEvent.click(screen.getByRole("button", { name: "+ Abdeckung" }));
+    view.unmount();
+    const call = mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT" && o.keepalive);
+    expect(call).toBeDefined();
+    const timeline = JSON.parse(call![1].body);
+    expect(timeline.audioSegments).toEqual([{ id: "audio:clip-1", sourceClipId: "clip-1", sourceVideoId: "original", sourceStart: 0, sourceEnd: 120, timelineStart: 0 }]);
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline };
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    expect(await screen.findByTestId("video-editor-audio-clip-1")).toHaveAttribute("data-audio-id", "audio:clip-1");
+  });
+
+  it("derives stable original audio from clip IDs including repeated sources", async () => {
     const clips = [
       { id: "one", sourceId: "original", sourceStart: 2, sourceEnd: 7, duration: 5 },
       { id: "two", sourceId: "inserted", sourceStart: 4, sourceEnd: 14, duration: 10 },
@@ -2772,6 +2824,7 @@ describe("VideoEditorModal multi-source preview", () => {
       expect(segment).toHaveAttribute("data-source-video-id", clip.sourceId);
       expect(segment).toHaveAttribute("data-source-start", String(clip.sourceStart));
       expect(segment).toHaveAttribute("data-source-end", String(clip.sourceEnd));
+      expect(segment).toHaveAttribute("data-audio-id", `audio:${clip.id}`);
     }
     fireEvent.click(screen.getByRole("button", { name: "Vergrößern" }));
     expectCoupledAudio();
@@ -2834,12 +2887,19 @@ describe("VideoEditorModal multi-source preview", () => {
         "inserted",
         "original",
       ]);
-      expect(payload.clips[0]).toMatchObject({
+    expect(payload.clips[0]).toMatchObject({
         sourceId: "inserted",
         sourceStart: 0,
         sourceEnd: 30,
         duration: 30,
       });
+      expect(payload.audioSegments).toHaveLength(payload.clips.length);
+      let offset = 0;
+      for (const [index, clip] of payload.clips.entries()) {
+        expect(payload.audioSegments[index]).toMatchObject({ sourceClipId: clip.id, sourceVideoId: clip.sourceId,
+          sourceStart: clip.sourceStart, sourceEnd: clip.sourceEnd, timelineStart: offset });
+        offset += clip.duration;
+      }
     });
     expect(screen.getByRole("button", { name: "Video wird gerendert..." })).toBeDisabled();
   });

@@ -11,6 +11,32 @@ interface EditorClip {
   end: number;
 }
 
+interface EditorAudioSegment {
+  id: string;
+  sourceClipId: string;
+  sourceVideoId: string;
+  sourceStart: number;
+  sourceEnd: number;
+  timelineStart: number;
+}
+
+function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[] = []): EditorAudioSegment[] {
+  const used = new Set(previous.map((segment) => segment.id));
+  let timelineStart = 0;
+  return clips.map((clip) => {
+    const existing = previous.find((segment) => segment.sourceClipId === clip.id);
+    let id = existing?.id ?? `audio:${clip.id}`;
+    if (!existing) {
+      while (used.has(id)) id = `audio:${id}`;
+    }
+    used.add(id);
+    const segment = { id, sourceClipId: clip.id, sourceVideoId: clip.sourceVideoId,
+      sourceStart: clip.start, sourceEnd: clip.end, timelineStart };
+    timelineStart += clip.end - clip.start;
+    return segment;
+  });
+}
+
 interface EditorCoverOverlay {
   id: string;
   x: number;
@@ -62,6 +88,7 @@ interface EditorAnnotation {
 
 interface EditorHistoryEntry {
   clips: EditorClip[];
+  audioSegments: EditorAudioSegment[];
   coverOverlays: EditorCoverOverlay[];
   annotations: EditorAnnotation[];
 }
@@ -77,6 +104,7 @@ interface StoredEditorState {
       duration: number;
     }>;
     overlays?: EditorCoverOverlay[];
+    audioSegments?: EditorAudioSegment[];
     annotations?: EditorAnnotation[];
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
@@ -98,7 +126,7 @@ const VISIBLE_OVERLAY_TRACKS = 4;
 const OVERLAY_TRACK_HEIGHT = 38;
 const OVERLAY_TRACK_GAP = 4;
 
-function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], annotations: EditorAnnotation[] = []) {
+function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], annotations: EditorAnnotation[] = [], audioSegments?: EditorAudioSegment[]) {
   return JSON.stringify({
     version: 1,
     clips: clips.map((clip) => ({
@@ -110,6 +138,7 @@ function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], 
     })),
     overlays,
     annotations,
+    audioSegments,
   });
 }
 
@@ -199,6 +228,13 @@ export function VideoEditorModal({
       end: duration,
     },
   ]);
+  const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
+
+  function updateCoupledClips(update: (previous: EditorClip[]) => EditorClip[]) {
+    const next = update(clips);
+    setClips(next);
+    setAudioSegments(audioSegments.length === 0 ? [] : coupledAudio(next, audioSegments));
+  }
   const [error, setError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -426,6 +462,7 @@ export function VideoEditorModal({
     setEditorHistory([]);
     setCoverOverlays([]);
     setAnnotations([]);
+    setAudioSegments([]);
     setCopiedAnnotation(null);
     setSelectedCoverOverlayId(null);
     setTimelinePlayheadTime(0);
@@ -494,7 +531,9 @@ export function VideoEditorModal({
             pendingRestoredPreviewRef.current = restoredClips[0];
           }
         }
-        const restoredPayload = serializeTimeline(restoredClips, restoredOverlays, restoredAnnotations);
+        const restoredAudio = state.timeline?.audioSegments ?? coupledAudio(restoredClips);
+        setAudioSegments(restoredAudio);
+        const restoredPayload = serializeTimeline(restoredClips, restoredOverlays, restoredAnnotations, restoredAudio);
         latestTimelinePayloadRef.current = restoredPayload;
         lastSavedTimelinePayloadRef.current = restoredPayload;
         editorStateLoadedRef.current = true;
@@ -553,7 +592,7 @@ export function VideoEditorModal({
   );
 
   useEffect(() => {
-    const payload = serializeTimeline(clips, coverOverlays, annotations);
+    const payload = serializeTimeline(clips, coverOverlays, annotations, audioSegments);
     latestTimelinePayloadRef.current = payload;
 
     if (!editorStateLoadedRef.current) return;
@@ -575,7 +614,7 @@ export function VideoEditorModal({
         setError(err instanceof Error ? err.message : "Editorstand konnte nicht gespeichert werden.");
       });
     }, OVERLAY_SAVE_DEBOUNCE_MS);
-  }, [clips, coverOverlays, annotations, videoId]);
+  }, [clips, coverOverlays, annotations, audioSegments, videoId]);
 
   useEffect(() => () => {
     cancelAnnotationDragRef.current?.();
@@ -897,7 +936,7 @@ export function VideoEditorModal({
 
     rememberEditorState();
 
-    setClips((previousClips) => {
+    updateCoupledClips((previousClips) => {
       if (!position) {
         return [...previousClips, insertedClip];
       }
@@ -970,6 +1009,7 @@ export function VideoEditorModal({
       ...history.slice(-49),
       {
         clips: clips.map((clip) => ({ ...clip })),
+        audioSegments: audioSegments.map((segment) => ({ ...segment })),
         coverOverlays: coverOverlays.map((overlay) => ({ ...overlay })),
         annotations: annotations.map((annotation) => ({ ...annotation })),
       },
@@ -984,6 +1024,7 @@ export function VideoEditorModal({
       serializeTimeline(clips, coverOverlays);
 
     setClips(previousState.clips);
+    setAudioSegments(previousState.audioSegments);
     setCoverOverlays(previousState.coverOverlays);
     setAnnotations(previousState.annotations);
     setEditorHistory((history) => history.slice(0, -1));
@@ -1040,7 +1081,7 @@ export function VideoEditorModal({
       start: sourceTime,
     };
 
-    setClips((previousClips) => [
+    updateCoupledClips((previousClips) => [
       ...previousClips.slice(0, index),
       leftClip,
       rightClip,
@@ -1655,7 +1696,7 @@ export function VideoEditorModal({
 
     rememberEditorState();
 
-    setClips((previousClips) =>
+    updateCoupledClips((previousClips) =>
       previousClips.filter(
         (clip) => clip.id !== selectedClipId,
       ),
@@ -1766,6 +1807,7 @@ export function VideoEditorModal({
             text: overlay.text,
           })),
           annotations,
+          audioSegments,
         }),
       });
     } catch (err) {
@@ -3225,14 +3267,14 @@ export function VideoEditorModal({
         <div data-testid="video-editor-audio-track" role="group" aria-label="Originalton (mit Video gekoppelt)"
           style={{ position: "relative", height: 36, marginTop: 4, width: `${timelineZoom * 100}%`, minWidth: "100%",
             borderRadius: 8, background: "var(--color-border)", overflow: "hidden", userSelect: "none" }}>
-          {clipLayout.map(({ clip, clipDuration, timelineStart }, index) => (
-            <div key={clip.id} data-testid={`video-editor-audio-${clip.id}`}
-              data-clip-id={clip.id} data-source-video-id={clip.sourceVideoId}
-              data-source-start={clip.start} data-source-end={clip.end}
+          {audioSegments.map((segment, index) => (
+            <div key={segment.id} data-testid={`video-editor-audio-${segment.sourceClipId}`}
+              data-audio-id={segment.id} data-clip-id={segment.sourceClipId} data-source-video-id={segment.sourceVideoId}
+              data-source-start={segment.sourceStart} data-source-end={segment.sourceEnd}
               title={`Originalton · Clip ${index + 1} · mit Video gekoppelt`}
               style={{ position: "absolute", top: 4, bottom: 4,
-                left: `${timelineDuration > 0 ? timelineStart / timelineDuration * 100 : 0}%`,
-                width: `${timelineDuration > 0 ? clipDuration / timelineDuration * 100 : 0}%`,
+                left: `${timelineDuration > 0 ? segment.timelineStart / timelineDuration * 100 : 0}%`,
+                width: `${timelineDuration > 0 ? (segment.sourceEnd - segment.sourceStart) / timelineDuration * 100 : 0}%`,
                 boxSizing: "border-box", border: "1px solid rgba(255,255,255,0.35)", background: "#334155",
                 color: "#fff", fontSize: 12, padding: "0 12px", display: "flex", alignItems: "center",
                 gap: 6, whiteSpace: "nowrap", overflow: "hidden" }}>

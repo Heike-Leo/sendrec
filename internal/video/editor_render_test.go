@@ -22,6 +22,85 @@ func validTimeline(clips ...editClip) editTimeline {
 	return editTimeline{Version: 1, Clips: clips}
 }
 
+type audioJSONArgument struct{ expected string }
+
+func (a audioJSONArgument) Match(value any) bool {
+	raw, ok := value.(json.RawMessage)
+	if !ok {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return false
+	}
+	return string(fields["audioSegments"]) == a.expected
+}
+
+func TestAudioSegmentsPersistence(t *testing.T) {
+	for _, audio := range []string{"", "[]", `[{"id":"audio:a","sourceClipId":"a","sourceVideoId":"video-main","sourceStart":0,"sourceEnd":20,"timelineStart":0}]`} {
+		t.Run("audio="+audio, func(t *testing.T) {
+			mock, err := pgxmock.NewPool()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer mock.Close()
+			handler := NewHandler(mock, &mockStorage{}, testBaseURL, 0, 0, 0, 0, testJWTSecret, true)
+			body := `{"version":1,"clips":[{"id":"a","sourceId":"video-main","sourceStart":0,"sourceEnd":20,"duration":20}]`
+			if audio != "" {
+				body += `,"audioSegments":` + audio
+			}
+			body += `}`
+			mock.ExpectExec(`UPDATE videos SET edit_timeline = \$1, updated_at = now\(\)`).WithArgs(audioJSONArgument{audio}, "video-main", testUserID).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+			mock.ExpectQuery(`SELECT COALESCE\(edit_timeline`).WithArgs("video-main", testUserID).WillReturnRows(pgxmock.NewRows([]string{"edit_timeline", "edit_render_status", "edit_render_error", "edit_render_video_id"}).AddRow([]byte(body), "none", nil, nil))
+			router := chi.NewRouter()
+			router.With(newAuthMiddleware()).Put("/api/videos/{id}/editor", handler.SaveEditorTimeline)
+			router.With(newAuthMiddleware()).Get("/api/videos/{id}/editor", handler.GetEditorState)
+			saved := httptest.NewRecorder()
+			router.ServeHTTP(saved, authenticatedRequest(t, http.MethodPut, "/api/videos/video-main/editor", []byte(body)))
+			if saved.Code != 204 {
+				t.Fatal(saved.Code, saved.Body.String())
+			}
+			loaded := httptest.NewRecorder()
+			router.ServeHTTP(loaded, authenticatedRequest(t, http.MethodGet, "/api/videos/video-main/editor", nil))
+			var response struct {
+				Timeline json.RawMessage `json:"timeline"`
+			}
+			if err := json.Unmarshal(loaded.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if !(audioJSONArgument{audio}).Match(response.Timeline) {
+				t.Fatal("audio field changed", loaded.Body.String())
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestAudioSegmentsValidation(t *testing.T) {
+	valid := editorAudioSegment{ID: "audio", SourceClipID: "a", SourceVideoID: "source", SourceEnd: 2}
+	for _, change := range []func(*editorAudioSegment){
+		func(a *editorAudioSegment) { a.SourceStart = -1 },
+		func(a *editorAudioSegment) { a.SourceEnd = -1 },
+		func(a *editorAudioSegment) { a.TimelineStart = -1 },
+		func(a *editorAudioSegment) { a.TimelineStart = math.NaN() },
+		func(a *editorAudioSegment) { a.SourceEnd = math.Inf(1) },
+		func(a *editorAudioSegment) { a.ID = "" },
+		func(a *editorAudioSegment) { a.SourceClipID = "" },
+		func(a *editorAudioSegment) { a.SourceVideoID = "" },
+	} {
+		a := valid
+		change(&a)
+		timeline := validTimeline(editClip{ID: "a", SourceID: "source", SourceEnd: 2})
+		segments := []editorAudioSegment{a}
+		timeline.AudioSegments = &segments
+		if validateEditTimeline(&timeline) == nil {
+			t.Fatalf("invalid audio accepted: %+v", a)
+		}
+	}
+}
+
 func TestValidateEditTimeline(t *testing.T) {
 	tests := []struct {
 		name     string

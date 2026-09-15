@@ -59,11 +59,21 @@ type editorAnnotation struct {
 	Color    string  `json:"color,omitempty"`
 }
 
+type editorAudioSegment struct {
+	ID            string  `json:"id"`
+	SourceClipID  string  `json:"sourceClipId"`
+	SourceVideoID string  `json:"sourceVideoId"`
+	SourceStart   float64 `json:"sourceStart"`
+	SourceEnd     float64 `json:"sourceEnd"`
+	TimelineStart float64 `json:"timelineStart"`
+}
+
 type editTimeline struct {
-	Version     int                  `json:"version"`
-	Clips       []editClip           `json:"clips"`
-	Overlays    []editorCoverOverlay `json:"overlays,omitempty"`
-	Annotations []editorAnnotation   `json:"annotations,omitempty"`
+	AudioSegments *[]editorAudioSegment `json:"audioSegments,omitempty"`
+	Version       int                   `json:"version"`
+	Clips         []editClip            `json:"clips"`
+	Overlays      []editorCoverOverlay  `json:"overlays,omitempty"`
+	Annotations   []editorAnnotation    `json:"annotations,omitempty"`
 }
 
 type editorStateResponse struct {
@@ -130,6 +140,26 @@ func validateEditTimeline(timeline *editTimeline) error {
 	}
 	if totalDuration < 1 {
 		return fmt.Errorf("timeline must be at least one second long")
+	}
+	if timeline.AudioSegments != nil {
+		if len(*timeline.AudioSegments) > 500 {
+			return fmt.Errorf("timeline contains too many audio segments")
+		}
+		ids := make(map[string]bool)
+		for _, segment := range *timeline.AudioSegments {
+			if strings.TrimSpace(segment.ID) == "" || ids[segment.ID] || strings.TrimSpace(segment.SourceClipID) == "" || strings.TrimSpace(segment.SourceVideoID) == "" {
+				return fmt.Errorf("audio segment requires unique id and source references")
+			}
+			ids[segment.ID] = true
+			for _, value := range []float64{segment.SourceStart, segment.SourceEnd, segment.TimelineStart} {
+				if math.IsNaN(value) || math.IsInf(value, 0) {
+					return fmt.Errorf("audio segment times must be finite")
+				}
+			}
+			if segment.SourceStart < 0 || segment.SourceEnd < segment.SourceStart || segment.TimelineStart < 0 {
+				return fmt.Errorf("audio segment time range is invalid")
+			}
+		}
 	}
 
 	if len(timeline.Overlays) > 500 {
