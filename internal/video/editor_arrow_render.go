@@ -157,9 +157,13 @@ func prepareArrowFiles(dir string, timeline editTimeline) error {
 // Extend, rather than replace, the established cover/blur/text graph. Empty
 // annotations return byte-for-byte identical arguments. Generated filenames
 // contain neither annotation IDs nor user input; no shell is involved.
-func buildAnnotatedTimelineRenderArgs(inputs []string, clips []editClip, indexes map[string]int, sources map[string]sourceVideo, output string, overlays []editorCoverOverlay, annotations []editorAnnotation) []string {
+func buildAnnotatedTimelineRenderArgs(inputs []string, clips []editClip, indexes map[string]int, sources map[string]sourceVideo, output string, overlays []editorCoverOverlay, annotations []editorAnnotation, audioSets ...*[]editorAudioSegment) []string {
 	annotations = exportAnnotations(annotations)
-	args := buildTimelineRenderArgs(inputs, clips, indexes, sources, output, overlays)
+	var audio *[]editorAudioSegment
+	if len(audioSets) > 0 {
+		audio = audioSets[0]
+	}
+	args := buildTimelineRenderArgsWithAudio(inputs, clips, indexes, sources, output, overlays, audio)
 	if len(annotations) == 0 {
 		return args
 	}

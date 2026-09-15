@@ -339,7 +339,7 @@ func TestBuildTimelineRenderArgsPreservesClipOrderAndRanges(t *testing.T) {
 		"[0:v]trim=start=4.200:end=11.800",
 		"[1:v]trim=start=18.100:end=27.400",
 		"[0:v]trim=start=30.000:end=35.000",
-		"[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1",
+		"[v0][v1][v2]concat=n=3:v=1:a=0",
 	}
 	position := -1
 	for _, fragment := range ordered {
@@ -353,6 +353,12 @@ func TestBuildTimelineRenderArgsPreservesClipOrderAndRanges(t *testing.T) {
 		!strings.Contains(joined, "pad=1920:1080") {
 		t.Fatalf("render args must preserve aspect ratio and pad to the target frame: %s", joined)
 	}
+	for _, clip := range clips {
+		padding := fmt.Sprintf("fps=30,tpad=stop_mode=clone:stop_duration=%.9f,trim=duration=%.9f,format=yuv420p", clip.Duration, clip.Duration)
+		if !strings.Contains(joined, padding) {
+			t.Fatalf("missing bounded last-frame hold: %s", padding)
+		}
+	}
 
 	silentSources := map[string]sourceVideo{"silent": {ID: "silent", HasAudio: false}}
 	silentArgs := strings.Join(buildTimelineRenderArgs(
@@ -360,7 +366,7 @@ func TestBuildTimelineRenderArgsPreservesClipOrderAndRanges(t *testing.T) {
 		[]editClip{{ID: "silent", SourceID: "silent", SourceStart: 1, SourceEnd: 3.5, Duration: 2.5}},
 		map[string]int{"silent": 0}, silentSources, "silent-output.mp4",
 	), " ")
-	if !strings.Contains(silentArgs, "anullsrc=r=48000:cl=stereo,atrim=duration=2.500") {
+	if !strings.Contains(silentArgs, "anullsrc=r=48000:cl=stereo,atrim=end_sample=120000") {
 		t.Fatalf("silent audio must exactly match the clip duration: %s", silentArgs)
 	}
 }
@@ -873,6 +879,12 @@ func TestTimelineRenderFFmpegIntegration(t *testing.T) {
 	if math.Abs(videoDuration-audioDuration) > .05 {
 		t.Fatalf("audio/video drift detected: video=%f audio=%f", videoDuration, audioDuration)
 	}
+	// Each 25-fps source cut produces fewer frames than its 0.5s target after
+	// conversion to 30 fps. Padding must fill, but never add another frame.
+	if math.Abs(videoDuration-1.5) > .001 || math.Abs(audioDuration-1.5) > .001 {
+		t.Fatalf("bounded padding missed exact target: video=%f audio=%f", videoDuration, audioDuration)
+	}
+	t.Logf("timeline=1.500000 video=%.6f audio=%.6f", videoDuration, audioDuration)
 
 	assertDominantColor := func(at string, channel int) {
 		t.Helper()
@@ -893,6 +905,16 @@ func TestTimelineRenderFFmpegIntegration(t *testing.T) {
 	assertDominantColor("0.25", 0)
 	assertDominantColor("0.75", 2)
 	assertDominantColor("1.25", 0)
+	// Sample exact last-frame indices. Time-based seeking at .49s would
+	// select the next frame at .5s rather than the frame displayed at .49s.
+	for _, sample := range []struct{ frame, channel int }{{14, 0}, {29, 2}, {44, 0}} {
+		pixels, err := exec.Command("ffmpeg", "-v", "error", "-i", output,
+			"-vf", fmt.Sprintf("select=eq(n\\,%d),scale=1:1", sample.frame), "-frames:v", "1",
+			"-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1").Output()
+		if err != nil || len(pixels) < 3 || int(pixels[sample.channel])-int(pixels[2-sample.channel]) < 80 {
+			t.Fatalf("last frame %d not held correctly: %v %v", sample.frame, pixels, err)
+		}
+	}
 }
 
 func TestTimelineBlurRenderFFmpegIntegration(t *testing.T) {

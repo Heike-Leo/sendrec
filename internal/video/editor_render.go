@@ -354,13 +354,10 @@ func (h *Handler) RenderEditorTimeline(w http.ResponseWriter, r *http.Request) {
 
 	job.Timeline = timeline
 	job.Sources = make(map[string]sourceVideo)
-	for _, clip := range timeline.Clips {
-		if _, ok := job.Sources[clip.SourceID]; ok {
-			continue
-		}
-		sourceWhere, sourceArgs := orgVideoFilter(r.Context(), clip.SourceID, nil, "AND status = 'ready'")
+	for _, sourceID := range renderSourceIDs(timeline) {
+		sourceWhere, sourceArgs := orgVideoFilter(r.Context(), sourceID, nil, "AND status = 'ready'")
 		var source sourceVideo
-		source.ID = clip.SourceID
+		source.ID = sourceID
 		if err := h.db.QueryRow(r.Context(), `SELECT file_key, content_type, duration FROM videos WHERE `+sourceWhere, sourceArgs...).
 			Scan(&source.FileKey, &source.ContentType, &source.Duration); err != nil {
 			httputil.WriteError(w, http.StatusBadRequest, "timeline contains an unavailable source")
@@ -373,6 +370,11 @@ func (h *Handler) RenderEditorTimeline(w http.ResponseWriter, r *http.Request) {
 			httputil.WriteError(w, http.StatusBadRequest, "clip exceeds source duration")
 			return
 		}
+	}
+
+	if err := validateRenderAudio(timeline, job.Sources); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	raw, err := json.Marshal(timeline)
@@ -434,6 +436,10 @@ func buildTimelineRenderArgs(inputs []string, clips []editClip, sourceIndexes ma
 	if len(overlaySets) > 0 {
 		overlays = overlaySets[0]
 	}
+	return buildTimelineRenderArgsWithAudio(inputs, clips, sourceIndexes, sources, output, overlays, nil)
+}
+
+func buildTimelineRenderArgsWithAudio(inputs []string, clips []editClip, sourceIndexes map[string]int, sources map[string]sourceVideo, output string, overlays []editorCoverOverlay, audio *[]editorAudioSegment) []string {
 	textCount := 0
 	for _, overlay := range overlays {
 		if _, _, _, _, visible := coverTextBounds(overlay); visible {
@@ -450,20 +456,18 @@ func buildTimelineRenderArgs(inputs []string, clips []editClip, sourceIndexes ma
 	for i, clip := range clips {
 		timelineDuration += clip.Duration
 		inputIndex := sourceIndexes[clip.SourceID]
+		// FPS conversion can leave the final decoded frame short of the clip's
+		// duration. Clone that frame, then trim the padding to the original end.
 		filters = append(filters, fmt.Sprintf(
-			"[%d:v]trim=start=%.3f:end=%.3f,setpts=PTS-STARTPTS,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p[v%d]",
-			inputIndex, clip.SourceStart, clip.SourceEnd, i))
-		if sources[clip.SourceID].HasAudio {
-			filters = append(filters, fmt.Sprintf("[%d:a]atrim=start=%.3f:end=%.3f,asetpts=PTS-STARTPTS,aresample=48000[a%d]", inputIndex, clip.SourceStart, clip.SourceEnd, i))
-		} else {
-			filters = append(filters, fmt.Sprintf("anullsrc=r=48000:cl=stereo,atrim=duration=%.3f,asetpts=PTS-STARTPTS[a%d]", clip.Duration, i))
-		}
-		fmt.Fprintf(&concatInputs, "[v%d][a%d]", i, i)
+			"[%d:v]trim=start=%.3f:end=%.3f,setpts=PTS-STARTPTS,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,tpad=stop_mode=clone:stop_duration=%.9f,trim=duration=%.9f,format=yuv420p[v%d]",
+			inputIndex, clip.SourceStart, clip.SourceEnd, clip.Duration, clip.Duration, i))
+		fmt.Fprintf(&concatInputs, "[v%d]", i)
 	}
+	filters = append(filters, timelineAudioFilters(clips, audio, sourceIndexes, sources)...)
 	if len(overlays) == 0 {
-		filters = append(filters, fmt.Sprintf("%sconcat=n=%d:v=1:a=1[vout][aout]", concatInputs.String(), len(clips)))
+		filters = append(filters, fmt.Sprintf("%sconcat=n=%d:v=1:a=0[vout]", concatInputs.String(), len(clips)))
 	} else {
-		filters = append(filters, fmt.Sprintf("%sconcat=n=%d:v=1:a=1[vbase][aout]", concatInputs.String(), len(clips)))
+		filters = append(filters, fmt.Sprintf("%sconcat=n=%d:v=1:a=0[vbase]", concatInputs.String(), len(clips)))
 
 		blurOverlays := make([]editorCoverOverlay, 0, len(overlays))
 		coverOverlays := make([]editorCoverOverlay, 0, len(overlays))
@@ -622,8 +626,8 @@ func (h *Handler) renderTimelineAsync(ctx context.Context, job renderJob) {
 
 	inputs := make([]string, 0, len(job.Sources))
 	indexes := make(map[string]int, len(job.Sources))
-	for _, clip := range job.Timeline.Clips {
-		source := job.Sources[clip.SourceID]
+	for _, sourceID := range renderSourceIDs(job.Timeline) {
+		source := job.Sources[sourceID]
 		if _, exists := indexes[source.ID]; exists {
 			continue
 		}
@@ -647,7 +651,7 @@ func (h *Handler) renderTimelineAsync(ctx context.Context, job renderJob) {
 		fail(err)
 		return
 	}
-	cmd := exec.CommandContext(ctx, "ffmpeg", buildAnnotatedTimelineRenderArgs(inputs, job.Timeline.Clips, indexes, job.Sources, output, job.Timeline.Overlays, job.Timeline.Annotations)...)
+	cmd := exec.CommandContext(ctx, "ffmpeg", buildAnnotatedTimelineRenderArgs(inputs, job.Timeline.Clips, indexes, job.Sources, output, job.Timeline.Overlays, job.Timeline.Annotations, job.Timeline.AudioSegments)...)
 	cmd.Dir = tmpDir
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		fail(fmt.Errorf("ffmpeg render: %w: %s", err, string(combined)))
