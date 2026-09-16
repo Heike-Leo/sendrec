@@ -66,7 +66,7 @@ func TestTextAnnotationSaveReload(t *testing.T) {
 
 func textTestTimeline() editTimeline {
 	timeline := validTimeline(editClip{ID: "clip", SourceID: "source", SourceStart: 0, SourceEnd: 10, Duration: 10})
-	timeline.Annotations = []editorAnnotation{{ID: "text", Type: "text", Text: "äöüÄÖÜß <b>Hinweis</b>", X: 10, Y: 20, Width: 40, Height: 10, Start: 1, End: 4, FontSize: 32, Color: "#Ab12Cd"}}
+	timeline.Annotations = []editorAnnotation{{ID: "text", Type: "text", Text: "Grüße aus Oldenburg\näöü ÄÖÜ ß\n<b>Hinweis</b>", X: 10, Y: 20, Width: 40, Height: 10, Start: 1, End: 4, FontSize: 32, Color: "#Ab12Cd"}}
 	return timeline
 }
 
@@ -100,7 +100,8 @@ func TestTextAnnotationValidation(t *testing.T) {
 	cases := map[string]func(*editorAnnotation){
 		"empty": func(a *editorAnnotation) { a.Text = "" }, "spaces": func(a *editorAnnotation) { a.Text = "  " },
 		"invisible": func(a *editorAnnotation) { a.Text = "\u200b" }, "long": func(a *editorAnnotation) { a.Text = strings.Repeat("ä", 121) },
-		"control": func(a *editorAnnotation) { a.Text = "a\n" }, "invalid utf8": func(a *editorAnnotation) { a.Text = string([]byte{255}) },
+		"control": func(a *editorAnnotation) { a.Text = "a\x01" }, "invalid utf8": func(a *editorAnnotation) { a.Text = string([]byte{255}) },
+		"only newline": func(a *editorAnnotation) { a.Text = "\n" }, "whitespace lines": func(a *editorAnnotation) { a.Text = " \t\n \n" },
 		"small font": func(a *editorAnnotation) { a.FontSize = 7 }, "large font": func(a *editorAnnotation) { a.FontSize = 257 },
 		"nan": func(a *editorAnnotation) { a.FontSize = math.NaN() }, "infinite": func(a *editorAnnotation) { a.X = math.Inf(1) },
 		"negative": func(a *editorAnnotation) { a.X = -1 }, "overflow": func(a *editorAnnotation) { a.X = 90 },
@@ -124,6 +125,18 @@ func TestTextAnnotationValidation(t *testing.T) {
 		if err := validateEditTimeline(&timeline); err != nil {
 			t.Fatal(err)
 		}
+	}
+	for _, value := range []string{"Einzeilig äöüß", "Zeile 1\nZeile 2", strings.Repeat("ä", 119) + "\n"} {
+		timeline := textTestTimeline()
+		timeline.Annotations[0].Text = value
+		if err := validateEditTimeline(&timeline); err != nil {
+			t.Fatal(err)
+		}
+	}
+	timeline := textTestTimeline()
+	timeline.Annotations[0].Text = strings.Repeat("ä", 119) + "\nß"
+	if validateEditTimeline(&timeline) == nil {
+		t.Fatal("newline must count toward text length")
 	}
 }
 

@@ -140,7 +140,7 @@ describe("VideoEditorModal multi-source preview", () => {
     });
   });
 
-  it.each(["text", "unknown"])("blocks stored %s annotations without arrow fallback or saving", async type => {
+  it.each(["unknown"])("blocks stored %s annotations without arrow fallback or saving", async type => {
     const original = mockApiFetch.getMockImplementation()!;
     mockApiFetch.mockImplementation((path: string, options?: RequestInit) => {
       if (path === "/api/videos/original/editor" && !options) return Promise.resolve({
@@ -152,7 +152,7 @@ describe("VideoEditorModal multi-source preview", () => {
       return original(path, options);
     });
     const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
-    await screen.findByText(type === "text" ? "Text annotations are not yet supported in the editor" : "Unknown annotation type");
+    await screen.findByText("Unknown annotation type");
     expect(view.container.querySelector("video")).toBeNull();
     expect(screen.queryByRole("button", { name: "Als neues Video rendern" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Schließen" }));

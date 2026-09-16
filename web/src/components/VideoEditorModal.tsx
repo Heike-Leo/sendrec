@@ -8,7 +8,8 @@ import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorCl
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
 import { canContinueClipSource, EDITOR_CLIP_SPEEDS, readClipSpeed } from "./editorClipTime";
 import { changeClipSpeed } from "./editorAudioGeometry";
-import { requirePreviewAnnotations, type EditorAnnotation as StoredAnnotation, type GraphicAnnotation as EditorAnnotation } from "./editorAnnotations";
+import { requirePreviewAnnotations, validateTextAnnotation, type EditorAnnotation, type EditorAnnotation as StoredAnnotation } from "./editorAnnotations";
+import { TEXT_LAYOUT, textPreviewGeometry, textBoxToPixels, scaledTextFontSize } from "./editorTextGeometry";
 import { effectiveAudioSpeed, audioSegmentTimelineDuration, audioGeometryDraft, commitAudioGeometry, requireSupportedAudioSpeed, type EditorAudioSegment } from "./editorAudioGeometry";
 
 export function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[] = []): EditorAudioSegment[] {
@@ -192,6 +193,15 @@ export function VideoEditorModal({
   const [showSymbolPicker, setShowSymbolPicker] = useState(false);
   const symbolPickerButtonRef = useRef<HTMLButtonElement>(null);
   const annotationFrameRef = useRef<HTMLDivElement>(null);
+  const textFrameRef = useRef<HTMLDivElement>(null);
+  const [textFrameRect, setTextFrameRect] = useState({ left: 0, top: 0, width: 0, height: 0 });
+  const hasTextAnnotations = annotations.some(item => item.type === "text");
+  const textAnnotationEditRef = useRef<string | null>(null);
+  const [textAnnotationDraft, setTextAnnotationDraft] = useState<{ id: string; text: string } | null>(null);
+  useEffect(() => {
+    textAnnotationEditRef.current = null;
+    setTextAnnotationDraft(null);
+  }, [selectedAnnotationId, videoId]);
   const cancelAnnotationDragRef = useRef<(() => void) | null>(null);
   function setSelectedCoverOverlayId(id: string | null) {
     setCoverSelection(id);
@@ -267,6 +277,10 @@ export function VideoEditorModal({
 
     const intrinsicWidth = video.videoWidth;
     const intrinsicHeight = video.videoHeight;
+    const canonical = textPreviewGeometry(videoRect.width, videoRect.height, intrinsicWidth || 1920, intrinsicHeight || 1080).frame;
+    const textRect = { ...canonical, left: canonical.left + videoRect.left - containerRect.left,
+      top: canonical.top + videoRect.top - containerRect.top };
+    setTextFrameRect(current => Object.keys(textRect).every(key => current[key as keyof typeof current] === textRect[key as keyof typeof textRect]) ? current : textRect);
     const scale =
       intrinsicWidth > 0 && intrinsicHeight > 0
         ? Math.min(videoRect.width / intrinsicWidth, videoRect.height / intrinsicHeight)
@@ -538,7 +552,7 @@ export function VideoEditorModal({
     const observer = new ResizeObserver(updateVisibleVideoFrame);
     observer.observe(video);
     return () => observer.disconnect();
-  }, [videoUrl]);
+  }, [videoUrl, hasTextAnnotations]);
 
   useEffect(() => {
     editorStateLoadedRef.current = false;
@@ -1308,6 +1322,8 @@ export function VideoEditorModal({
   }
 
   function handleUndo() {
+    textAnnotationEditRef.current = null;
+    setTextAnnotationDraft(null);
     volumeGestureRef.current?.cancel();
     cancelAudioResizeRef.current?.();
     if (editorHistory.length === 0) return;
@@ -1753,7 +1769,7 @@ export function VideoEditorModal({
   }
 
   const selectedAnnotation = annotations.find((item) => item.id === selectedAnnotationId);
-  const annotationName = (item: EditorAnnotation) => item.type === "line" ? "Linie" : item.type === "symbol" ? "Symbol" : item.type === "circle" ? "Kreis" : "Pfeil";
+  const annotationName = (item: EditorAnnotation) => item.type === "text" ? "Text" : item.type === "line" ? "Linie" : item.type === "symbol" ? "Symbol" : item.type === "circle" ? "Kreis" : "Pfeil";
 
   function addAnnotation(source?: EditorAnnotation, type: EditorAnnotation["type"] = "arrow", symbol?: AnnotationSymbol) {
     if (timelineDuration <= 0) return;
@@ -1765,6 +1781,9 @@ export function VideoEditorModal({
           // Do not offset copies; only bring out-of-bounds positions back inside.
           x: source.type === "line" ? source.x : Math.max(0, Math.min(100 - source.width, source.x)),
           y: source.type === "line" ? source.y : Math.max(0, Math.min(100 - source.height, source.y)) }
+      : type === "text" ? { id: crypto.randomUUID(), type: "text", text: "Text", x: 30, y: 45,
+          width: TEXT_LAYOUT.width, height: TEXT_LAYOUT.height, fontSize: TEXT_LAYOUT.fontSize, color: TEXT_LAYOUT.color,
+          start, end: Math.min(timelineDuration, start + 5) }
       : { id: crypto.randomUUID(), type, ...(type === "symbol" ? { symbol } : {}), x: 35, y: 35,
           width: type !== "arrow" ? Math.min(defaultSize, defaultSize * (videoFrameRect.height || 9) / (videoFrameRect.width || 16)) : 30,
           height: type !== "arrow" ? Math.min(defaultSize, defaultSize * (videoFrameRect.width || 16) / (videoFrameRect.height || 9)) : 20,
@@ -1774,19 +1793,32 @@ export function VideoEditorModal({
     selectAnnotation(annotation.id);
   }
 
-  function updateAnnotation(patch: Partial<Pick<EditorAnnotation, "start" | "end" | "rotation" | "color">>) {
+  function updateAnnotation(patch: { start?: number; end?: number; rotation?: number; color?: string }) {
     if (!selectedAnnotation) return;
-    if (patch.color !== undefined && (!/^#[0-9a-fA-F]{6}$/.test(patch.color) || patch.color === (selectedAnnotation.color ?? "#FC2667"))) return;
+    const currentColor = selectedAnnotation.type === "text" ? selectedAnnotation.color || TEXT_LAYOUT.color : selectedAnnotation.color ?? "#FC2667";
+    if (patch.color !== undefined && (!/^#[0-9a-fA-F]{6}$/.test(patch.color) || patch.color === currentColor)) return;
     rememberEditorState();
     setAnnotations((previous) => previous.map((item) =>
       item.id === selectedAnnotation.id ? { ...item, ...patch } : item));
+  }
+
+  function updateTextProperty(field: "text" | "fontSize", value: string | number) {
+    if (selectedAnnotation?.type !== "text") return;
+    const patch = field === "text" ? { text: [...String(value)].slice(0, TEXT_LAYOUT.maxLength).join("") } : { fontSize: Number(value) };
+    if ("text" in patch) setTextAnnotationDraft({ id: selectedAnnotation.id, text: patch.text! });
+    const next = { ...selectedAnnotation, ...patch };
+    try { validateTextAnnotation(next); } catch { return; }
+    if (next.text === selectedAnnotation.text && next.fontSize === selectedAnnotation.fontSize) return;
+    const session = `${selectedAnnotation.id}:${field}`;
+    if (textAnnotationEditRef.current !== session) { rememberEditorState(); textAnnotationEditRef.current = session; }
+    setAnnotations(previous => previous.map(item => item.id === next.id ? next : item));
   }
 
   function handleAnnotationPointerDown(e: React.PointerEvent<HTMLDivElement>, annotation: EditorAnnotation, resize = false) {
     e.preventDefault();
     e.stopPropagation();
     selectAnnotation(annotation.id);
-    const rect = annotationFrameRef.current?.getBoundingClientRect();
+    const rect = (annotation.type === "text" ? textFrameRef : annotationFrameRef).current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
     cancelAnnotationDragRef.current?.();
     const startX = e.clientX;
@@ -1794,6 +1826,21 @@ export function VideoEditorModal({
     let lastLineScale = 1;
     let captured = false;
     const move = (event: PointerEvent) => {
+      if (annotation.type === "text") {
+        const dx = (event.clientX - startX) / rect.width * 100;
+        const dy = (event.clientY - startY) / rect.height * 100;
+        const geometry = resize
+          ? { x: annotation.x, y: annotation.y,
+              width: Math.min(100 - annotation.x, Math.max(TEXT_LAYOUT.minWidth, annotation.width + dx)),
+              height: Math.min(100 - annotation.y, Math.max(TEXT_LAYOUT.minHeight, annotation.height + dy)) }
+          : { width: annotation.width, height: annotation.height,
+              x: Math.max(0, Math.min(100 - annotation.width, annotation.x + dx)),
+              y: Math.max(0, Math.min(100 - annotation.height, annotation.y + dy)) };
+        if (!captured && geometry.x === annotation.x && geometry.y === annotation.y && geometry.width === annotation.width && geometry.height === annotation.height) return;
+        if (!captured) { rememberEditorState(); captured = true; }
+        setAnnotations(previous => previous.map(item => item.id === annotation.id ? { ...item, ...geometry } : item));
+        return;
+      }
       if (resize && annotation.type === "line") {
         const radians = annotation.rotation * Math.PI / 180;
         const cos = Math.cos(radians), sin = Math.sin(radians);
@@ -1856,6 +1903,7 @@ export function VideoEditorModal({
   }
 
   function handleAnnotationRotation(e: React.PointerEvent<HTMLButtonElement>, annotation: EditorAnnotation) {
+    if (annotation.type === "text") return;
     e.preventDefault();
     e.stopPropagation();
     selectAnnotation(annotation.id);
@@ -2055,6 +2103,10 @@ export function VideoEditorModal({
   }
 
   async function handleRenderTimeline() {
+    if (hasTextAnnotations) {
+      setError("Text annotations are not yet supported for rendering");
+      return;
+    }
     if (clips.length === 0 || timelineDuration < 1) {
       setError("Die Timeline muss mindestens eine Sekunde lang sein.");
       return;
@@ -2232,7 +2284,9 @@ export function VideoEditorModal({
           <div
             ref={previewContainerRef}
             data-testid="video-editor-preview"
-            style={{ position: "relative", width: "100%", marginBottom: 16 }}
+            // Text uses the full canonical canvas; legacy-only projects retain
+            // their existing intrinsic-source preview layout.
+            style={{ position: "relative", width: hasTextAnnotations ? "min(100%, 85.3333333333vh, 995.5555555556px)" : "100%", marginInline: "auto", marginBottom: 16 }}
           >
             <video
               ref={videoRef}
@@ -2304,6 +2358,7 @@ export function VideoEditorModal({
               onEnded={advancePreviewToNextClip}
               style={{
                 width: "100%",
+                ...(hasTextAnnotations ? { aspectRatio: "16 / 9" } : {}),
                 maxHeight: "min(48vh, 560px)",
                 display: "block",
                 objectFit: "contain",
@@ -2326,7 +2381,7 @@ export function VideoEditorModal({
                 pointerEvents: "none",
               }}
             >
-              {annotations.filter((item) => timelineCurrentTime >= item.start && timelineCurrentTime <= item.end).map((item) => (
+              {annotations.filter((item) => item.type !== "text").filter((item) => timelineCurrentTime >= item.start && timelineCurrentTime <= item.end).map((item) => (
                 <div key={item.id} data-testid={`video-editor-${item.type}-${item.id}`}
                   onPointerDown={(e) => handleAnnotationPointerDown(e, item)}
                   onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
@@ -2547,6 +2602,27 @@ export function VideoEditorModal({
                 })}
               </div>
             </div>
+            {hasTextAnnotations && <div ref={textFrameRef} data-testid="video-editor-text-frame"
+              style={{ position: "absolute", ...{ left: textFrameRect.left, top: textFrameRect.top, width: textFrameRect.width, height: textFrameRect.height },
+                pointerEvents: "none", overflow: "hidden", zIndex: 6 }}>
+              {textFrameRect.height > 0 && annotations.filter(item => item.type === "text").filter(item => timelineCurrentTime >= item.start && timelineCurrentTime <= item.end).map(item => {
+                const box = textBoxToPixels(item, { ...textFrameRect, left: 0, top: 0 });
+                return <div key={item.id} data-testid={`video-editor-text-${item.id}`}
+                  onPointerDown={event => handleAnnotationPointerDown(event, item)}
+                  onClick={event => { event.stopPropagation(); selectAnnotation(item.id); }}
+                  style={{ position: "absolute", ...box, pointerEvents: "auto", touchAction: "none", cursor: "move",
+                    outline: selectedAnnotationId === item.id ? "1px solid #FC2667" : "none", outlineOffset: -1 }}>
+                  <span data-testid={`video-editor-annotation-text-content-${item.id}`}
+                    style={{ position: "absolute", inset: 0, overflow: "hidden", whiteSpace: "pre", pointerEvents: "none",
+                      color: item.color || TEXT_LAYOUT.color, fontSize: scaledTextFontSize(item.fontSize, textFrameRect.height), lineHeight: 1.2, textAlign: "left" }}>
+                    {textAnnotationDraft?.id === item.id ? textAnnotationDraft.text : item.text}
+                  </span>
+                  {selectedAnnotationId === item.id && <div data-testid={`video-editor-text-resize-${item.id}`}
+                    onPointerDown={event => handleAnnotationPointerDown(event, item, true)}
+                    style={{ position: "absolute", right: 0, bottom: 0, width: 12, height: 12, background: "#FC2667", cursor: "nwse-resize", touchAction: "none" }} />}
+                </div>;
+              })}
+            </div>}
           </div>
         )}
 
@@ -2656,6 +2732,9 @@ export function VideoEditorModal({
             <span id="video-editor-tooltip-line" role="tooltip" className="video-editor-tool-tooltip">Linie hinzufügen</span>
           </span>
 
+          <button type="button" className="video-editor-tool-button" aria-label="Text hinzufügen" title="Text hinzufügen"
+            onClick={() => addAnnotation(undefined, "text")}>Text</button>
+
           {selectedClipId && (
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
               Geschwindigkeit
@@ -2733,10 +2812,21 @@ export function VideoEditorModal({
         <div className="video-editor-cover-actions" data-testid="video-editor-cover-actions">
         {selectedAnnotation && <>
           <span>{annotationName(selectedAnnotation)}:</span>
-          <label>Farbe <input type="color" aria-label={`${selectedAnnotation.type === "line" ? "Linien" : annotationName(selectedAnnotation)}farbe`} value={selectedAnnotation.color ?? "#FC2667"}
+          {selectedAnnotation.type === "text" && <>
+            <label>Text <textarea aria-label="Textinhalt" rows={2} style={{ resize: "none" }}
+              value={textAnnotationDraft?.id === selectedAnnotation.id ? textAnnotationDraft.text : selectedAnnotation.text}
+              onFocus={() => { textAnnotationEditRef.current = null; }}
+              onBlur={() => { textAnnotationEditRef.current = null; setTextAnnotationDraft(null); }}
+              onChange={event => updateTextProperty("text", event.target.value)} /></label>
+            <label>Größe <input aria-label="Textgröße" type="number" min={TEXT_LAYOUT.minFontSize} max={TEXT_LAYOUT.maxFontSize}
+              value={selectedAnnotation.fontSize}
+              onFocus={() => { textAnnotationEditRef.current = null; }} onBlur={() => { textAnnotationEditRef.current = null; }}
+              onChange={event => updateTextProperty("fontSize", Number(event.target.value))} style={{ width: 70 }} /></label>
+          </>}
+          <label>Farbe <input type="color" aria-label={`${selectedAnnotation.type === "line" ? "Linien" : annotationName(selectedAnnotation)}farbe`} value={selectedAnnotation.type === "text" ? selectedAnnotation.color || TEXT_LAYOUT.color : selectedAnnotation.color ?? "#FC2667"}
             onChange={(e) => updateAnnotation({ color: e.target.value })}
             style={{ width: 32, height: 28, padding: 2, cursor: "pointer" }} /></label>
-          {selectedAnnotation.type !== "circle" && <>
+          {selectedAnnotation.type !== "circle" && selectedAnnotation.type !== "text" && <>
           <label>Richtung <select aria-label={`${selectedAnnotation.type === "line" ? "Linien" : annotationName(selectedAnnotation)}richtung`} value={selectedAnnotation.rotation}
             onChange={(e) => updateAnnotation({ rotation: Number(e.target.value) })}>
             {selectedAnnotation.rotation % 45 !== 0 && <option value={selectedAnnotation.rotation}>{selectedAnnotation.rotation}°</option>}
@@ -3425,7 +3515,7 @@ export function VideoEditorModal({
                 {annotationName(item)} {annotations.slice(0, index + 1).filter((a) => a.type === item.type).length}
                 {(["start", "end"] as const).map((edge) => <span key={edge}
                   data-testid={`video-editor-${item.type}-${edge}-${item.id}`}
-                  title={`${edge === "start" ? "Start" : "Ende"} ${item.type === "line" ? "der Linie" : item.type === "symbol" ? "des Symbols" : item.type === "circle" ? "des Kreises" : "des Pfeils"} ziehen`}
+                  title={`${edge === "start" ? "Start" : "Ende"} ${item.type === "text" ? "des Texts" : item.type === "line" ? "der Linie" : item.type === "symbol" ? "des Symbols" : item.type === "circle" ? "des Kreises" : "des Pfeils"} ziehen`}
                   onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, edge)}
                   onClick={(e) => e.stopPropagation()}
                   style={{ position: "absolute", top: 0, bottom: 0, width: 8,

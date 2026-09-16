@@ -35,7 +35,7 @@ func validateTextAnnotation(a editorAnnotation, duration float64) error {
 		return fmt.Errorf("invalid annotation text")
 	}
 	for _, r := range a.Text {
-		if unicode.IsControl(r) {
+		if r != '\n' && unicode.IsControl(r) {
 			return fmt.Errorf("invalid annotation text")
 		}
 		visible = visible || unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsPunct(r) || unicode.IsSymbol(r)

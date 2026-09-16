@@ -13,7 +13,8 @@ describe("text annotation contract", () => {
   });
   it.each([
     { text: "" }, { text: "   " }, { text: "\u200b" }, { text: "x".repeat(121) },
-    { text: 42 }, { text: "a\n" }, { text: "\ud800" },
+    { text: 42 }, { text: "a\u0001" }, { text: "\ud800" },
+    { text: "\n" }, { text: " \t\n \n" }, { text: "\t" },
     { fontSize: 0 }, { fontSize: 257 }, { fontSize: NaN }, { fontSize: Infinity },
     { x: -1 }, { x: 90 }, { height: 0 }, { width: Infinity },
     { color: "red" }, { color: "#fff" }, { end: 1 }, { start: NaN },
@@ -23,8 +24,16 @@ describe("text annotation contract", () => {
   it("accepts optional/default color and font boundaries", () => {
     for (const color of [undefined, "", "#FFFFFF"]) for (const fontSize of [8, 256]) validateTextAnnotation({ ...text, color, fontSize });
   });
-  it("blocks text and unknown types before they can become arrows", () => {
-    expect(() => requirePreviewAnnotations([text])).toThrow("Text annotations are not yet supported in the editor");
+  it("preserves manual newlines and counts them toward the codepoint limit", () => {
+    const multiline = { ...text, text: "Grüße aus Oldenburg\näöü ÄÖÜ ß\nZeile 3" };
+    validateTextAnnotation(multiline);
+    expect(JSON.parse(serializeTimeline([], [], [multiline])).annotations[0]).toEqual(multiline);
+    validateTextAnnotation({ ...text, text: "ä".repeat(119) + "\n" });
+    expect(() => validateTextAnnotation({ ...text, text: "ä".repeat(119) + "\nß" })).toThrow();
+  });
+  it("loads validated text as text and rejects unknown types", () => {
+    expect(requirePreviewAnnotations([text])).toEqual([text]);
+    expect(() => requirePreviewAnnotations([{ ...text, text: "" }])).toThrow();
     expect(() => requirePreviewAnnotations([{ ...text, type: "unknown" }])).toThrow("Unknown annotation type");
   });
   it("leaves legacy graphic annotations unchanged", () => {

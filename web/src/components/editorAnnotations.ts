@@ -19,14 +19,14 @@ export function validateTextAnnotation(input: unknown): asserts input is TextAnn
   const a = input as TextAnnotation;
   if (a.type !== "text" || typeof a.id !== "string" || !a.id.trim()) throw new Error("Invalid text annotation");
   if (typeof a.text !== "string" || !/[\p{L}\p{N}\p{P}\p{S}]/u.test(a.text) ||
-    /[\p{Cc}\p{Cs}]/u.test(a.text) || [...a.text].length > TEXT_LAYOUT.maxLength) throw new Error("Invalid annotation text");
+    /[\p{Cc}\p{Cs}]/u.test(a.text.replace(/\n/g, "")) || [...a.text].length > TEXT_LAYOUT.maxLength) throw new Error("Invalid annotation text");
   validateTextBox(a);
   scaledTextFontSize(a.fontSize, 1080);
   if (![a.start, a.end].every(Number.isFinite) || a.start < 0 || a.end <= a.start) throw new Error("Invalid text time range");
   if (a.color !== undefined && a.color !== "" && (typeof a.color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(a.color))) throw new Error("Invalid text color");
 }
 
-export function requirePreviewAnnotations(input: unknown): GraphicAnnotation[] {
+export function requirePreviewAnnotations(input: unknown): EditorAnnotation[] {
   if (!Array.isArray(input)) throw new Error("Invalid annotations");
   for (const annotation of input) {
     if (!annotation || !["arrow", "circle", "symbol", "line", "text"].includes(annotation.type)) {
@@ -34,8 +34,7 @@ export function requirePreviewAnnotations(input: unknown): GraphicAnnotation[] {
     }
     if (annotation.type === "text") {
       validateTextAnnotation(annotation);
-      throw new Error("Text annotations are not yet supported in the editor");
     }
   }
-  return input as GraphicAnnotation[];
+  return input as EditorAnnotation[];
 }
