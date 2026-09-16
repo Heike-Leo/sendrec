@@ -5,7 +5,7 @@ import (
 	"math"
 )
 
-// Storage accepts future speeds; active rendering still requires nominal speed.
+// Shared speed contract for storage and rendering.
 func readClipSpeed(speed *float64) (float64, error) {
 	if speed == nil {
 		return 1, nil
@@ -18,13 +18,16 @@ func readClipSpeed(speed *float64) (float64, error) {
 
 func validateRenderClipSpeeds(clips []editClip) error {
 	for _, clip := range clips {
-		speed, err := readClipSpeed(clip.Speed)
+		_, err := readClipSpeed(clip.Speed)
 		if err != nil {
 			return err
 		}
-		if speed != 1 {
-			return fmt.Errorf("clip speed other than 1.0 is not supported yet")
-		}
 	}
 	return nil
+}
+
+// Callers validate speeds before constructing a render graph.
+func clipTimelineDuration(clip editClip) float64 {
+	speed, _ := readClipSpeed(clip.Speed)
+	return (clip.SourceEnd - clip.SourceStart) / speed
 }

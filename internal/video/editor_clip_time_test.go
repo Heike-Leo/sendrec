@@ -25,10 +25,10 @@ func TestClipSpeedValidation(t *testing.T) {
 			if (err == nil) != valid {
 				t.Fatalf("speed %v: %v", speed, err)
 			}
-			if valid && timeline.Clips[0].Duration != 10 {
-				t.Fatal("legacy duration changed")
+			if valid && timeline.Clips[0].Duration != 10/speed {
+				t.Fatal("incorrect timeline duration")
 			}
-			if (validateRenderClipSpeeds(timeline.Clips) == nil) != (speed == 1) {
+			if (validateRenderClipSpeeds(timeline.Clips) == nil) != valid {
 				t.Fatal("render guard")
 			}
 		})
@@ -50,7 +50,7 @@ func (a clipSpeedJSONArgument) Match(value any) bool {
 		return false
 	}
 	got := timeline.Clips[0]
-	return got.Duration == 10 && ((got.Speed == nil && a.speed == nil) || (got.Speed != nil && a.speed != nil && *got.Speed == *a.speed))
+	return got.Duration == clipTimelineDuration(got) && ((got.Speed == nil && a.speed == nil) || (got.Speed != nil && a.speed != nil && *got.Speed == *a.speed))
 }
 
 func TestClipSpeedPersistence(t *testing.T) {
@@ -68,7 +68,11 @@ func TestClipSpeedPersistence(t *testing.T) {
 			defer mock.Close()
 			handler := NewHandler(mock, &mockStorage{}, testBaseURL, 0, 0, 0, 0, testJWTSecret, true)
 			mock.ExpectExec(`UPDATE videos SET edit_timeline = \$1, updated_at = now\(\)`).WithArgs(clipSpeedJSONArgument{original.Clips[0].Speed}, "video-main", testUserID).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
-			mock.ExpectQuery(`SELECT COALESCE\(edit_timeline`).WithArgs("video-main", testUserID).WillReturnRows(pgxmock.NewRows([]string{"edit_timeline", "edit_render_status", "edit_render_error", "edit_render_video_id"}).AddRow([]byte(body), "none", nil, nil))
+			if err := validateEditTimeline(&original); err != nil {
+				t.Fatal(err)
+			}
+			stored, _ := json.Marshal(original)
+			mock.ExpectQuery(`SELECT COALESCE\(edit_timeline`).WithArgs("video-main", testUserID).WillReturnRows(pgxmock.NewRows([]string{"edit_timeline", "edit_render_status", "edit_render_error", "edit_render_video_id"}).AddRow(stored, "none", nil, nil))
 			router := chi.NewRouter()
 			router.With(newAuthMiddleware()).Put("/api/videos/{id}/editor", handler.SaveEditorTimeline)
 			router.With(newAuthMiddleware()).Get("/api/videos/{id}/editor", handler.GetEditorState)
@@ -97,13 +101,13 @@ func TestClipSpeedPersistence(t *testing.T) {
 	}
 }
 
-func TestRenderEditorTimelineRejectsPreparedSpeedBeforeDatabaseAccess(t *testing.T) {
+func TestRenderEditorTimelineRejectsInvalidSpeedBeforeDatabaseAccess(t *testing.T) {
 	handler := &Handler{}
-	for _, speed := range []string{"0.5", "0.75", "1.25", "1.5", "2"} {
+	for _, speed := range []string{"0", "-1", "0.49", "2.01"} {
 		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"version":1,"clips":[{"id":"c","sourceId":"v","sourceStart":0,"sourceEnd":10,"speed":`+speed+`}]}`))
 		response := httptest.NewRecorder()
 		handler.RenderEditorTimeline(response, request)
-		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "not supported yet") {
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "clip speed must be finite") {
 			t.Fatal(response.Code, response.Body.String())
 		}
 	}

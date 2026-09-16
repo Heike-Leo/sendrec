@@ -140,10 +140,10 @@ func validateEditTimeline(timeline *editTimeline) error {
 			return fmt.Errorf("clip ids must be unique")
 		}
 		seen[clip.ID] = struct{}{}
-		if clip.SourceStart < 0 || clip.SourceEnd <= clip.SourceStart {
+		if math.IsNaN(clip.SourceStart) || math.IsInf(clip.SourceStart, 0) || math.IsNaN(clip.SourceEnd) || math.IsInf(clip.SourceEnd, 0) || clip.SourceStart < 0 || clip.SourceEnd <= clip.SourceStart {
 			return fmt.Errorf("clip sourceEnd must be greater than sourceStart")
 		}
-		clip.Duration = clip.SourceEnd - clip.SourceStart
+		clip.Duration = clipTimelineDuration(*clip)
 		totalDuration += clip.Duration
 	}
 	if totalDuration < 1 {
@@ -476,13 +476,19 @@ func buildTimelineRenderArgsWithAudio(inputs []string, clips []editClip, sourceI
 	var concatInputs strings.Builder
 	timelineDuration := 0.0
 	for i, clip := range clips {
-		timelineDuration += clip.Duration
+		duration := clipTimelineDuration(clip)
+		timelineDuration += duration
+		speed, _ := readClipSpeed(clip.Speed)
+		pts := "PTS-STARTPTS"
+		if speed != 1 {
+			pts = fmt.Sprintf("(PTS-STARTPTS)/%.9f", speed)
+		}
 		inputIndex := sourceIndexes[clip.SourceID]
 		// FPS conversion can leave the final decoded frame short of the clip's
 		// duration. Clone that frame, then trim the padding to the original end.
 		filters = append(filters, fmt.Sprintf(
-			"[%d:v]trim=start=%.3f:end=%.3f,setpts=PTS-STARTPTS,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,tpad=stop_mode=clone:stop_duration=%.9f,trim=duration=%.9f,format=yuv420p[v%d]",
-			inputIndex, clip.SourceStart, clip.SourceEnd, clip.Duration, clip.Duration, i))
+			"[%d:v]trim=start=%.3f:end=%.3f,setpts=%s,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,tpad=stop_mode=clone:stop_duration=%.9f,trim=duration=%.9f,format=yuv420p[v%d]",
+			inputIndex, clip.SourceStart, clip.SourceEnd, pts, duration, duration, i))
 		fmt.Fprintf(&concatInputs, "[v%d]", i)
 	}
 	filters = append(filters, timelineAudioFilters(clips, audio, sourceIndexes, sources)...)
@@ -705,7 +711,7 @@ func (h *Handler) renderTimelineAsync(ctx context.Context, job renderJob) {
 	var resultID string
 	totalDuration := 0.0
 	for _, clip := range job.Timeline.Clips {
-		totalDuration += clip.Duration
+		totalDuration += clipTimelineDuration(clip)
 	}
 	err = h.db.QueryRow(ctx, `INSERT INTO videos
 		(user_id, organization_id, title, status, duration, file_size, file_key, share_token, content_type, ios_normalized)

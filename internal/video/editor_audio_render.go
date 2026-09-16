@@ -23,15 +23,41 @@ func validateRenderAudioSpeeds(segments *[]editorAudioSegment) error {
 		return nil
 	}
 	for _, segment := range *segments {
-		rate, err := readAudioSpeed(segment.Speed)
+		_, err := readAudioSpeed(segment.Speed)
 		if err != nil {
 			return err
 		}
-		if rate != 1 {
-			return fmt.Errorf("audio segment speed other than 1.0 is not supported yet")
-		}
 	}
 	return nil
+}
+
+// Linked audio inherits exactly once, and only from its uniquely identified,
+// geometrically matching clip. Inconsistent explicit linkage is a render error.
+func effectiveRenderAudioSpeed(segment editorAudioSegment, clips []editClip) (float64, error) {
+	own, err := readAudioSpeed(segment.Speed)
+	if err != nil || segment.GeometryLinked == nil || !*segment.GeometryLinked {
+		return own, err
+	}
+	offset, rate, matches := 0.0, 0.0, 0
+	for _, clip := range clips {
+		speed, err := readClipSpeed(clip.Speed)
+		if err != nil {
+			return 0, err
+		}
+		if clip.ID == segment.SourceClipID {
+			matches++
+			if clip.SourceID != segment.SourceVideoID || math.Abs(clip.SourceStart-segment.SourceStart) > 1e-6 ||
+				math.Abs(clip.SourceEnd-segment.SourceEnd) > 1e-6 || math.Abs(offset-segment.TimelineStart) > 1e-6 {
+				return 0, fmt.Errorf("linked audio geometry does not match video clip")
+			}
+			rate = speed
+		}
+		offset += clipTimelineDuration(clip)
+	}
+	if matches != 1 {
+		return 0, fmt.Errorf("linked audio requires one matching video clip")
+	}
+	return rate, nil
 }
 
 func validateAudioVolume(volume *float64) error {
@@ -51,7 +77,7 @@ func renderAudioSegments(clips []editClip, stored *[]editorAudioSegment) []edito
 		linked := true
 		segments = append(segments, editorAudioSegment{GeometryLinked: &linked, ID: "audio:" + clip.ID, SourceClipID: clip.ID,
 			SourceVideoID: clip.SourceID, SourceStart: clip.SourceStart, SourceEnd: clip.SourceEnd, TimelineStart: offset})
-		offset += clip.SourceEnd - clip.SourceStart
+		offset += clipTimelineDuration(clip)
 	}
 	return segments
 }
@@ -76,14 +102,21 @@ func renderSourceIDs(timeline editTimeline) []string {
 }
 
 func validateRenderAudio(timeline editTimeline, sources map[string]sourceVideo) error {
+	if err := validateRenderClipSpeeds(timeline.Clips); err != nil {
+		return err
+	}
 	duration := 0.0
 	for _, clip := range timeline.Clips {
-		duration += clip.SourceEnd - clip.SourceStart
+		duration += clipTimelineDuration(clip)
 	}
 	segments := renderAudioSegments(timeline.Clips, timeline.AudioSegments)
 	sort.SliceStable(segments, func(i, j int) bool { return segments[i].TimelineStart < segments[j].TimelineStart })
 	end := 0.0
 	for _, s := range segments {
+		speed, err := effectiveRenderAudioSpeed(s, timeline.Clips)
+		if err != nil {
+			return err
+		}
 		if err := validateAudioVolume(s.Volume); err != nil {
 			return err
 		}
@@ -102,7 +135,7 @@ func validateRenderAudio(timeline editTimeline, sources map[string]sourceVideo) 
 		if s.SourceEnd > float64(source.Duration)+editorAudioTolerance {
 			return fmt.Errorf("audio segment exceeds source duration")
 		}
-		segmentEnd := s.TimelineStart + s.SourceEnd - s.SourceStart
+		segmentEnd := s.TimelineStart + (s.SourceEnd-s.SourceStart)/speed
 		if segmentEnd > duration+editorAudioTolerance {
 			return fmt.Errorf("audio segment exceeds timeline duration")
 		}
@@ -124,7 +157,7 @@ func timelineAudioFilters(clips []editClip, stored *[]editorAudioSegment, indexe
 	sort.SliceStable(segments, func(i, j int) bool { return segments[i].TimelineStart < segments[j].TimelineStart })
 	duration := 0.0
 	for _, clip := range clips {
-		duration += clip.SourceEnd - clip.SourceStart
+		duration += clipTimelineDuration(clip)
 	}
 	total := int64(math.Round(duration * 48000))
 	var filters []string
@@ -143,11 +176,12 @@ func timelineAudioFilters(clips []editClip, stored *[]editorAudioSegment, indexe
 	}
 	cursor := int64(0)
 	for _, s := range segments {
+		speed, _ := effectiveRenderAudioSpeed(s, clips) // validated before the render job is queued
 		if s.SourceEnd <= s.SourceStart {
 			continue
 		}
 		start := int64(math.Round(s.TimelineStart * 48000))
-		end := min(total, int64(math.Round((s.TimelineStart+s.SourceEnd-s.SourceStart)*48000)))
+		end := min(total, int64(math.Round((s.TimelineStart+(s.SourceEnd-s.SourceStart)/speed)*48000)))
 		// Validation permits only <=1ms overlaps from rounding; retain exact
 		// subsequent timeline positions by trimming that tiny leading overlap.
 		start = max(start, cursor)
@@ -157,12 +191,16 @@ func timelineAudioFilters(clips []editClip, stored *[]editorAudioSegment, indexe
 		silence(start - cursor)
 		count := end - start
 		if sources[s.SourceVideoID].HasAudio && !s.Muted {
-			sourceStart := s.SourceStart + math.Max(0, float64(start)/48000-s.TimelineStart)
+			sourceStart := s.SourceStart + math.Max(0, float64(start)/48000-s.TimelineStart)*speed
+			tempo := ""
+			if speed != 1 {
+				tempo = fmt.Sprintf(",atempo=%.9f", speed)
+			}
 			gain := ""
 			if s.Volume != nil && *s.Volume != 1 {
 				gain = fmt.Sprintf(",volume=%.9f", *s.Volume)
 			}
-			appendPart(fmt.Sprintf("[%d:a:0]atrim=start=%.9f:end=%.9f,asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo%s,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS", indexes[s.SourceVideoID], sourceStart, s.SourceEnd, gain, count, count))
+			appendPart(fmt.Sprintf("[%d:a:0]atrim=start=%.9f:end=%.9f,asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo%s%s,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS", indexes[s.SourceVideoID], sourceStart, s.SourceEnd, tempo, gain, count, count))
 		} else {
 			silence(count)
 		}

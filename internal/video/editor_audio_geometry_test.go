@@ -18,7 +18,7 @@ func TestAudioSpeedValidationAndRenderGuard(t *testing.T) {
 		if (validateEditTimeline(&timeline) == nil) != valid {
 			t.Fatalf("validation for %v", speed)
 		}
-		if (validateRenderAudioSpeeds(&segments) == nil) != (speed == 1) {
+		if (validateRenderAudioSpeeds(&segments) == nil) != valid {
 			t.Fatalf("render guard for %v", speed)
 		}
 	}
@@ -26,15 +26,12 @@ func TestAudioSpeedValidationAndRenderGuard(t *testing.T) {
 		t.Fatal(rate, err)
 	}
 	handler := &Handler{}
-	for _, speed := range []string{"0.5", "0.75", "1.25", "1.5", "2", "0", "-1", "3"} {
+	for _, speed := range []string{"0", "-1", "3"} {
 		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"version":1,"clips":[{"id":"c","sourceId":"v","sourceStart":0,"sourceEnd":10}],"audioSegments":[{"id":"a","sourceClipId":"c","sourceVideoId":"v","sourceStart":0,"sourceEnd":10,"timelineStart":0,"speed":`+speed+`}]}`))
 		response := httptest.NewRecorder()
 		handler.RenderEditorTimeline(response, request)
 		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "audio segment speed") {
 			t.Fatal(response.Code, response.Body.String())
-		}
-		if speed != "0" && speed != "-1" && speed != "3" && !strings.Contains(response.Body.String(), "not supported yet") {
-			t.Fatal(response.Body.String())
 		}
 	}
 }
