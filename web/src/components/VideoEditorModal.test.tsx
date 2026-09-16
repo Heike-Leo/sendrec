@@ -420,7 +420,9 @@ describe("VideoEditorModal multi-source preview", () => {
         { id: "two", sourceId: "inserted", sourceStart: 30, sourceEnd: 40, duration: 10 },
       ], audioSegments: segments.map(item => ({ ...item })),
     } };
-    const view = render(<VideoEditorModal videoId="original" duration={20} onClose={vi.fn()} />);
+    // Finish async editor-state restoration and its gesture-cancelling effects
+    // before pointerDown. Finding the segment alone only guarantees DOM presence.
+    const view = await act(async () => render(<VideoEditorModal videoId="original" duration={20} onClose={vi.fn()} />));
     const bar = await screen.findByTestId("video-editor-audio-one");
     const track = screen.getByTestId("video-editor-audio-track");
     const scroller = track.parentElement!;

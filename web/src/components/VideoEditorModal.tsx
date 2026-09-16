@@ -4,8 +4,9 @@ import { formatDuration } from "../utils/format";
 import type { Video } from "../types/video";
 import { EditorAudioPreview, audioTransportKey, validAudioVolume } from "./editorAudioPreview";
 import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
-import { clipFromStored, clipToStored, requireSupportedClipSpeed, type EditorClip, type StoredEditorClip } from "./editorClipTime";
+import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorClips, timelineClipPosition, clipSourceToTimelineTime, splitEditorClip, timelineDuration as clipTimelineDuration, type EditorClip, type StoredEditorClip } from "./editorClipTime";
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
+import { canContinueClipSource } from "./editorClipTime";
 
 interface EditorAudioSegment {
   volume?: number;
@@ -333,7 +334,7 @@ export function VideoEditorModal({
     const clip = clips.find((item) => item.id === activeClipIdRef.current);
     const offset = clip ? timelineStartForClip(clip.id) : null;
     if (!clip || offset === null || !videoRef.current) return timelinePlayheadTime;
-    return offset + Math.max(0, Math.min(clip.end - clip.start, videoRef.current.currentTime - clip.start));
+    return clipSourceToTimelineTime(clip, offset, videoRef.current.currentTime);
   }
 
   function applyActiveVideoSpeed() {
@@ -709,10 +710,8 @@ export function VideoEditorModal({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  const timelineDuration = clips.reduce(
-    (sum, clip) => sum + Math.max(0, clip.end - clip.start),
-    0,
-  );
+  const clipLayout = layoutEditorClips(clips);
+  const timelineDuration = clipLayout.at(-1)?.timelineEnd ?? 0;
 
   const audioResizeInputsRef = useRef({ clips, audioSegments, timelineZoom, coverOverlays, annotations, editorHistory, rememberEditorState });
   audioResizeInputsRef.current = { clips, audioSegments, timelineZoom, coverOverlays, annotations, editorHistory, rememberEditorState };
@@ -911,50 +910,11 @@ export function VideoEditorModal({
 
   function timelineTimeToClipPosition(timelineTime: number) {
     if (clipSpeedBlocked) return null;
-    if (clips.length === 0) return null;
-
-    const clampedTime = Math.max(
-      0,
-      Math.min(timelineTime, timelineDuration),
-    );
-
-    let offset = 0;
-
-    for (let index = 0; index < clips.length; index += 1) {
-      const clip = clips[index];
-      const clipDuration = clip.end - clip.start;
-      const clipTimelineEnd = offset + clipDuration;
-
-      if (
-        clampedTime <= clipTimelineEnd ||
-        index === clips.length - 1
-      ) {
-        const insideClip = Math.max(
-          0,
-          Math.min(clampedTime - offset, clipDuration),
-        );
-
-        return {
-          clip,
-          index,
-          timelineStart: offset,
-          sourceTime: clip.start + insideClip,
-        };
-      }
-
-      offset = clipTimelineEnd;
-    }
-
-    return null;
+    return timelineClipPosition(clips, timelineTime);
   }
 
   function timelineStartForClip(clipId: string) {
-    let offset = 0;
-    for (const clip of clips) {
-      if (clip.id === clipId) return offset;
-      offset += clip.end - clip.start;
-    }
-    return null;
+    return clipLayout.find(({ clip }) => clip.id === clipId)?.timelineStart ?? null;
   }
 
   function sourceClipAtTime(sourceVideoId: string, sourceTime: number) {
@@ -990,8 +950,7 @@ export function VideoEditorModal({
       nextClip.start,
       nextClip.id,
       true,
-      nextClip.sourceVideoId === clips[currentIndex].sourceVideoId &&
-        Math.abs(nextClip.start - clips[currentIndex].end) < 1e-7,
+      canContinueClipSource(clips[currentIndex], nextClip),
     );
   }
 
@@ -1205,7 +1164,7 @@ export function VideoEditorModal({
       const { clip, index, sourceTime, timelineStart } =
         position;
 
-      const clipDuration = clip.end - clip.start;
+      const clipDuration = clipTimelineDuration(clip.start, clip.end, clip.speed);
       const distanceFromStart =
         insertAt - timelineStart;
       const distanceFromEnd =
@@ -1385,7 +1344,6 @@ export function VideoEditorModal({
 
   function handleSplit() {
     if (!allowCoupledClipAction()) return;
-    const minimumDistance = 0.1;
 
     const position =
       timelineTimeToClipPosition(timelinePlayheadTime);
@@ -1397,10 +1355,8 @@ export function VideoEditorModal({
 
     const { clip, index, sourceTime } = position;
 
-    if (
-      sourceTime <= clip.start + minimumDistance ||
-      sourceTime >= clip.end - minimumDistance
-    ) {
+    const split = splitEditorClip(clip, sourceTime, `clip-${nextClipIdRef.current}`, `clip-${nextClipIdRef.current + 1}`);
+    if (!split) {
       setError(
         "Zum Teilen muss der Abspielkopf innerhalb eines Clips stehen.",
       );
@@ -1409,17 +1365,8 @@ export function VideoEditorModal({
 
     rememberEditorState();
 
-    const leftClip: EditorClip = {
-      ...clip,
-      id: `clip-${nextClipIdRef.current++}`,
-      end: sourceTime,
-    };
-
-    const rightClip: EditorClip = {
-      ...clip,
-      id: `clip-${nextClipIdRef.current++}`,
-      start: sourceTime,
-    };
+    const [leftClip, rightClip] = split;
+    nextClipIdRef.current += 2;
 
     updateCoupledClips((previousClips) => [
       ...previousClips.slice(0, index),
@@ -2172,21 +2119,6 @@ export function VideoEditorModal({
   const trimEndPct =
     duration > 0 ? (trimEnd / duration) * 100 : 100;
 
-  let timelineOffset = 0;
-
-  const clipLayout = clips.map((clip) => {
-    const clipDuration = Math.max(0, clip.end - clip.start);
-    const timelineStart = timelineOffset;
-
-    timelineOffset += clipDuration;
-
-    return {
-      clip,
-      clipDuration,
-      timelineStart,
-    };
-  });
-
   const visibleCoverOverlays = coverOverlays
     .map((overlay, index) => ({ overlay, index }))
     .filter(
@@ -2364,13 +2296,7 @@ export function VideoEditorModal({
                   audioPreviewRef.current?.sync(previewPlayingRef.current);
                 }
                 setTimelinePlayheadTime(
-                  Math.max(
-                    clipTimelineStart,
-                    Math.min(
-                      clipTimelineStart + (activeClip.end - activeClip.start),
-                      clipTimelineStart + (sourceTime - activeClip.start),
-                    ),
-                  ),
+                  clipSourceToTimelineTime(activeClip, clipTimelineStart, sourceTime),
                 );
 
                 if (

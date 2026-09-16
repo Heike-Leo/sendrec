@@ -1,4 +1,4 @@
-// Preparation only: these time conversions do not drive playback or rendering yet.
+// Non-unit speeds remain gated in the editor until audio and rendering support them.
 export interface EditorClip {
   id: string;
   sourceVideoId: string;
@@ -45,6 +45,50 @@ export function sourceTimeToTimelineOffset(sourceTime: number, start: number, sp
 
 export function timelineOffsetToSourceTime(offset: number, start: number, speed?: number): number {
   return start + offset * readClipSpeed(speed);
+}
+
+export function layoutEditorClips(clips: EditorClip[]) {
+  let offset = 0;
+  return clips.map((clip) => {
+    const duration = Math.max(0, timelineDuration(clip.start, clip.end, clip.speed));
+    const timelineStart = offset;
+    offset += duration;
+    return { clip, timelineStart, timelineEnd: offset, timelineDuration: duration,
+      clipDuration: duration, sourceStart: clip.start, sourceEnd: clip.end, speed: readClipSpeed(clip.speed) };
+  });
+}
+
+export function timelineClipPosition(clips: EditorClip[], time: number) {
+  const layout = layoutEditorClips(clips);
+  const total = layout.at(-1)?.timelineEnd ?? 0;
+  const clamped = Math.max(0, Math.min(time, total));
+  for (let index = 0; index < layout.length; index++) {
+    const item = layout[index];
+    // Keep the established seek ownership of an exact boundary (the preceding clip).
+    if (clamped <= item.timelineEnd || index === layout.length - 1) {
+      const timelineOffset = Math.max(0, Math.min(clamped - item.timelineStart, item.timelineDuration));
+      return { clip: item.clip, index, timelineStart: item.timelineStart, timelineOffset,
+        sourceTime: timelineOffsetToSourceTime(timelineOffset, item.sourceStart, item.speed) };
+    }
+  }
+  return null;
+}
+
+export function clipSourceToTimelineTime(clip: EditorClip, timelineStart: number, sourceTime: number) {
+  return timelineStart + Math.max(0, Math.min(timelineDuration(clip.start, clip.end, clip.speed),
+    sourceTimeToTimelineOffset(sourceTime, clip.start, clip.speed)));
+}
+
+export function splitEditorClip(clip: EditorClip, sourceTime: number, leftId: string, rightId: string) {
+  // Existing strict 100-ms distance from either edge, now in visible timeline seconds.
+  if (sourceTime <= timelineOffsetToSourceTime(0.1, clip.start, clip.speed) ||
+    sourceTime >= timelineOffsetToSourceTime(-0.1, clip.end, clip.speed)) return null;
+  return [{ ...clip, id: leftId, end: sourceTime }, { ...clip, id: rightId, start: sourceTime }] as const;
+}
+
+export function canContinueClipSource(current: EditorClip, next: EditorClip): boolean {
+  // Continuity concerns source coordinates, not speed or timeline duration.
+  return current.sourceVideoId === next.sourceVideoId && Math.abs(next.start - current.end) < 1e-7;
 }
 
 export function clipFromStored(clip: StoredEditorClip): EditorClip {
