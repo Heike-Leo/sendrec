@@ -148,7 +148,7 @@ func TestAudioVolumeValidationAndGraph(t *testing.T) {
 		if value == 1 && graph != legacy {
 			t.Fatal("100 percent changed legacy path")
 		}
-		if value != 1 && !strings.Contains(graph, fmt.Sprintf("channel_layouts=stereo,volume=%.9f,apad", value)) {
+		if value != 1 && !strings.Contains(graph, fmt.Sprintf("aresample=48000:first_pts=0,volume=%.9f,apad", value)) {
 			t.Fatal(graph)
 		}
 		audio[0].Muted = true

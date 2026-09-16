@@ -137,7 +137,7 @@ func TestSpeedRenderAudioCouplingAndGaps(t *testing.T) {
 		if strings.Count(graph, ":a:0]") != 1 || strings.Contains(graph, "atempo=4.") {
 			t.Fatal(graph)
 		}
-		if speed != 1 && !strings.Contains(graph, fmt.Sprintf("channel_layouts=stereo,atempo=%.9f,volume=", speed)) {
+		if speed != 1 && !strings.Contains(graph, fmt.Sprintf("channel_layouts=stereo,atempo=%.9f,asetpts=PTS-STARTPTS+STARTPTS/%.9f,aresample=48000:first_pts=0,volume=", speed, speed)) {
 			t.Fatal(graph)
 		}
 		if !reflect.DeepEqual(segments, before) {

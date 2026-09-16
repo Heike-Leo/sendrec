@@ -193,14 +193,21 @@ func timelineAudioFilters(clips []editClip, stored *[]editorAudioSegment, indexe
 		if sources[s.SourceVideoID].HasAudio && !s.Muted {
 			sourceStart := s.SourceStart + math.Max(0, float64(start)/48000-s.TimelineStart)*speed
 			tempo := ""
+			align := ",aresample=48000:first_pts=0"
 			if speed != 1 {
 				tempo = fmt.Sprintf(",atempo=%.9f", speed)
+				// atempo preserves the initial PTS but transforms sample duration.
+				// Scale only that origin, not the already tempo-adjusted samples.
+				align = fmt.Sprintf(",asetpts=PTS-STARTPTS+STARTPTS/%.9f,aresample=48000:first_pts=0", speed)
 			}
 			gain := ""
 			if s.Volume != nil && *s.Volume != 1 {
 				gain = fmt.Sprintf(",volume=%.9f", *s.Volume)
 			}
-			appendPart(fmt.Sprintf("[%d:a:0]atrim=start=%.9f:end=%.9f,asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo%s%s,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS", indexes[s.SourceVideoID], sourceStart, s.SourceEnd, tempo, gain, count, count))
+			// Anchor to the requested source time, not the first available audio
+			// frame. Keep the source offset in PTS through atempo, then pad its
+			// scaled origin. Feeding silence through WSOLA would distort its length.
+			appendPart(fmt.Sprintf("[%d:a:0]atrim=start=%.9f:end=%.9f,asetpts=PTS-%.9f/TB,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo%s%s%s,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS", indexes[s.SourceVideoID], sourceStart, s.SourceEnd, sourceStart, tempo, align, gain, count, count))
 		} else {
 			silence(count)
 		}
