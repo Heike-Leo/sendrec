@@ -3,6 +3,11 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { VideoEditorModal, isAudioStillCoupled } from "./VideoEditorModal";
 import { EditorAudioPreview } from "./editorAudioPreview";
+import { loadAudioWaveformPeaks } from "./editorAudioWaveform";
+
+vi.mock("./editorAudioWaveform", async importOriginal => ({
+  ...await importOriginal<typeof import("./editorAudioWaveform")>(), loadAudioWaveformPeaks: vi.fn(),
+}));
 
 const mockApiFetch = vi.fn();
 
@@ -108,6 +113,7 @@ vi.mock("../api/client", () => ({
 describe("VideoEditorModal multi-source preview", () => {
   beforeEach(() => {
     mockApiFetch.mockReset();
+    vi.mocked(loadAudioWaveformPeaks).mockReset().mockRejectedValue(new Error("No waveform in this test"));
     libraryVideos = [];
     editorState = emptyEditorState;
     sourceLoadError = null;
@@ -130,6 +136,24 @@ describe("VideoEditorModal multi-source preview", () => {
       }
       return Promise.reject(new Error(`Unexpected API call: ${path}`));
     });
+  });
+
+  it("shows a waveform inside the real audio bar without changing selection, zoom or mute controls", async () => {
+    vi.mocked(loadAudioWaveformPeaks).mockResolvedValue({ min: new Float32Array([0]), max: new Float32Array([0.5]),
+      sampleRate: 1000, sampleCount: 10000, samplesPerPeak: 10000 });
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    const canvas = await screen.findByTestId("audio-waveform");
+    const segment = canvas.parentElement!;
+    expect(segment).toHaveAttribute("data-audio-id");
+    expect(canvas).toHaveStyle({ pointerEvents: "none" });
+    fireEvent.click(segment);
+    expect(screen.getByRole("button", { name: "Tonanfang kürzen" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Tonende kürzen" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Vergrößern" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ton aus" }));
+    expect(screen.getByRole("button", { name: "Ton an" })).toBeInTheDocument();
+    expect(screen.getByTestId("audio-waveform")).toBeInTheDocument();
+    expect(loadAudioWaveformPeaks).toHaveBeenCalledTimes(1);
   });
 
   it.each(["Teilen", "Video einfügen", "Clip löschen"])("blocks %s for independent audio without history or saves", async (action) => {

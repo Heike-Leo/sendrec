@@ -3,6 +3,7 @@ import { apiFetch } from "../api/client";
 import { formatDuration } from "../utils/format";
 import type { Video } from "../types/video";
 import { EditorAudioPreview, audioTransportKey, validAudioVolume } from "./editorAudioPreview";
+import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
 
 interface EditorClip {
   id: string;
@@ -250,6 +251,7 @@ export function VideoEditorModal({
     },
   ]);
   const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
+  const waveformCacheRef = useRef<AudioWaveformCache>(new Map());
   const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null);
   const [audioResizeDraft, setAudioResizeDraft] = useState<EditorAudioSegment | null>(null);
   const [movingAudioId, setMovingAudioId] = useState<string | null>(null);
@@ -3687,11 +3689,13 @@ export function VideoEditorModal({
                 boxSizing: "border-box", border: "1px solid rgba(255,255,255,0.35)", background: "#334155",
                 color: "#fff", fontSize: 12, padding: "0 12px", display: "flex", alignItems: "center",
                 gap: 6, whiteSpace: "nowrap", overflow: "hidden" }}>
+              <AudioSegmentWaveform sourceVideoId={visual.sourceVideoId} sourceStart={visual.sourceStart}
+                sourceEnd={visual.sourceEnd} zoom={timelineZoom} cache={waveformCacheRef.current} loadUrl={loadVideoUrl} />
               <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
-                strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, position: "relative", background: "#334155" }}>
                 <path d="M2 6h3l4-3v10l-4-3H2ZM12 5a5 5 0 0 1 0 6" />
               </svg>
-              <span>Originalton · {index + 1}{segment.muted === true ? " · stumm" : ""}</span>
+              <span style={{ position: "relative", background: "#334155" }}>Originalton · {index + 1}{segment.muted === true ? " · stumm" : ""}</span>
               {selectedAudioId === segment.id && (["start", "end"] as const).map(edge => (
                 <button key={edge} type="button" data-audio-resize-handle={edge} aria-label={edge === "start" ? "Tonanfang kürzen" : "Tonende kürzen"}
                   disabled={segment.sourceEnd - segment.sourceStart < 0.1}
