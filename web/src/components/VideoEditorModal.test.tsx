@@ -83,6 +83,7 @@ let editorState: typeof emptyEditorState | {
         sourceStart: number;
         sourceEnd: number;
         duration: number;
+        speed?: number;
       }>;
       overlays?: Array<{
         id: string;
@@ -135,6 +136,38 @@ describe("VideoEditorModal multi-source preview", () => {
         return Promise.reject(sourceLoadError);
       }
       return Promise.reject(new Error(`Unexpected API call: ${path}`));
+    });
+  });
+
+  it.each([0.5, 0.75, 1.25, 1.5, 2, 0, -1, NaN, Infinity])("does not activate or overwrite stored speed %s", async speed => {
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10, speed }] } };
+    const rendered = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByText(speed >= 0.5 && speed <= 2
+      ? "Clip-Geschwindigkeit ungleich 1.0 wird noch nicht unterstützt."
+      : "Clip-Geschwindigkeit muss endlich und zwischen 0.5 und 2.0 sein.");
+    expect(rendered.container.querySelector("video")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Als neues Video rendern" })).toBeNull();
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    fireEvent.click(screen.getByRole("button", { name: "Schließen" }));
+    rendered.unmount();
+    expect(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT" || options?.method === "POST")).toEqual([]);
+  });
+
+  it("keeps explicit speed one in saved clips after loading and splitting", async () => {
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10, speed: 1 }] } };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-c");
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    fireEvent.click(screen.getByRole("button", { name: "Teilen" }));
+    await waitFor(() => {
+      const save = mockApiFetch.mock.calls.find(([, options]) => options?.method === "PUT");
+      expect(save).toBeDefined();
+      const clips = JSON.parse(save![1].body).clips;
+      expect(clips).toHaveLength(2);
+      expect(clips.every((clip: { speed?: number }) => clip.speed === 1)).toBe(true);
     });
   });
 

@@ -4,14 +4,7 @@ import { formatDuration } from "../utils/format";
 import type { Video } from "../types/video";
 import { EditorAudioPreview, audioTransportKey, validAudioVolume } from "./editorAudioPreview";
 import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
-
-interface EditorClip {
-  id: string;
-  sourceVideoId: string;
-  sourceTitle?: string;
-  start: number;
-  end: number;
-}
+import { clipFromStored, clipToStored, requireSupportedClipSpeed, type EditorClip, type StoredEditorClip } from "./editorClipTime";
 
 interface EditorAudioSegment {
   volume?: number;
@@ -117,13 +110,7 @@ interface EditorHistoryEntry {
 interface StoredEditorState {
   timeline: {
     version: number;
-    clips: Array<{
-      id: string;
-      sourceId: string;
-      sourceStart: number;
-      sourceEnd: number;
-      duration: number;
-    }>;
+    clips: StoredEditorClip[];
     overlays?: EditorCoverOverlay[];
     audioSegments?: EditorAudioSegment[];
     annotations?: EditorAnnotation[];
@@ -151,13 +138,7 @@ const OVERLAY_TRACK_GAP = 4;
 function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], annotations: EditorAnnotation[] = [], audioSegments?: EditorAudioSegment[]) {
   return JSON.stringify({
     version: 1,
-    clips: clips.map((clip) => ({
-      id: clip.id,
-      sourceId: clip.sourceVideoId,
-      sourceStart: clip.start,
-      sourceEnd: clip.end,
-      duration: clip.end - clip.start,
-    })),
+    clips: clips.map(clipToStored),
     overlays,
     annotations,
     audioSegments,
@@ -216,6 +197,7 @@ export function VideoEditorModal({
   const [loadingLibrary, setLoadingLibrary] = useState(false);
   const [selectedInsertVideo, setSelectedInsertVideo] = useState<Video | null>(null);
   const [trimStart, setTrimStart] = useState(0);
+  const [clipSpeedBlocked, setClipSpeedBlocked] = useState(false);
   const [trimEnd, setTrimEnd] = useState(duration);
   const [trimming, setTrimming] = useState(false);
   const [rendering, setRendering] = useState(false);
@@ -565,6 +547,7 @@ export function VideoEditorModal({
 
   useEffect(() => {
     editorStateLoadedRef.current = false;
+    setClipSpeedBlocked(false);
     latestTimelinePayloadRef.current = null;
     lastSavedTimelinePayloadRef.current = null;
     timelineSavePendingRef.current = false;
@@ -620,12 +603,15 @@ export function VideoEditorModal({
         let restoredOverlays: EditorCoverOverlay[] = [];
         let restoredAnnotations: EditorAnnotation[] = [];
         if (state.timeline?.version === 1 && state.timeline.clips.length > 0) {
-          restoredClips = state.timeline.clips.map((clip) => ({
-            id: clip.id,
-            sourceVideoId: clip.sourceId,
-            start: clip.sourceStart,
-            end: clip.sourceEnd,
-          }));
+          try {
+            restoredClips = state.timeline.clips.map(clipFromStored);
+            restoredClips.forEach(clip => requireSupportedClipSpeed(clip.speed));
+          } catch (err) {
+            pausePreview();
+            videoRef.current?.pause();
+            setClipSpeedBlocked(true);
+            throw err;
+          }
           setClips(restoredClips);
           restoredOverlays = (state.timeline.overlays ?? []).map((overlay) => ({
             ...overlay,
@@ -912,6 +898,7 @@ export function VideoEditorModal({
 
 
   function timelineTimeToClipPosition(timelineTime: number) {
+    if (clipSpeedBlocked) return null;
     if (clips.length === 0) return null;
 
     const clampedTime = Math.max(
@@ -2128,13 +2115,7 @@ export function VideoEditorModal({
         method: "POST",
         body: JSON.stringify({
           version: 1,
-          clips: clips.map((clip) => ({
-            id: clip.id,
-            sourceId: clip.sourceVideoId,
-            sourceStart: clip.start,
-            sourceEnd: clip.end,
-            duration: clip.end - clip.start,
-          })),
+          clips: clips.map(clipToStored),
           overlays: coverOverlays.map((overlay) => ({
             id: overlay.id,
             x: overlay.x,
@@ -2292,6 +2273,7 @@ export function VideoEditorModal({
           </div>
         )}
 
+        {!clipSpeedBlocked && <>
         <audio ref={audioRef} preload="auto" hidden data-testid="video-editor-audio-preview" />
         {audioPreviewError && (
           <div role="alert">
@@ -3848,6 +3830,7 @@ export function VideoEditorModal({
             Render abgeschlossen. <a href={`/videos/${renderedVideoId}`}>Bearbeitetes Video öffnen</a>
           </div>
         )}
+        </>}
       </div>
     </div>
   );

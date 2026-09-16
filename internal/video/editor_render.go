@@ -23,11 +23,12 @@ const editorTextFont = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
 const editorTextFontSize = 32 // Fixed size for the existing 1920x1080 render target.
 
 type editClip struct {
-	ID          string  `json:"id"`
-	SourceID    string  `json:"sourceId"`
-	SourceStart float64 `json:"sourceStart"`
-	SourceEnd   float64 `json:"sourceEnd"`
-	Duration    float64 `json:"duration"`
+	Speed       *float64 `json:"speed,omitempty"`
+	ID          string   `json:"id"`
+	SourceID    string   `json:"sourceId"`
+	SourceStart float64  `json:"sourceStart"`
+	SourceEnd   float64  `json:"sourceEnd"`
+	Duration    float64  `json:"duration"`
 }
 
 type editorCoverOverlay struct {
@@ -127,6 +128,9 @@ func validateEditTimeline(timeline *editTimeline) error {
 	totalDuration := 0.0
 	for i := range timeline.Clips {
 		clip := &timeline.Clips[i]
+		if _, err := readClipSpeed(clip.Speed); err != nil {
+			return err
+		}
 		if strings.TrimSpace(clip.ID) == "" || strings.TrimSpace(clip.SourceID) == "" {
 			return fmt.Errorf("clip id and sourceId are required")
 		}
@@ -343,6 +347,10 @@ func (h *Handler) RenderEditorTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateEditTimeline(&timeline); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateRenderClipSpeeds(timeline.Clips); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
