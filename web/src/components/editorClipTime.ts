@@ -1,4 +1,4 @@
-// Non-unit speeds remain gated in the editor until audio and rendering support them.
+export const EDITOR_CLIP_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 export interface EditorClip {
   id: string;
   sourceVideoId: string;
@@ -26,8 +26,8 @@ export function readClipSpeed(speed?: number): number {
 }
 
 export function requireSupportedClipSpeed(speed?: number): void {
-  if (readClipSpeed(speed) !== 1) {
-    throw new RangeError("Clip-Geschwindigkeit ungleich 1.0 wird noch nicht unterstützt.");
+  if (!(EDITOR_CLIP_SPEEDS as readonly number[]).includes(readClipSpeed(speed))) {
+    throw new RangeError("Diese Clip-Geschwindigkeit wird nicht unterstützt.");
   }
 }
 
@@ -98,7 +98,6 @@ export function clipFromStored(clip: StoredEditorClip): EditorClip {
 
 export function clipToStored(clip: EditorClip): StoredEditorClip {
   readClipSpeed(clip.speed);
-  // Keep the legacy duration contract until timeline/preview/render support speed together.
   return { id: clip.id, sourceId: clip.sourceVideoId, sourceStart: clip.start, sourceEnd: clip.end,
-    duration: clip.end - clip.start, speed: clip.speed };
+    duration: timelineDuration(clip.start, clip.end, clip.speed), speed: clip.speed };
 }

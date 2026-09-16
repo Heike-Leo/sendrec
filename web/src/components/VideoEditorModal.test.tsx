@@ -140,33 +140,174 @@ describe("VideoEditorModal multi-source preview", () => {
     });
   });
 
-  it.each([0.5, 0.75, 1.25, 1.5, 2, 0, -1, NaN, Infinity])("blocks stored non-unit/invalid audio speed %s without overwriting it", async speed => {
+  it.each([0, -1, NaN, Infinity])("blocks stored invalid audio speed %s without overwriting it", async speed => {
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
       clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],
       audioSegments: [{ id: "a", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0, geometryLinked: false, speed }] } };
     const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
-    await screen.findByText(speed >= 0.5 && speed <= 2
-      ? "Audio-Geschwindigkeit ungleich 1.0 wird noch nicht unterstützt."
-      : "Clip-Geschwindigkeit muss endlich und zwischen 0.5 und 2.0 sein.");
+    await screen.findByText("Clip-Geschwindigkeit muss endlich und zwischen 0.5 und 2.0 sein.");
     expect(view.container.querySelector("video")).toBeNull();
     expect(screen.queryByRole("button", { name: "Als neues Video rendern" })).toBeNull();
     view.unmount();
     expect(mockApiFetch.mock.calls.filter(([, o]) => o?.method === "PUT" || o?.method === "POST")).toEqual([]);
   });
 
-  it.each([0.5, 0.75, 1.25, 1.5, 2, 0, -1, NaN, Infinity])("does not activate or overwrite stored speed %s", async speed => {
+  it.each([0, -1, NaN, Infinity])("does not activate or overwrite invalid stored speed %s", async speed => {
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
       clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10, speed }] } };
     const rendered = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
-    await screen.findByText(speed >= 0.5 && speed <= 2
-      ? "Clip-Geschwindigkeit ungleich 1.0 wird noch nicht unterstützt."
-      : "Clip-Geschwindigkeit muss endlich und zwischen 0.5 und 2.0 sein.");
+    await screen.findByText("Clip-Geschwindigkeit muss endlich und zwischen 0.5 und 2.0 sein.");
     expect(rendered.container.querySelector("video")).toBeNull();
     expect(screen.queryByRole("button", { name: "Als neues Video rendern" })).toBeNull();
     fireEvent.keyDown(document, { key: "ArrowRight" });
     fireEvent.click(screen.getByRole("button", { name: "Schließen" }));
     rendered.unmount();
     expect(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT" || options?.method === "POST")).toEqual([]);
+  });
+
+  function selectSpeedClip(fraction = 0.1) {
+    const track = screen.getByTestId("video-editor-timeline");
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
+    fireEvent.click(track, { clientX: 1000 * fraction });
+    return screen.getByRole("combobox", { name: "Geschwindigkeit" });
+  }
+
+  it("changes speed, coupled waveform geometry and rates without reloading or reanalysing", async () => {
+    vi.mocked(loadAudioWaveformPeaks).mockResolvedValue({ min: new Float32Array([0]), max: new Float32Array([0.5]),
+      sampleRate: 1000, sampleCount: 20000, samplesPerPeak: 20000 });
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1, clips: [
+      { id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 },
+      { id: "d", sourceId: "original", sourceStart: 10, sourceEnd: 20, duration: 10 },
+    ] } };
+    const view = render(<VideoEditorModal videoId="original" duration={20} onClose={vi.fn()} />);
+    await screen.findAllByTestId("audio-waveform");
+    expect(screen.queryByRole("combobox", { name: "Geschwindigkeit" })).toBeNull();
+    const select = selectSpeedClip();
+    await waitFor(() => expect(view.container.querySelector("video")?.src).toContain("original.mp4"));
+    const audio = view.container.querySelector("audio")!;
+    Object.defineProperty(audio, "readyState", { configurable: true, value: 3 });
+    await act(async () => {
+      fireEvent.loadedMetadata(view.container.querySelector("video")!);
+      fireEvent.loadedMetadata(audio);
+    });
+    const loads = vi.mocked(HTMLMediaElement.prototype.load).mock.calls.length;
+    const downloads = mockApiFetch.mock.calls.filter(([path]) => path.endsWith("/download")).length;
+    expect(select).toHaveValue("1");
+    expect(select.querySelectorAll("option")).toHaveLength(6);
+    fireEvent.change(select, { target: { value: "2" } });
+    expect(view.container.querySelector("video")?.playbackRate).toBe(2);
+    await waitFor(() => expect(view.container.querySelector("audio")?.playbackRate).toBe(2));
+    expect(parseFloat(screen.getByTestId("video-editor-clip-d").style.left)).toBeCloseTo(100 / 3);
+    expectCoupledAudio();
+    fireEvent.change(select, { target: { value: "0.5" } });
+    expect(view.container.querySelector("video")?.playbackRate).toBe(0.5);
+    expect(parseFloat(screen.getByTestId("video-editor-clip-d").style.left)).toBeCloseTo(200 / 3);
+    expectCoupledAudio();
+    fireEvent.change(select, { target: { value: "1" } });
+    expect(screen.getByTestId("video-editor-clip-d")).toHaveStyle({ left: "50%" });
+    await waitFor(() => expect(view.container.querySelector("audio")?.playbackRate).toBe(1));
+    expect(HTMLMediaElement.prototype.load).toHaveBeenCalledTimes(loads);
+    expect(mockApiFetch.mock.calls.filter(([path]) => path.endsWith("/download"))).toHaveLength(downloads);
+    expect(loadAudioWaveformPeaks).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([0.5, 0.75, 1, 1.25, 1.5, 2])("saves, reloads and renders selected speed %s", async speed => {
+    let view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-audio-track");
+    await waitFor(() => expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1));
+    const select = selectSpeedClip();
+    // Explicit 1 must also survive a real edit, not just the default omission.
+    fireEvent.change(select, { target: { value: speed === 1 ? "2" : String(speed) } });
+    if (speed === 1) fireEvent.change(select, { target: { value: "1" } });
+    let saved: Extract<typeof editorState, { timeline: { version: number } }>["timeline"];
+    await waitFor(() => {
+      const call = mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1);
+      expect(call).toBeDefined();
+      saved = JSON.parse(call![1].body);
+      expect(saved.clips[0]).toMatchObject({ speed, duration: 10 / speed });
+    });
+    view.unmount();
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: saved! };
+    view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await waitFor(() => expect(view.container.querySelector("video")?.playbackRate).toBe(speed));
+    expect(selectSpeedClip()).toHaveValue(String(speed));
+    fireEvent.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
+    await waitFor(() => {
+      const call = mockApiFetch.mock.calls.find(([path]) => path.endsWith("/editor/render"));
+      expect(JSON.parse(call![1].body).clips[0]).toMatchObject({ speed, duration: 10 / speed });
+    });
+  });
+
+  it("undoes a speed change exactly once and preserves linked gain and absolute overlays", async () => {
+    const audio = [{ id: "a", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10,
+      timelineStart: 0, geometryLinked: true, muted: true, volume: 0.4 }];
+    const overlays = [{ id: "o", x: 10, y: 10, width: 20, height: 20, start: 1, end: 3 }];
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1, clips: [
+      { id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }], audioSegments: audio, overlays } };
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-c");
+    fireEvent.change(selectSpeedClip(), { target: { value: "2" } });
+    await waitFor(() => {
+      const call = mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1);
+      expect(call).toBeDefined();
+      const payload = JSON.parse(call![1].body);
+      expect(payload.audioSegments).toEqual(audio);
+      expect(payload.overlays[0]).toMatchObject(overlays[0]);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    expect(view.container.querySelector("video")?.playbackRate).toBe(1);
+    expect(selectSpeedClip()).toHaveValue("1");
+  });
+
+  it.each([false, undefined])("does not alter independent/legacy audio when changing clip speed: %s", async geometryLinked => {
+    const audio = [{ id: "a", sourceClipId: "c", sourceVideoId: "original", sourceStart: 2, sourceEnd: 4,
+      timelineStart: 1, geometryLinked, speed: 1.5, volume: 0.4 }];
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1, clips: [
+      { id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }], audioSegments: audio } };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-c");
+    fireEvent.change(selectSpeedClip(), { target: { value: "2" } });
+    await waitFor(() => {
+      const call = mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1);
+      expect(call).toBeDefined();
+      expect(JSON.parse(call![1].body).audioSegments).toEqual(JSON.parse(JSON.stringify(audio)));
+    });
+  });
+
+  it("splits an activated 2x clip with both speeds and linked audio intact", async () => {
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1));
+    fireEvent.change(selectSpeedClip(), { target: { value: "2" } });
+    selectSpeedClip(0.4);
+    fireEvent.click(screen.getByRole("button", { name: "Teilen" }));
+    expectCoupledAudio();
+    await waitFor(() => {
+      const call = mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1);
+      expect(call).toBeDefined();
+      const payload = JSON.parse(call![1].body);
+      expect(payload.clips).toHaveLength(2);
+      expect(payload.clips.map((c: { speed: number }) => c.speed)).toEqual([2, 2]);
+      expect(payload.clips[0].sourceEnd).toBe(4);
+      expect(payload.audioSegments[1]).toMatchObject({ timelineStart: 2, sourceStart: 4, geometryLinked: true });
+    });
+  });
+
+  it.each(["audio", "overlay"])("rejects speed changes exceeding existing %s bounds without saving or history", async kind => {
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],
+      ...(kind === "audio" ? { audioSegments: [{ id: "a", sourceClipId: "c", sourceVideoId: "original",
+        sourceStart: 0, sourceEnd: 10, timelineStart: 0, geometryLinked: false }] }
+        : { overlays: [{ id: "o", x: 10, y: 10, width: 20, height: 20, start: 8, end: 10 }] }),
+    } };
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-c");
+    fireEvent.change(selectSpeedClip(), { target: { value: "2" } });
+    expect(screen.getByText(/Die Geschwindigkeit würde/)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Geschwindigkeit" })).toHaveValue("1");
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    view.unmount();
+    expect(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT")).toEqual([]);
   });
 
   it("keeps explicit speed one in saved clips after loading and splitting", async () => {

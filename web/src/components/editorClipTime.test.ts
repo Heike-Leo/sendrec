@@ -5,6 +5,9 @@ import { clipFromStored, clipToStored, readClipSpeed, requireSupportedClipSpeed,
   sourceTimeToTimelineOffset, timelineDuration, timelineOffsetToSourceTime } from "./editorClipTime";
 
 describe("clip speed preparation", () => {
+  it.each([0.6, 0.9, 1.1, 1.9])("rejects a non-menu speed %s in the editor", speed => {
+    expect(() => requireSupportedClipSpeed(speed)).toThrow("nicht unterstützt");
+  });
   it.each([0.5, 0.75, 1, 1.25, 1.5, 2])("maps source and timeline at %s without rounding", speed => {
     expect(readClipSpeed(speed)).toBe(speed);
     expect(sourceDuration(3, 13)).toBe(10);
@@ -16,8 +19,7 @@ describe("clip speed preparation", () => {
     }
     expect(timelineDuration(0.1, 0.3, speed)).toBe((0.3 - 0.1) / speed);
     expect(timelineDuration(3, 3, speed)).toBe(0);
-    if (speed === 1) expect(() => requireSupportedClipSpeed(speed)).not.toThrow();
-    else expect(() => requireSupportedClipSpeed(speed)).toThrow("noch nicht unterstützt");
+    expect(() => requireSupportedClipSpeed(speed)).not.toThrow();
   });
   it("defaults only missing speed to one", () => {
     expect(readClipSpeed()).toBe(1);
@@ -29,8 +31,8 @@ describe("clip speed preparation", () => {
     expect(() => timelineDuration(0, 10, speed)).toThrow(RangeError);
     expect(() => requireSupportedClipSpeed(speed)).toThrow(RangeError);
   });
-  it.each([undefined, 1, 1.5])("retains stored speed %s without activating duration changes", speed => {
-    const stored = JSON.parse(JSON.stringify({ id: "c", sourceId: "source", sourceStart: 3, sourceEnd: 13, duration: 10, speed }));
+  it.each([undefined, 1, 1.5])("retains stored speed %s with timeline duration", speed => {
+    const stored = JSON.parse(JSON.stringify({ id: "c", sourceId: "source", sourceStart: 3, sourceEnd: 13, duration: 10 / (speed ?? 1), speed }));
     const restored = clipFromStored(stored);
     expect(JSON.parse(JSON.stringify(clipToStored(restored)))).toEqual(stored);
     expect({ ...restored }.speed).toBe(speed);

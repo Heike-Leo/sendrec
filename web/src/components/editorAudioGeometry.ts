@@ -1,4 +1,4 @@
-import { layoutEditorClips, readClipSpeed, timelineDuration, type EditorClip } from "./editorClipTime";
+import { layoutEditorClips, readClipSpeed, requireSupportedClipSpeed, timelineDuration, type EditorClip } from "./editorClipTime";
 
 export interface EditorAudioSegment {
   speed?: number;
@@ -37,7 +37,34 @@ export function effectiveAudioSpeed(segment: EditorAudioSegment, clips: EditorCl
 }
 
 export function requireSupportedAudioSpeed(segment: EditorAudioSegment): void {
-  if (readClipSpeed(segment.speed) !== 1) throw new RangeError("Audio-Geschwindigkeit ungleich 1.0 wird noch nicht unterstützt.");
+  requireSupportedClipSpeed(segment.speed);
+}
+
+// Only explicitly linked, geometrically matching audio follows a clip edit.
+// Independent and legacy segments retain every field, including their own rate.
+export function changeClipSpeed(clips: EditorClip[], audio: EditorAudioSegment[], id: string, speed: number) {
+  requireSupportedClipSpeed(speed);
+  const before = layoutEditorClips(clips);
+  const nextClips = clips.map(clip => clip.id === id ? { ...clip, speed } : clip);
+  const after = layoutEditorClips(nextClips);
+  const nextAudio = audio.map(segment => {
+    const matches = before.filter(item => item.clip.id === segment.sourceClipId);
+    const item = matches[0];
+    if (segment.geometryLinked !== true || matches.length !== 1 ||
+      !audioGeometryMatchesClip(segment, item.clip, item.timelineStart)) return segment;
+    return { ...segment, timelineStart: after.find(next => next.clip.id === item.clip.id)!.timelineStart };
+  });
+  const duration = after.at(-1)?.timelineEnd ?? 0;
+  if (duration < 1) throw new Error("Die Timeline muss mindestens eine Sekunde lang bleiben.");
+  let end = 0;
+  for (const segment of [...nextAudio].sort((a, b) => a.timelineStart - b.timelineStart)) {
+    const segmentEnd = segment.timelineStart + audioSegmentTimelineDuration(segment, nextClips);
+    if (segmentEnd > duration + 0.001 || segment.timelineStart < end - 0.001) {
+      throw new Error("Die Geschwindigkeit würde Audiosegmente überlappen lassen oder über das Videoende hinausschieben.");
+    }
+    end = segmentEnd;
+  }
+  return { clips: nextClips, audioSegments: nextAudio, duration };
 }
 
 // A visual draft uses the captured rate even after its geometry no longer matches the clip.

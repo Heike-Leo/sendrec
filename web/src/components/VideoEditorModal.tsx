@@ -6,7 +6,8 @@ import { EditorAudioPreview, audioTransportKey, validAudioVolume } from "./edito
 import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
 import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorClips, timelineClipPosition, clipSourceToTimelineTime, splitEditorClip, timelineDuration as clipTimelineDuration, type EditorClip, type StoredEditorClip } from "./editorClipTime";
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
-import { canContinueClipSource } from "./editorClipTime";
+import { canContinueClipSource, EDITOR_CLIP_SPEEDS, readClipSpeed } from "./editorClipTime";
+import { changeClipSpeed } from "./editorAudioGeometry";
 import { effectiveAudioSpeed, audioSegmentTimelineDuration, audioGeometryDraft, commitAudioGeometry, requireSupportedAudioSpeed, type EditorAudioSegment } from "./editorAudioGeometry";
 
 export function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[] = []): EditorAudioSegment[] {
@@ -1215,6 +1216,26 @@ export function VideoEditorModal({
     if (isAudioStillCoupled(clips, audioSegments)) return true;
     setError(INDEPENDENT_AUDIO_WARNING);
     return false;
+  }
+
+  function handleClipSpeed(speed: number) {
+    if (volumeGestureRef.current || cancelAudioResizeRef.current) return;
+    const selected = clips.find(clip => clip.id === selectedClipId);
+    if (!selected || readClipSpeed(selected.speed) === speed) return;
+    try {
+      const next = changeClipSpeed(clips, audioSegments, selected.id, speed);
+      if ([...coverOverlays, ...annotations].some(item => item.end > next.duration + 0.001)) {
+        throw new Error("Die Geschwindigkeit würde bestehende Overlays oder Annotationen über das Videoende hinausschieben.");
+      }
+      rememberEditorState();
+      setClips(next.clips);
+      setAudioSegments(next.audioSegments);
+      const active = layoutEditorClips(next.clips).find(item => item.clip.id === activeClipIdRef.current);
+      if (active) setTimelinePlayheadTime(clipSourceToTimelineTime(active.clip, active.timelineStart, videoRef.current?.currentTime ?? currentTime));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Geschwindigkeit konnte nicht geändert werden.");
+    }
   }
 
   function rememberEditorState() {
@@ -2647,6 +2668,18 @@ export function VideoEditorModal({
             </button>
             <span id="video-editor-tooltip-line" role="tooltip" className="video-editor-tool-tooltip">Linie hinzufügen</span>
           </span>
+
+          {selectedClipId && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              Geschwindigkeit
+              <select aria-label="Geschwindigkeit" value={readClipSpeed(clips.find(clip => clip.id === selectedClipId)?.speed)}
+                disabled={audioGestureActive || audioVolumeDraft !== null}
+                onChange={event => handleClipSpeed(Number(event.target.value))}
+                style={{ border: "1px solid var(--color-border)", borderRadius: 8, padding: "6px 8px", background: "var(--color-surface)", color: "var(--color-text)" }}>
+                {EDITOR_CLIP_SPEEDS.map(speed => <option key={speed} value={speed}>{String(speed).replace(".", ",")}×</option>)}
+              </select>
+            </label>
+          )}
 
           {selectedClipId && (
             <button

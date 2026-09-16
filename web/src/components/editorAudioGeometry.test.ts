@@ -3,11 +3,41 @@ import { audioGeometryMatchesClip, effectiveAudioSpeed, audioSegmentTimelineDura
 import { EditorAudioPreview } from "./editorAudioPreview";
 import { coupledAudio, isAudioStillCoupled } from "./VideoEditorModal";
 import { splitEditorClip } from "./editorClipTime";
+import { changeClipSpeed } from "./editorAudioGeometry";
 
 const clip = { id: "c", sourceVideoId: "v", start: 2, end: 12 };
 const segment: EditorAudioSegment = { id: "a", sourceClipId: "c", sourceVideoId: "v", sourceStart: 2, sourceEnd: 12, timelineStart: 0 };
 
 describe("audio geometry metadata", () => {
+  it("changes only the selected clip and relocates explicitly coupled audio, preserving gain", () => {
+    const clips = [clip, { ...clip, id: "second" }];
+    const audio = coupledAudio(clips).map(s => ({ ...s, muted: true, volume: 0.4 }));
+    const result = changeClipSpeed(clips, audio, "c", 2);
+    expect(result.duration).toBe(15);
+    expect(result.clips[1]).toBe(clips[1]);
+    expect(result.audioSegments[1].timelineStart).toBe(5);
+    expect(result.audioSegments[0]).toEqual(audio[0]);
+    expect(effectiveAudioSpeed(result.audioSegments[0], result.clips)).toBe(2);
+    expect(result.audioSegments[1]).toMatchObject({ muted: true, volume: 0.4 });
+    expect(clips[0]).not.toHaveProperty("speed");
+  });
+  it.each([false, undefined])("keeps independent/legacy audio unchanged: %s", geometryLinked => {
+    const audio = [{ ...segment, sourceEnd: 4, timelineStart: 1, geometryLinked, speed: 1.5 }];
+    const result = changeClipSpeed([clip], audio, "c", 2);
+    expect(result.audioSegments[0]).toBe(audio[0]);
+    expect(effectiveAudioSpeed(result.audioSegments[0], result.clips)).toBe(1.5);
+  });
+  it("rejects overlap/end overflow without changing the input", () => {
+    const audio = [{ ...segment, geometryLinked: false }];
+    expect(() => changeClipSpeed([clip], audio, "c", 2)).toThrow("Videoende");
+    const clips = [clip, { ...clip, id: "second" }];
+    const overlap = [{ ...segment, geometryLinked: false }, coupledAudio(clips)[1]];
+    expect(() => changeClipSpeed(clips, overlap, "c", 2)).toThrow("überlappen");
+    expect(audio[0]).toEqual({ ...segment, geometryLinked: false });
+  });
+  it.each([0.6, 1.1, 0, NaN])("rejects non-menu speed %s", speed => {
+    expect(() => changeClipSpeed([clip], [], "c", speed)).toThrow();
+  });
   it.each([true, false, undefined])("compares geometry independently of intent, mute and gain: %s", geometryLinked => {
     const audio = { ...segment, geometryLinked, muted: true, volume: 0.5 };
     expect(audioGeometryMatchesClip(audio, clip, 0)).toBe(true);
@@ -79,8 +109,7 @@ describe("linked audio speed", () => {
       expect(Object.hasOwn(restored, "speed")).toBe(speed !== undefined);
       expect(Object.hasOwn(restored, "geometryLinked")).toBe(geometryLinked !== undefined);
       expect(effectiveAudioSpeed(restored, [clip])).toBe(geometryLinked === true ? 1 : speed ?? 1);
-      if (speed === undefined || speed === 1) expect(() => requireSupportedAudioSpeed(restored)).not.toThrow();
-      else expect(() => requireSupportedAudioSpeed(restored)).toThrow("noch nicht unterstützt");
+      expect(() => requireSupportedAudioSpeed(restored)).not.toThrow();
     });
   it.each([0, -1, NaN, Infinity, -Infinity, 0.49, 2.01])("rejects invalid audio speed %s even when linked", speed => {
     for (const geometryLinked of [true, false, undefined]) {
