@@ -5,6 +5,7 @@ import type { Video } from "../types/video";
 import { EditorAudioPreview, audioTransportKey, validAudioVolume } from "./editorAudioPreview";
 import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
 import { clipFromStored, clipToStored, requireSupportedClipSpeed, type EditorClip, type StoredEditorClip } from "./editorClipTime";
+import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
 
 interface EditorAudioSegment {
   volume?: number;
@@ -335,6 +336,15 @@ export function VideoEditorModal({
     return offset + Math.max(0, Math.min(clip.end - clip.start, videoRef.current.currentTime - clip.start));
   }
 
+  function applyActiveVideoSpeed() {
+    const video = videoRef.current;
+    if (video && !clipSpeedBlocked) {
+      applyMediaPlaybackSpeed(video, clips.find(clip => clip.id === activeClipIdRef.current)?.speed);
+    }
+  }
+
+  useEffect(() => { applyActiveVideoSpeed(); }, [clips, videoUrl, clipSpeedBlocked]);
+
   function tickAudioPreview() {
     const video = videoRef.current;
     const clip = clips.find((item) => item.id === activeClipIdRef.current);
@@ -425,6 +435,7 @@ export function VideoEditorModal({
       if (generation !== sourceSwitchGenerationRef.current) return;
 
       if (clipId) activeClipIdRef.current = clipId;
+      applyActiveVideoSpeed();
 
       if (activeSourceVideoIdRef.current === sourceVideoId && video.src === url) {
         if (!preservePlayback) video.currentTime = sourceTime;
@@ -451,6 +462,7 @@ export function VideoEditorModal({
             return;
           }
           video.currentTime = Math.max(0, Math.min(sourceTime, video.duration || sourceTime));
+          applyActiveVideoSpeed();
           resolve();
         };
         const handleError = () => {
@@ -2304,6 +2316,7 @@ export function VideoEditorModal({
                 if (e.currentTarget.volume !== 0) e.currentTarget.volume = 0;
               }}
               onPlay={() => {
+                applyActiveVideoSpeed();
                 previewPlayingRef.current = true;
                 if (!videoSwitchPendingRef.current) audioPreviewRef.current?.sync(true, true);
               }}
@@ -2322,11 +2335,13 @@ export function VideoEditorModal({
                 if (internalPauseRef.current) { internalPauseRef.current = false; return; }
                 if (!e.currentTarget.ended) pausePreview();
               }}
-              onSeeking={() => { audioPreviewRef.current?.stop(); }}
+              onSeeking={() => { applyActiveVideoSpeed(); audioPreviewRef.current?.stop(); }}
               onSeeked={() => {
+                applyActiveVideoSpeed();
                 if (!videoSwitchPendingRef.current) audioPreviewRef.current?.sync(previewPlayingRef.current, true);
               }}
               onLoadedMetadata={(e) => {
+                applyActiveVideoSpeed();
                 e.currentTarget.muted = true;
                 e.currentTarget.defaultMuted = true;
                 e.currentTarget.volume = 0;

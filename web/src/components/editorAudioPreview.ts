@@ -1,3 +1,6 @@
+import { readClipSpeed, timelineDuration, timelineOffsetToSourceTime } from "./editorClipTime";
+import { applyMediaPlaybackSpeed, mediaDriftInTimelineSeconds, seekMediaTimelineOffset } from "./editorMediaPlayback";
+
 // Playback-only view of the existing persisted segments. No separate timeline state.
 interface AudioSegment {
   volume?: number;
@@ -24,13 +27,21 @@ interface PreviewOptions {
   url: (sourceId: string) => string | Promise<string>;
   error: (message: string | null) => void;
   canCheckDrift?: () => boolean;
+  // Engine-only preparation; the editor does not supply this yet. Never use video rate here.
+  speed?: (segment: AudioSegment) => number | undefined;
 }
+
+type PlaybackSegment = AudioSegment & { speed: number };
+const segmentEnd = (segment: PlaybackSegment) => segment.timelineStart +
+  timelineDuration(segment.sourceStart, segment.sourceEnd, segment.speed);
+const sourceAt = (segment: PlaybackSegment, time: number) =>
+  timelineOffsetToSourceTime(time - segment.timelineStart, segment.sourceStart, segment.speed);
 
 export class EditorAudioPreview {
   private generation = 0;
   private playing = false;
   private disposed = false;
-  private segment: AudioSegment | null = null;
+  private segment: PlaybackSegment | null = null;
   private source: string | null = null;
   private sourceUrl: string | null = null;
   private pending = false;
@@ -45,6 +56,12 @@ export class EditorAudioPreview {
   private visibilityResyncPending = false;
   private volumeDraft: { id: string; value: number } | null = null;
 
+  private playbackSegments(): PlaybackSegment[] | null {
+    try {
+      return this.options.segments().map(segment => ({ ...segment, speed: readClipSpeed(this.options.speed?.(segment)) }));
+    } catch { return null; }
+  }
+
   setVolumeDraft(draft: { id: string; value: number } | null, apply = true) {
     this.volumeDraft = draft;
     if (apply) this.updateVolume();
@@ -53,8 +70,7 @@ export class EditorAudioPreview {
   updateVolume() {
     if (this.disposed) return;
     const time = this.options.time();
-    const active = this.options.segments().find(item => time >= item.timelineStart &&
-      time < item.timelineStart + item.sourceEnd - item.sourceStart);
+    const active = this.playbackSegments()?.find(item => time >= item.timelineStart && time < segmentEnd(item));
     if (!active || active.muted === true) return;
     const value = this.volumeDraft?.id === active.id ? this.volumeDraft.value : active.volume;
     if (!validAudioVolume(value)) return;
@@ -91,14 +107,15 @@ export class EditorAudioPreview {
       this.audio.src !== this.sourceUrl ||
       (this.audio.currentSrc && this.audio.currentSrc !== this.sourceUrl)) return null;
     const time = this.options.time();
-    const active = this.options.segments().filter((item) =>
+    const active = (this.playbackSegments() ?? []).filter((item) =>
       item.sourceEnd > item.sourceStart && time >= item.timelineStart &&
-      time < item.timelineStart + item.sourceEnd - item.sourceStart,
+      time < segmentEnd(item),
     );
     if (active.length !== 1 || active[0].muted === true || active[0].sourceVideoId !== this.source ||
       audioTransportKey([active[0]]) !== audioTransportKey([this.segment])) return null;
-    const target = active[0].sourceStart + time - active[0].timelineStart;
-    return Number.isFinite(target) && Number.isFinite(this.audio.currentTime) ? target : null;
+    const target = sourceAt(active[0], time);
+    return Number.isFinite(target) && Number.isFinite(this.audio.currentTime)
+      ? { sourceTime: target, speed: active[0].speed } : null;
   }
 
   // Called by the existing preview timer. This method never controls transport.
@@ -110,7 +127,7 @@ export class EditorAudioPreview {
       this.resetDriftConfirmation();
       return;
     }
-    const drift = this.audio.currentTime - target;
+    const drift = mediaDriftInTimelineSeconds(this.audio.currentTime, target.sourceTime, target.speed);
     const magnitude = Math.abs(drift);
     const direction = Math.sign(drift);
     // Epsilon keeps exact 100/250-ms boundaries stable in floating-point seconds.
@@ -128,13 +145,13 @@ export class EditorAudioPreview {
     const freshTarget = this.driftTarget();
     this.resetDriftConfirmation();
     if (freshTarget === null) return;
-    const freshDrift = this.audio.currentTime - freshTarget;
+    const freshDrift = mediaDriftInTimelineSeconds(this.audio.currentTime, freshTarget.sourceTime, freshTarget.speed);
     if (!this.visibilityResyncPending &&
       (Math.abs(freshDrift) <= 0.1 + 1e-9 || Math.sign(freshDrift) !== direction)) return;
     this.visibilityResyncPending = false;
     this.correctionUntil = now + 1000;
     try {
-      this.audio.currentTime = freshTarget;
+      this.audio.currentTime = freshTarget.sourceTime;
     } catch {
       // A media source may become unseekable; leave recovery to existing transport paths.
     }
@@ -151,10 +168,10 @@ export class EditorAudioPreview {
       this.alignOnPlaying = false;
       const time = this.options.time();
       const segment = this.segment;
-      if (time < segment.timelineStart || time >= segment.timelineStart + segment.sourceEnd - segment.sourceStart) {
+      if (time < segment.timelineStart || time >= segmentEnd(segment)) {
         this.sync(true, true);
       } else {
-        this.audio.currentTime = segment.sourceStart + time - segment.timelineStart;
+        seekMediaTimelineOffset(this.audio, segment.sourceStart, time - segment.timelineStart, segment.speed);
       }
     }
   };
@@ -184,9 +201,15 @@ export class EditorAudioPreview {
     if (this.blocked && !force) return;
     if (force) this.blocked = false;
     const time = this.options.time();
-    const segment = this.options.segments().find((item) =>
+    const segments = this.playbackSegments();
+    if (!segments) {
+      this.stop();
+      this.options.error("Ungültige Audio-Geschwindigkeit.");
+      return;
+    }
+    const segment = segments.find((item) =>
       item.sourceEnd > item.sourceStart && time >= item.timelineStart &&
-      time < item.timelineStart + item.sourceEnd - item.sourceStart,
+      time < segmentEnd(item),
     ) ?? null;
     const previous = this.segment;
     const wasPlaying = this.playing;
@@ -210,7 +233,8 @@ export class EditorAudioPreview {
     if (!force && playing && wasPlaying && !this.pending && previous &&
       this.source === segment.sourceVideoId && previous.id !== segment.id &&
       Math.abs(previous.sourceEnd - segment.sourceStart) < 1e-7 &&
-      Math.abs(previous.timelineStart + previous.sourceEnd - previous.sourceStart - segment.timelineStart) < 1e-7) {
+      Math.abs(segmentEnd(previous) - segment.timelineStart) < 1e-7) {
+      applyMediaPlaybackSpeed(this.audio, segment.speed);
       this.segment = { ...segment };
       return;
     }
@@ -235,12 +259,12 @@ export class EditorAudioPreview {
     const ready = () => {
       if (!valid()) return;
       const now = this.options.time();
-      if (now < segment.timelineStart || now >= segment.timelineStart + segment.sourceEnd - segment.sourceStart) {
+      if (now < segment.timelineStart || now >= segmentEnd(segment)) {
         this.sync(this.playing, true);
         return;
       }
       try {
-        this.audio.currentTime = segment.sourceStart + now - segment.timelineStart;
+        seekMediaTimelineOffset(this.audio, segment.sourceStart, now - segment.timelineStart, segment.speed);
         this.pending = false;
         if (this.playing) {
           this.updateVolume();

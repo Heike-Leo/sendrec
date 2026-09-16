@@ -171,6 +171,27 @@ describe("VideoEditorModal multi-source preview", () => {
     });
   });
 
+  it("reapplies nominal video speed on metadata, play, seek and undo without unmuting", async () => {
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-clip-1");
+    const video = document.querySelector("video")!;
+    Object.defineProperty(video, "preservesPitch", { configurable: true, writable: true, value: false });
+    for (const event of ["loadedmetadata", "play", "seeking", "seeked"]) {
+      video.playbackRate = 2;
+      fireEvent(video, new Event(event));
+      expect(video.playbackRate).toBe(1);
+      expect(video.preservesPitch).toBe(true);
+      expect(video.muted).toBe(true);
+    }
+    fireEvent.pause(video);
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    fireEvent.click(screen.getByRole("button", { name: "Teilen" }));
+    video.playbackRate = 2;
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    await waitFor(() => expect(video.playbackRate).toBe(1));
+  });
+
   it("shows a waveform inside the real audio bar without changing selection, zoom or mute controls", async () => {
     vi.mocked(loadAudioWaveformPeaks).mockResolvedValue({ min: new Float32Array([0]), max: new Float32Array([0.5]),
       sampleRate: 1000, sampleCount: 10000, samplesPerPeak: 10000 });

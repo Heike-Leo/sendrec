@@ -14,7 +14,7 @@ describe("independent audio preview", () => {
   let audio: HTMLAudioElement;
   let preview: EditorAudioPreview;
   let time: number;
-  let segments: (typeof first & { muted?: boolean; volume?: number })[];
+  let segments: (typeof first & { muted?: boolean; volume?: number; previewSpeed?: number })[];
   let url: ReturnType<typeof vi.fn<(id: string) => string | Promise<string>>>;
   let error: ReturnType<typeof vi.fn<(message: string | null) => void>>;
   function metadata() { audio.dispatchEvent(new Event("loadedmetadata")); }
@@ -30,7 +30,78 @@ describe("independent audio preview", () => {
     vi.spyOn(audio, "play").mockResolvedValue();
     url = vi.fn((id: string) => `https://media.example/${id}.mp4`);
     error = vi.fn();
+    preview = new EditorAudioPreview(audio, { segments: () => segments, time: () => time, url, error,
+      speed: segment => segments.find(item => item.id === segment.id)?.previewSpeed });
+  });
+
+  it.each([0.5, 0.75, 1, 1.25, 1.5, 2])("prepares audio rate %s, seeks and respects the scaled end", speed => {
+    segments = [{ ...first, sourceStart: 10, sourceEnd: 20, timelineStart: 3, previewSpeed: speed, volume: 0.4 }];
+    Object.defineProperty(audio, "preservesPitch", { configurable: true, writable: true, value: false });
+    time = 4;
+    preview.sync(true); metadata();
+    expect(audio.playbackRate).toBe(speed);
+    expect(audio.currentTime).toBe(10 + speed);
+    expect(audio.preservesPitch).toBe(true);
+    expect(audio.volume).toBe(0.4);
+    time = 4.5;
+    preview.sync(false, true);
+    expect(audio.currentTime).toBe(10 + 1.5 * speed);
+    time = 3 + 10 / speed;
+    vi.mocked(audio.play).mockClear();
+    preview.sync(true);
+    expect(audio.play).not.toHaveBeenCalled();
+    expect(audio.pause).toHaveBeenCalled();
+  });
+
+  it("changes rate at a contiguous same-source boundary without reloading, seeking or restarting", () => {
+    segments = [{ ...first, previewSpeed: 2 },
+      { ...second, sourceVideoId: "one", sourceStart: 5, sourceEnd: 7, timelineStart: 1, previewSpeed: 0.5 }];
+    preview.sync(true); metadata();
+    expect(audio.playbackRate).toBe(2);
+    const seek = vi.spyOn(audio, "currentTime", "set");
+    time = 1;
+    preview.sync(true);
+    expect(audio.playbackRate).toBe(0.5);
+    expect(seek).not.toHaveBeenCalled();
+    expect(audio.load).toHaveBeenCalledTimes(1);
+    expect(audio.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates rate after an asynchronous source switch and ignores obsolete source requests", async () => {
+    const pending = deferred<string>();
+    url.mockReturnValueOnce(pending.promise);
+    segments = [{ ...first, previewSpeed: 2 }, { ...second, timelineStart: 1, previewSpeed: 0.5 }];
+    preview.sync(true);
+    time = 2;
+    preview.sync(true); metadata();
+    pending.resolve("https://media.example/obsolete.mp4");
+    await pending.promise;
+    expect(audio.playbackRate).toBe(0.5);
+    expect(audio.currentTime).toBe(10.5);
+    expect(audio.src).toBe("https://media.example/two.mp4");
+  });
+
+  it("preserves mute and live volume independently of speed", () => {
+    segments = [{ ...first, previewSpeed: 2, muted: true, volume: 0.3 }];
+    preview.sync(true);
+    expect(url).not.toHaveBeenCalled();
+    segments[0].muted = false;
+    preview.sync(true); metadata();
+    const seek = vi.spyOn(audio, "currentTime", "set");
+    preview.setVolumeDraft({ id: "a", value: 0.6 });
+    expect(audio.volume).toBe(0.6);
+    expect(audio.playbackRate).toBe(2);
+    expect(seek).not.toHaveBeenCalled();
+  });
+
+  it("defaults to one without a speed adapter, regardless of extra source properties", () => {
+    preview.dispose();
+    segments = [{ ...first, previewSpeed: 2 }];
     preview = new EditorAudioPreview(audio, { segments: () => segments, time: () => time, url, error });
+    time = 0.5;
+    preview.sync(true); metadata();
+    expect(audio.playbackRate).toBe(1);
+    expect(audio.currentTime).toBe(3.5);
   });
 
   it("starts the segment source at sourceStart plus timeline offset", () => {
@@ -333,6 +404,7 @@ describe("audio preview drift control", () => {
   }
 
   beforeEach(() => {
+    previewSpeed = undefined;
     hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
     time = 1;
     videoReady = true;
@@ -349,7 +421,7 @@ describe("audio preview drift control", () => {
     preview = new EditorAudioPreview(audio, {
       segments: () => segments, time: readTime,
       url: (id) => `https://media.example/${id}.mp4`,
-      error: vi.fn(), canCheckDrift: () => videoReady,
+      error: vi.fn(), canCheckDrift: () => videoReady, speed: () => previewSpeed,
     });
     preview.sync(true, true);
     audio.dispatchEvent(new Event("loadedmetadata"));
@@ -357,6 +429,29 @@ describe("audio preview drift control", () => {
     writeTime = vi.spyOn(audio, "currentTime", "set");
   });
   afterEach(() => { preview.dispose(); vi.restoreAllMocks(); });
+
+  let previewSpeed: number | undefined;
+  it.each([0.5, 2])("measures tolerance and resync thresholds in timeline seconds at %s", speed => {
+    previewSpeed = speed;
+    preview.sync(true, true);
+    audio.dispatchEvent(new Event("playing"));
+    const target = 10 + time * speed;
+    expect(audio.currentTime).toBe(target);
+    audio.currentTime = target + 0.1 * speed;
+    writeTime.mockClear();
+    preview.checkDrift(0); preview.checkDrift(250);
+    expect(writeTime).not.toHaveBeenCalled();
+    audio.currentTime = target + 0.15 * speed;
+    writeTime.mockClear();
+    preview.checkDrift(500);
+    expect(writeTime).not.toHaveBeenCalled();
+    preview.checkDrift(750);
+    expect(writeTime).toHaveBeenCalledExactlyOnceWith(target);
+    audio.currentTime = target - 0.25 * speed;
+    writeTime.mockClear();
+    preview.checkDrift(1750);
+    expect(writeTime).toHaveBeenCalledExactlyOnceWith(target);
+  });
 
   it.each([0, 0.099, -0.099, 0.1, -0.1])("never seeks within tolerance (%s seconds)", (value) => {
     drift(value);
