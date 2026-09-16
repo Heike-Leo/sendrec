@@ -24,7 +24,8 @@ func renderAudioSegments(clips []editClip, stored *[]editorAudioSegment) []edito
 	segments := make([]editorAudioSegment, 0, len(clips))
 	offset := 0.0
 	for _, clip := range clips {
-		segments = append(segments, editorAudioSegment{ID: "audio:" + clip.ID, SourceClipID: clip.ID,
+		linked := true
+		segments = append(segments, editorAudioSegment{GeometryLinked: &linked, ID: "audio:" + clip.ID, SourceClipID: clip.ID,
 			SourceVideoID: clip.SourceID, SourceStart: clip.SourceStart, SourceEnd: clip.SourceEnd, TimelineStart: offset})
 		offset += clip.SourceEnd - clip.SourceStart
 	}

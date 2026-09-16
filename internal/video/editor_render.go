@@ -61,14 +61,15 @@ type editorAnnotation struct {
 }
 
 type editorAudioSegment struct {
-	Volume        *float64 `json:"volume,omitempty"`
-	Muted         bool     `json:"muted"`
-	ID            string   `json:"id"`
-	SourceClipID  string   `json:"sourceClipId"`
-	SourceVideoID string   `json:"sourceVideoId"`
-	SourceStart   float64  `json:"sourceStart"`
-	SourceEnd     float64  `json:"sourceEnd"`
-	TimelineStart float64  `json:"timelineStart"`
+	GeometryLinked *bool    `json:"geometryLinked,omitempty"`
+	Volume         *float64 `json:"volume,omitempty"`
+	Muted          bool     `json:"muted"`
+	ID             string   `json:"id"`
+	SourceClipID   string   `json:"sourceClipId"`
+	SourceVideoID  string   `json:"sourceVideoId"`
+	SourceStart    float64  `json:"sourceStart"`
+	SourceEnd      float64  `json:"sourceEnd"`
+	TimelineStart  float64  `json:"timelineStart"`
 }
 
 type editTimeline struct {

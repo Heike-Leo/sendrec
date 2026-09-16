@@ -7,19 +7,9 @@ import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWav
 import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorClips, timelineClipPosition, clipSourceToTimelineTime, splitEditorClip, timelineDuration as clipTimelineDuration, type EditorClip, type StoredEditorClip } from "./editorClipTime";
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
 import { canContinueClipSource } from "./editorClipTime";
+import type { EditorAudioSegment } from "./editorAudioGeometry";
 
-interface EditorAudioSegment {
-  volume?: number;
-  muted?: boolean;
-  id: string;
-  sourceClipId: string;
-  sourceVideoId: string;
-  sourceStart: number;
-  sourceEnd: number;
-  timelineStart: number;
-}
-
-function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[] = []): EditorAudioSegment[] {
+export function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[] = []): EditorAudioSegment[] {
   const used = new Set(previous.map((segment) => segment.id));
   let timelineStart = 0;
   return clips.map((clip) => {
@@ -29,7 +19,8 @@ function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[] = []):
       while (used.has(id)) id = `audio:${id}`;
     }
     used.add(id);
-    const segment = { id, sourceClipId: clip.id, sourceVideoId: clip.sourceVideoId,
+    const segment = { ...(existing ? { geometryLinked: existing.geometryLinked } : { geometryLinked: true }),
+      id, sourceClipId: clip.id, sourceVideoId: clip.sourceVideoId,
       sourceStart: clip.start, sourceEnd: clip.end, timelineStart };
     timelineStart += clip.end - clip.start;
     return segment;
@@ -828,7 +819,7 @@ export function VideoEditorModal({
       audioResizeInputsRef.current.rememberEditorState();
       const changes = edge === "move" ? { timelineStart: draft.timelineStart } : edge === "end" ? { sourceEnd: draft.sourceEnd } :
         { sourceStart: draft.sourceStart, timelineStart: draft.timelineStart };
-      setAudioSegments(previous => previous.map(item => item.id === initial.id ? { ...item, ...changes } : item));
+      setAudioSegments(previous => previous.map(item => item.id === initial.id ? { ...item, ...changes, geometryLinked: false } : item));
     };
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => { if (!valid()) cancel(); });
     observer?.observe(track);
