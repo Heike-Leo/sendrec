@@ -7,12 +7,11 @@ import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWav
 import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorClips, timelineClipPosition, clipSourceToTimelineTime, splitEditorClip, timelineDuration as clipTimelineDuration, type EditorClip, type StoredEditorClip } from "./editorClipTime";
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
 import { canContinueClipSource } from "./editorClipTime";
-import type { EditorAudioSegment } from "./editorAudioGeometry";
+import { effectiveAudioSpeed, audioSegmentTimelineDuration, type EditorAudioSegment } from "./editorAudioGeometry";
 
 export function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[] = []): EditorAudioSegment[] {
   const used = new Set(previous.map((segment) => segment.id));
-  let timelineStart = 0;
-  return clips.map((clip) => {
+  return layoutEditorClips(clips).map(({ clip, timelineStart }) => {
     const existing = previous.find((segment) => segment.sourceClipId === clip.id);
     let id = existing?.id ?? `audio:${clip.id}`;
     if (!existing) {
@@ -22,7 +21,6 @@ export function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[]
     const segment = { ...(existing ? { geometryLinked: existing.geometryLinked } : { geometryLinked: true }),
       id, sourceClipId: clip.id, sourceVideoId: clip.sourceVideoId,
       sourceStart: clip.start, sourceEnd: clip.end, timelineStart };
-    timelineStart += clip.end - clip.start;
     return segment;
   });
 }
@@ -347,13 +345,18 @@ export function VideoEditorModal({
     audioPreviewRef.current?.sync(true);
   }
 
-  const audioInputsRef = useRef({ audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview });
-  audioInputsRef.current = { audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview };
+  const audioInputsRef = useRef({ clips, audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview });
+  audioInputsRef.current = { clips, audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview };
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     const preview = new EditorAudioPreview(audio, {
       segments: () => audioInputsRef.current.audioSegments,
+      speed: segment => {
+        const inputs = audioInputsRef.current;
+        const original = inputs.audioSegments.find(item => item.id === segment.id);
+        return original ? effectiveAudioSpeed(original, inputs.clips) : 1;
+      },
       time: () => audioInputsRef.current.previewTimelineTime(),
       url: (id) => audioInputsRef.current.loadVideoUrl(id),
       error: setAudioPreviewError,
@@ -379,7 +382,7 @@ export function VideoEditorModal({
     };
   }, []);
 
-  const audioTransport = audioTransportKey(audioSegments);
+  const audioTransport = JSON.stringify([audioTransportKey(audioSegments), audioSegments.map(segment => effectiveAudioSpeed(segment, clips))]);
   useEffect(() => {
     if (!videoSwitchPendingRef.current) audioPreviewRef.current?.sync(previewPlayingRef.current, true);
   }, [audioTransport, videoUrl]);
@@ -819,6 +822,8 @@ export function VideoEditorModal({
       audioResizeInputsRef.current.rememberEditorState();
       const changes = edge === "move" ? { timelineStart: draft.timelineStart } : edge === "end" ? { sourceEnd: draft.sourceEnd } :
         { sourceStart: draft.sourceStart, timelineStart: draft.timelineStart };
+      // Until 23d.4 freezes speed on detachment, false intentionally returns to 1x.
+      // Non-unit clip speeds remain blocked in the ordinary editor.
       setAudioSegments(previous => previous.map(item => item.id === initial.id ? { ...item, ...changes, geometryLinked: false } : item));
     };
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => { if (!valid()) cancel(); });
@@ -3596,7 +3601,7 @@ export function VideoEditorModal({
               title={`Originalton · Segment ${index + 1}`}
               style={{ position: "absolute", top: 4, bottom: 4,
                 left: `${timelineDuration > 0 ? visual.timelineStart / timelineDuration * 100 : 0}%`,
-                width: `${timelineDuration > 0 ? (visual.sourceEnd - visual.sourceStart) / timelineDuration * 100 : 0}%`,
+                width: `${timelineDuration > 0 ? audioSegmentTimelineDuration(visual, clips) / timelineDuration * 100 : 0}%`,
                 cursor: movingAudioId === segment.id ? "grabbing" : "grab", touchAction: "none",
                 outline: selectedAudioId === segment.id ? "1px solid #FC2667" : undefined,
                 outlineOffset: -1,

@@ -27,7 +27,7 @@ interface PreviewOptions {
   url: (sourceId: string) => string | Promise<string>;
   error: (message: string | null) => void;
   canCheckDrift?: () => boolean;
-  // Engine-only preparation; the editor does not supply this yet. Never use video rate here.
+  // Effective segment rate supplied by the editor; never multiply by video playbackRate.
   speed?: (segment: AudioSegment) => number | undefined;
 }
 

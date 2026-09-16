@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
 import { loadAudioWaveformPeaks } from "./editorAudioWaveform";
+import { audioSegmentTimelineDuration } from "./editorAudioGeometry";
 
 vi.mock("./editorAudioWaveform", async importOriginal => ({
   ...await importOriginal<typeof import("./editorAudioWaveform")>(), loadAudioWaveformPeaks: vi.fn(),
@@ -82,6 +83,30 @@ describe("audio segment waveform visualization", () => {
     render(view("one", 2, 2));
     expect(screen.queryByTestId("audio-waveform")).toBeNull();
     expect(loadUrl).not.toHaveBeenCalled();
+  });
+  it("scales the same source peaks with linked duration at 2x/0.5x and zoom without reanalysis", async () => {
+    const segment = { id: "a", sourceClipId: "c", sourceVideoId: "one", sourceStart: 0, sourceEnd: 4, timelineStart: 0, geometryLinked: true };
+    const clip = { id: "c", sourceVideoId: "one", start: 0, end: 4 };
+    width = 40;
+    const rendered = render(view("one", segment.sourceStart, segment.sourceEnd));
+    await waitFor(() => expect(fillRect).toHaveBeenCalled());
+    for (const speed of [2, 0.5, 1]) {
+      const duration = audioSegmentTimelineDuration(segment, [{ ...clip, speed }]);
+      expect(duration).toBe(4 / speed);
+      for (const zoom of [1, 10]) {
+        width = duration * 10 * zoom;
+        fillRect.mockClear();
+        rendered.rerender(view("one", segment.sourceStart, segment.sourceEnd, zoom));
+        act(() => resize());
+        expect((screen.getByTestId("audio-waveform") as HTMLCanvasElement).width).toBe(width);
+        // Source peak beginning at 3s appears at timeline 3/speed, scaled only by pixels/second.
+        const firstFullPeak = fillRect.mock.calls.find(call => call[3] === 16);
+        expect(firstFullPeak?.[0]).toBe(3 / speed * 10 * zoom);
+      }
+    }
+    expect(loadAudioWaveformPeaks).toHaveBeenCalledTimes(1);
+    expect(loadUrl).toHaveBeenCalledTimes(1);
+    expect(segment.sourceStart).toBe(0); expect(segment.sourceEnd).toBe(4);
   });
   it("does not reuse one source's waveform while another source loads", async () => {
     const rendered = render(view()); await screen.findByTestId("audio-waveform");
