@@ -140,6 +140,20 @@ describe("VideoEditorModal multi-source preview", () => {
     });
   });
 
+  it.each([0.5, 0.75, 1.25, 1.5, 2, 0, -1, NaN, Infinity])("blocks stored non-unit/invalid audio speed %s without overwriting it", async speed => {
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],
+      audioSegments: [{ id: "a", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0, geometryLinked: false, speed }] } };
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByText(speed >= 0.5 && speed <= 2
+      ? "Audio-Geschwindigkeit ungleich 1.0 wird noch nicht unterstützt."
+      : "Clip-Geschwindigkeit muss endlich und zwischen 0.5 und 2.0 sein.");
+    expect(view.container.querySelector("video")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Als neues Video rendern" })).toBeNull();
+    view.unmount();
+    expect(mockApiFetch.mock.calls.filter(([, o]) => o?.method === "PUT" || o?.method === "POST")).toEqual([]);
+  });
+
   it.each([0.5, 0.75, 1.25, 1.5, 2, 0, -1, NaN, Infinity])("does not activate or overwrite stored speed %s", async speed => {
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
       clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10, speed }] } };
@@ -289,7 +303,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT")).toHaveLength(0);
     fireEvent.pointerUp(document, { pointerId: 1 });
     fireEvent.pointerUp(document, { pointerId: 1 });
-    const expected = { geometryLinked: false, id: "audio:one", sourceClipId: "one", sourceVideoId: "original",
+    const expected = { geometryLinked: false, speed: 1, id: "audio:one", sourceClipId: "one", sourceVideoId: "original",
       sourceStart: edge === "start" ? 2 : 0, sourceEnd: edge === "end" ? 8 : 10, timelineStart: edge === "start" ? 2 : 0 };
     expect(ui.bar).toHaveAttribute("data-source-start", String(expected.sourceStart));
     expect(ui.bar).toHaveAttribute("data-source-end", String(expected.sourceEnd));
@@ -445,6 +459,7 @@ describe("VideoEditorModal multi-source preview", () => {
       await waitFor(() => expect(mockApiFetch.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
       const payload = JSON.parse(mockApiFetch.mock.calls.find(([, o]) => o?.method === "PUT")![1].body);
       expect(payload.audioSegments[0].geometryLinked).toBe(false);
+      expect(payload.audioSegments[0].speed).toBe(1);
       expect(payload.audioSegments[1]).toEqual(moveAudio[1]);
       fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
       mockApiFetch.mockClear();
@@ -457,7 +472,7 @@ describe("VideoEditorModal multi-source preview", () => {
   it.each([true, false, undefined].flatMap(geometryLinked =>
     ["cancel", "unchanged", "trim-unchanged", "mute", "volume"].map(action => ({ geometryLinked, action }))))(
     "retains linkage $geometryLinked through $action and save/reload", async ({ geometryLinked, action }) => {
-      const original = { ...moveAudio[0], geometryLinked };
+      const original = { ...moveAudio[0], geometryLinked, speed: 1 };
       const ui = await mountAudioMove([original, moveAudio[1]]);
       fireEvent.click(ui.bar);
       if (action === "mute") fireEvent.click(screen.getByRole("button", { name: "Ton aus" }));
@@ -483,6 +498,7 @@ describe("VideoEditorModal multi-source preview", () => {
       ui.unmount();
       const payload = JSON.parse(mockApiFetch.mock.calls.filter(([, o]) => o?.method === "PUT").at(-1)![1].body);
       expect(payload.audioSegments[0].geometryLinked).toBe(geometryLinked);
+      expect(payload.audioSegments[0].speed).toBe(1);
       expect(Object.hasOwn(payload.audioSegments[0], "geometryLinked")).toBe(geometryLinked !== undefined);
       editorState = { ...emptyEditorState, renderStatus: "none", timeline: payload };
       const reloaded = await act(async () => render(<VideoEditorModal videoId="original" duration={20} onClose={vi.fn()} />));
@@ -522,7 +538,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getAllByTestId(/^video-editor-clip-/).map(e => e.outerHTML)).toEqual(clips);
     await waitFor(() => expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(true));
     const payload = JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body);
-    expect(payload.audioSegments).toEqual([{ ...moveAudio[0], timelineStart: 4 + dx / 50, geometryLinked: false }, moveAudio[1]]);
+    expect(payload.audioSegments).toEqual([{ ...moveAudio[0], timelineStart: 4 + dx / 50, geometryLinked: false, speed: 1 }, moveAudio[1]]);
     for (const action of ["Teilen", "Video einfügen", "Clip löschen"]) {
       if (action === "Clip löschen") fireEvent.click(screen.getByTestId("video-editor-clip-one"));
       fireEvent.click(screen.getByRole("button", { name: action }));

@@ -38,9 +38,15 @@ func (a audioJSONArgument) Match(value any) bool {
 
 func TestAudioSegmentsPersistence(t *testing.T) {
 	legacy := `[{"id":"audio:a","sourceClipId":"a","sourceVideoId":"video-main","sourceStart":0,"sourceEnd":20,"timelineStart":0}]`
-	for _, audio := range []string{"", "[]", legacy, strings.Replace(legacy, `"id":`, `"muted":true,"id":`, 1), strings.Replace(legacy, `"id":`, `"muted":false,"id":`, 1),
+	cases := []string{"", "[]", legacy, strings.Replace(legacy, `"id":`, `"muted":true,"id":`, 1), strings.Replace(legacy, `"id":`, `"muted":false,"id":`, 1),
 		strings.Replace(legacy, `"id":`, `"volume":0,"id":`, 1), strings.Replace(legacy, `"id":`, `"volume":0.5,"id":`, 1), strings.Replace(legacy, `"id":`, `"volume":1,"id":`, 1),
-		strings.Replace(legacy, `"id":`, `"geometryLinked":true,"id":`, 1), strings.Replace(legacy, `"id":`, `"geometryLinked":false,"id":`, 1)} {
+		strings.Replace(legacy, `"id":`, `"geometryLinked":true,"id":`, 1), strings.Replace(legacy, `"id":`, `"geometryLinked":false,"id":`, 1)}
+	for _, speed := range []string{"0.5", "0.75", "1", "1.25", "1.5", "2"} {
+		for _, linked := range []string{"", `"geometryLinked":true,`, `"geometryLinked":false,`} {
+			cases = append(cases, strings.Replace(legacy, `"id":`, `"speed":`+speed+`,`+linked+`"id":`, 1))
+		}
+	}
+	for _, audio := range cases {
 		t.Run("audio="+audio, func(t *testing.T) {
 			expected := audio
 			if audio != "" {

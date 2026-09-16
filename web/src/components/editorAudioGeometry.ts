@@ -1,6 +1,7 @@
-import { layoutEditorClips, timelineDuration, type EditorClip } from "./editorClipTime";
+import { layoutEditorClips, readClipSpeed, timelineDuration, type EditorClip } from "./editorClipTime";
 
 export interface EditorAudioSegment {
+  speed?: number;
   geometryLinked?: boolean;
   volume?: number;
   muted?: boolean;
@@ -22,7 +23,8 @@ export function audioGeometryMatchesClip(segment: EditorAudioSegment, clip: Edit
 }
 
 export function effectiveAudioSpeed(segment: EditorAudioSegment, clips: EditorClip[]): number {
-  if (segment.geometryLinked !== true) return 1;
+  const ownSpeed = readClipSpeed(segment.speed);
+  if (segment.geometryLinked !== true) return ownSpeed;
   // A missing or ambiguous reference must never inherit a different source's rate.
   if (clips.filter(clip => clip.id === segment.sourceClipId).length !== 1) return 1;
   try {
@@ -32,6 +34,29 @@ export function effectiveAudioSpeed(segment: EditorAudioSegment, clips: EditorCl
     // Invalid clip speeds are rejected at editor load; fail closed for malformed internal input too.
     return 1;
   }
+}
+
+export function requireSupportedAudioSpeed(segment: EditorAudioSegment): void {
+  if (readClipSpeed(segment.speed) !== 1) throw new RangeError("Audio-Geschwindigkeit ungleich 1.0 wird noch nicht unterstützt.");
+}
+
+// A visual draft uses the captured rate even after its geometry no longer matches the clip.
+export function audioGeometryDraft(initial: EditorAudioSegment, edge: "move" | "start" | "end",
+  deltaTime: number, speed: number, minimum = 0, maximum = Infinity): EditorAudioSegment {
+  readClipSpeed(speed);
+  const draft = { ...initial, geometryLinked: false, speed };
+  if (edge === "move") return { ...draft, timelineStart: Math.max(minimum, Math.min(maximum, initial.timelineStart + deltaTime)) };
+  if (edge === "end") return { ...draft, sourceEnd: Math.max(initial.sourceStart + 0.1 * speed,
+    Math.min(initial.sourceEnd, initial.sourceEnd + deltaTime * speed)) };
+  const delta = Math.max(0, Math.min((initial.sourceEnd - initial.sourceStart) / speed - 0.1, deltaTime));
+  return { ...draft, sourceStart: initial.sourceStart + delta * speed, timelineStart: initial.timelineStart + delta };
+}
+
+export function commitAudioGeometry(initial: EditorAudioSegment, draft: EditorAudioSegment, speed: number): EditorAudioSegment {
+  const changed = Math.abs(draft.timelineStart - initial.timelineStart) > 1e-6 ||
+    Math.abs(draft.sourceStart - initial.sourceStart) > 1e-6 || Math.abs(draft.sourceEnd - initial.sourceEnd) > 1e-6;
+  return changed ? { ...initial, timelineStart: draft.timelineStart, sourceStart: draft.sourceStart,
+    sourceEnd: draft.sourceEnd, geometryLinked: false, speed: readClipSpeed(speed) } : initial;
 }
 
 export function audioSegmentTimelineDuration(segment: EditorAudioSegment, clips: EditorClip[]): number {

@@ -61,6 +61,7 @@ type editorAnnotation struct {
 }
 
 type editorAudioSegment struct {
+	Speed          *float64 `json:"speed,omitempty"`
 	GeometryLinked *bool    `json:"geometryLinked,omitempty"`
 	Volume         *float64 `json:"volume,omitempty"`
 	Muted          bool     `json:"muted"`
@@ -154,6 +155,9 @@ func validateEditTimeline(timeline *editTimeline) error {
 		}
 		ids := make(map[string]bool)
 		for _, segment := range *timeline.AudioSegments {
+			if _, err := readAudioSpeed(segment.Speed); err != nil {
+				return err
+			}
 			if err := validateAudioVolume(segment.Volume); err != nil {
 				return err
 			}
@@ -352,6 +356,10 @@ func (h *Handler) RenderEditorTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateRenderClipSpeeds(timeline.Clips); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateRenderAudioSpeeds(timeline.AudioSegments); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}

@@ -10,6 +10,30 @@ import (
 // Match the existing source-duration tolerance: at most one millisecond.
 const editorAudioTolerance = .001
 
+func readAudioSpeed(speed *float64) (float64, error) {
+	rate, err := readClipSpeed(speed)
+	if err != nil {
+		return 0, fmt.Errorf("audio segment speed must be finite and between 0.5 and 2.0")
+	}
+	return rate, nil
+}
+
+func validateRenderAudioSpeeds(segments *[]editorAudioSegment) error {
+	if segments == nil {
+		return nil
+	}
+	for _, segment := range *segments {
+		rate, err := readAudioSpeed(segment.Speed)
+		if err != nil {
+			return err
+		}
+		if rate != 1 {
+			return fmt.Errorf("audio segment speed other than 1.0 is not supported yet")
+		}
+	}
+	return nil
+}
+
 func validateAudioVolume(volume *float64) error {
 	if volume != nil && (math.IsNaN(*volume) || math.IsInf(*volume, 0) || *volume < 0 || *volume > 1) {
 		return fmt.Errorf("audio segment volume must be finite and between 0 and 1")

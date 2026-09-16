@@ -7,7 +7,7 @@ import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWav
 import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorClips, timelineClipPosition, clipSourceToTimelineTime, splitEditorClip, timelineDuration as clipTimelineDuration, type EditorClip, type StoredEditorClip } from "./editorClipTime";
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
 import { canContinueClipSource } from "./editorClipTime";
-import { effectiveAudioSpeed, audioSegmentTimelineDuration, type EditorAudioSegment } from "./editorAudioGeometry";
+import { effectiveAudioSpeed, audioSegmentTimelineDuration, audioGeometryDraft, commitAudioGeometry, requireSupportedAudioSpeed, type EditorAudioSegment } from "./editorAudioGeometry";
 
 export function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[] = []): EditorAudioSegment[] {
   const used = new Set(previous.map((segment) => segment.id));
@@ -18,7 +18,7 @@ export function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[]
       while (used.has(id)) id = `audio:${id}`;
     }
     used.add(id);
-    const segment = { ...(existing ? { geometryLinked: existing.geometryLinked } : { geometryLinked: true }),
+    const segment = { ...(existing ? { geometryLinked: existing.geometryLinked, speed: existing.speed } : { geometryLinked: true }),
       id, sourceClipId: clip.id, sourceVideoId: clip.sourceVideoId,
       sourceStart: clip.start, sourceEnd: clip.end, timelineStart };
     return segment;
@@ -649,6 +649,8 @@ export function VideoEditorModal({
           }
         }
         const restoredAudio = state.timeline?.audioSegments ?? coupledAudio(restoredClips);
+        try { restoredAudio.forEach(requireSupportedAudioSpeed); }
+        catch (err) { pausePreview(); videoRef.current?.pause(); setClipSpeedBlocked(true); throw err; }
         if (restoredAudio.some(segment => !validAudioVolume(segment.volume))) throw new Error("Ungültige Audio-Lautstärke.");
         setAudioSegments(restoredAudio);
         const restoredPayload = serializeTimeline(restoredClips, restoredOverlays, restoredAnnotations, restoredAudio);
@@ -729,7 +731,8 @@ export function VideoEditorModal({
     const track = audioTrackRef.current;
     const scroller = track?.parentElement;
     const rect = track?.getBoundingClientRect();
-    const segmentDuration = segment.sourceEnd - segment.sourceStart;
+    const frozenSpeed = effectiveAudioSpeed(segment, clips);
+    const segmentDuration = audioSegmentTimelineDuration(segment, clips);
     if (!track || !scroller || !rect || !Number.isFinite(rect.width) || rect.width <= 0 || timelineDuration <= 0 ||
       (edge === "move" ? !Number.isFinite(segmentDuration) || segmentDuration <= 0 : segmentDuration < 0.1)) return;
     let minimum = 0;
@@ -742,7 +745,7 @@ export function VideoEditorModal({
       if (index < 0 || new Set(ordered.map(item => item.id)).size !== ordered.length) return;
       let previousEnd = 0;
       for (const item of ordered) {
-        const end = item.timelineStart + item.sourceEnd - item.sourceStart;
+        const end = item.timelineStart + audioSegmentTimelineDuration(item, clips);
         if (![item.timelineStart, item.sourceStart, item.sourceEnd, end].every(Number.isFinite) ||
           item.sourceStart < 0 || item.sourceEnd < item.sourceStart || item.timelineStart < previousEnd ||
           item.timelineStart < 0 || end > timelineDuration) return;
@@ -750,7 +753,7 @@ export function VideoEditorModal({
       }
       const previous = ordered[index - 1];
       const next = ordered[index + 1];
-      minimum = Math.max(0, previous ? previous.timelineStart + previous.sourceEnd - previous.sourceStart : 0);
+      minimum = Math.max(0, previous ? previous.timelineStart + audioSegmentTimelineDuration(previous, clips) : 0);
       maximum = Math.min(maximum, next ? next.timelineStart - segmentDuration : maximum);
       if (minimum > maximum || segment.timelineStart < minimum || segment.timelineStart > maximum) return;
       if (maximum - minimum <= 0.000001) return;
@@ -796,14 +799,7 @@ export function VideoEditorModal({
       if (ended) return;
       if (!valid()) { cancel(); return; }
       const deltaTime = (pointerX - startX + scroller.scrollLeft - startScroll) / rect.width * timelineDuration;
-      if (edge === "move") {
-        draft = { ...initial, timelineStart: Math.max(minimum, Math.min(maximum, initial.timelineStart + deltaTime)) };
-      } else if (edge === "end") {
-        draft = { ...initial, sourceEnd: Math.max(initial.sourceStart + 0.1, Math.min(initial.sourceEnd, initial.sourceEnd + deltaTime)) };
-      } else {
-        const delta = Math.max(0, Math.min(initial.sourceEnd - initial.sourceStart - 0.1, deltaTime));
-        draft = { ...initial, sourceStart: initial.sourceStart + delta, timelineStart: initial.timelineStart + delta };
-      }
+      draft = audioGeometryDraft(initial, edge, deltaTime, frozenSpeed, minimum, maximum);
       setAudioResizeDraft(draft);
     };
     const move = (event: PointerEvent) => {
@@ -815,16 +811,11 @@ export function VideoEditorModal({
     const finish = (event: PointerEvent) => {
       if (event.pointerId !== pointerId || ended) return;
       if (!valid()) { cancel(); return; }
-      const changed = edge === "move" ? Math.abs(draft.timelineStart - initial.timelineStart) > 0.000001 :
-        Math.abs(draft.sourceStart - initial.sourceStart) > 0.000001 || Math.abs(draft.sourceEnd - initial.sourceEnd) > 0.000001;
+      const committed = commitAudioGeometry(initial, draft, frozenSpeed);
       cleanup();
-      if (!changed) return;
+      if (committed === initial) return;
       audioResizeInputsRef.current.rememberEditorState();
-      const changes = edge === "move" ? { timelineStart: draft.timelineStart } : edge === "end" ? { sourceEnd: draft.sourceEnd } :
-        { sourceStart: draft.sourceStart, timelineStart: draft.timelineStart };
-      // Until 23d.4 freezes speed on detachment, false intentionally returns to 1x.
-      // Non-unit clip speeds remain blocked in the ordinary editor.
-      setAudioSegments(previous => previous.map(item => item.id === initial.id ? { ...item, ...changes, geometryLinked: false } : item));
+      setAudioSegments(previous => previous.map(item => item.id === initial.id ? committed : item));
     };
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => { if (!valid()) cancel(); });
     observer?.observe(track);
@@ -3617,7 +3608,7 @@ export function VideoEditorModal({
               <span style={{ position: "relative", background: "#334155" }}>Originalton · {index + 1}{segment.muted === true ? " · stumm" : ""}</span>
               {selectedAudioId === segment.id && (["start", "end"] as const).map(edge => (
                 <button key={edge} type="button" data-audio-resize-handle={edge} aria-label={edge === "start" ? "Tonanfang kürzen" : "Tonende kürzen"}
-                  disabled={segment.sourceEnd - segment.sourceStart < 0.1}
+                  disabled={audioSegmentTimelineDuration(segment, clips) < 0.1}
                   onPointerDown={e => handleAudioResize(e, segment, edge)}
                   onClick={e => { e.preventDefault(); e.stopPropagation(); }}
                   style={{ position: "absolute", top: 0, bottom: 0, [edge === "start" ? "left" : "right"]: 0,

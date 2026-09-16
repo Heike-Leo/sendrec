@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { audioGeometryMatchesClip, effectiveAudioSpeed, audioSegmentTimelineDuration, type EditorAudioSegment } from "./editorAudioGeometry";
+import { audioGeometryMatchesClip, effectiveAudioSpeed, audioSegmentTimelineDuration, audioGeometryDraft, commitAudioGeometry, requireSupportedAudioSpeed, type EditorAudioSegment } from "./editorAudioGeometry";
 import { EditorAudioPreview } from "./editorAudioPreview";
 import { coupledAudio, isAudioStillCoupled } from "./VideoEditorModal";
 import { splitEditorClip } from "./editorClipTime";
@@ -37,6 +37,56 @@ describe("audio geometry metadata", () => {
 });
 
 describe("linked audio speed", () => {
+  it.each([0.5, 0.75, 1, 1.25, 1.5, 2].flatMap(speed =>
+    ["move", "start", "end"].map(edge => ({ speed, edge: edge as "move" | "start" | "end" }))))(
+    "freezes $speed on $edge, preserving source/time semantics", ({ speed, edge }) => {
+      const clips = [{ ...clip, speed }];
+      const initial = coupledAudio(clips)[0];
+      const snapshot = { ...initial };
+      const rate = effectiveAudioSpeed(initial, clips);
+      const draft = audioGeometryDraft(initial, edge, edge === "end" ? -1 : 1, rate, 0, 100);
+      const result = commitAudioGeometry(initial, draft, rate);
+      expect(result.geometryLinked).toBe(false); expect(result.speed).toBe(speed);
+      expect(effectiveAudioSpeed(result, [{ ...clip, speed: 1 }])).toBe(speed);
+      expect(audioSegmentTimelineDuration(result, clips)).toBeCloseTo(10 / speed - (edge === "move" ? 0 : 1), 12);
+      if (edge === "move") { expect(result.sourceStart).toBe(2); expect(result.sourceEnd).toBe(12); }
+      if (edge === "start") {
+        expect(result.sourceStart).toBe(2 + speed);
+        expect(result.timelineStart + audioSegmentTimelineDuration(result, clips)).toBeCloseTo(10 / speed, 12);
+      }
+      if (edge === "end") expect(result.sourceEnd).toBe(12 - speed);
+      expect(initial).toEqual(snapshot); expect(snapshot).not.toHaveProperty("speed");
+      expect(commitAudioGeometry(initial, audioGeometryDraft(initial, edge, 0, rate), rate)).toBe(initial);
+      // A cancelled gesture never commits its draft, and a returned pointer commits no metadata.
+      expect(effectiveAudioSpeed(snapshot, clips)).toBe(speed);
+      if (edge !== "move") {
+        const minimum = audioGeometryDraft(initial, edge, edge === "end" ? -100 : 100, rate);
+        expect(audioSegmentTimelineDuration(minimum, clips)).toBeCloseTo(0.1, 12);
+      }
+    });
+
+  it("lets clip rate win without multiplying stored speed", () => {
+    expect(effectiveAudioSpeed({ ...segment, geometryLinked: true, speed: 0.5 }, [{ ...clip, speed: 2 }])).toBe(2);
+    expect(coupledAudio([clip], [{ ...segment, speed: 1 }])[0].speed).toBe(1);
+    expect(coupledAudio([clip])[0]).not.toHaveProperty("speed");
+  });
+  it.each([undefined, 0.5, 0.75, 1, 1.25, 1.5, 2].flatMap(speed =>
+    [true, false, undefined].map(geometryLinked => ({ speed, geometryLinked }))))(
+    "roundtrips speed $speed and linkage $geometryLinked without changing gain", ({ speed, geometryLinked }) => {
+      const original = { ...segment, speed, geometryLinked, muted: true, volume: 0.5 };
+      const restored = JSON.parse(JSON.stringify(original));
+      expect(restored.speed).toBe(speed); expect(restored.geometryLinked).toBe(geometryLinked);
+      expect(Object.hasOwn(restored, "speed")).toBe(speed !== undefined);
+      expect(Object.hasOwn(restored, "geometryLinked")).toBe(geometryLinked !== undefined);
+      expect(effectiveAudioSpeed(restored, [clip])).toBe(geometryLinked === true ? 1 : speed ?? 1);
+      if (speed === undefined || speed === 1) expect(() => requireSupportedAudioSpeed(restored)).not.toThrow();
+      else expect(() => requireSupportedAudioSpeed(restored)).toThrow("noch nicht unterstützt");
+    });
+  it.each([0, -1, NaN, Infinity, -Infinity, 0.49, 2.01])("rejects invalid audio speed %s even when linked", speed => {
+    for (const geometryLinked of [true, false, undefined]) {
+      expect(() => effectiveAudioSpeed({ ...segment, speed, geometryLinked }, [clip])).toThrow();
+    }
+  });
   it.each([undefined, 0.5, 0.75, 1, 1.25, 1.5, 2])("derives rate and duration without rounding for %s", speed => {
     const clips = [{ ...clip, speed }];
     const audio = coupledAudio(clips)[0];
@@ -71,7 +121,7 @@ describe("linked audio speed", () => {
       expect(audio[i].timelineStart + audioSegmentTimelineDuration(audio[i], clips)).toBe(audio[i + 1].timelineStart);
     }
     const moved = { ...audio[0], geometryLinked: false, timelineStart: 1 };
-    expect(effectiveAudioSpeed(moved, clips)).toBe(1); // 23d.4 must freeze pre-detachment speed.
+    expect(effectiveAudioSpeed(moved, clips)).toBe(1); // No stored speed still means 1x.
   });
   it.each([2, 0.5])("splits video and linked source audio without gaps at %s", speed => {
     const original = { ...clip, start: 0, end: 10, speed };
@@ -86,9 +136,9 @@ describe("linked audio speed", () => {
     expect(audio[1].timelineStart + audioSegmentTimelineDuration(audio[1], split)).toBe(10 / speed);
   });
 
-  it.each([2, 0.5])("feeds effective rate to real preview controller at %s, including seek/end/drift/gain", async speed => {
+  it.each([2, 0.5].flatMap(speed => [true, false, undefined].map(geometryLinked => ({ speed, geometryLinked }))))("feeds rate $speed with linkage $geometryLinked to preview", async ({ speed, geometryLinked }) => {
     const clips = [{ ...clip, speed }];
-    let segments = coupledAudio(clips).map(s => ({ ...s, volume: 0.4, muted: false }));
+    let segments = coupledAudio(clips).map(s => ({ ...s, geometryLinked, speed, volume: 0.4, muted: false }));
     const audio = document.createElement("audio");
     vi.spyOn(document, "hidden", "get").mockReturnValue(false);
     Object.defineProperties(audio, {

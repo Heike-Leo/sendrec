@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
 import { loadAudioWaveformPeaks } from "./editorAudioWaveform";
-import { audioSegmentTimelineDuration } from "./editorAudioGeometry";
+import { audioSegmentTimelineDuration, audioGeometryDraft, commitAudioGeometry } from "./editorAudioGeometry";
 
 vi.mock("./editorAudioWaveform", async importOriginal => ({
   ...await importOriginal<typeof import("./editorAudioWaveform")>(), loadAudioWaveformPeaks: vi.fn(),
@@ -50,6 +50,7 @@ describe("audio segment waveform visualization", () => {
   it("redraws on zoom, resize and draft trimming without analyzing again", async () => {
     const rendered = render(view());
     await screen.findByTestId("audio-waveform");
+    await waitFor(() => expect(fillRect.mock.calls).toEqual([[0, 8, 1, 4], [1, 6, 1, 8]]));
     fillRect.mockClear();
     rendered.rerender(view("one", 2, 4, 10));
     expect(fillRect.mock.calls).toEqual([[0, 6, 1, 8], [1, 2, 1, 16]]);
@@ -102,6 +103,13 @@ describe("audio segment waveform visualization", () => {
         // Source peak beginning at 3s appears at timeline 3/speed, scaled only by pixels/second.
         const firstFullPeak = fillRect.mock.calls.find(call => call[3] === 16);
         expect(firstFullPeak?.[0]).toBe(3 / speed * 10 * zoom);
+        const detached = commitAudioGeometry(segment, audioGeometryDraft(segment, "move", 1, speed), speed);
+        expect(audioSegmentTimelineDuration(detached, [{ ...clip, speed: 1 }])).toBe(duration);
+        width = audioSegmentTimelineDuration(detached, []) * 10 * zoom;
+        fillRect.mockClear();
+        rendered.rerender(view("one", detached.sourceStart, detached.sourceEnd, zoom));
+        act(() => resize());
+        expect(fillRect.mock.calls.find(call => call[3] === 16)?.[0]).toBe(3 / speed * 10 * zoom);
       }
     }
     expect(loadAudioWaveformPeaks).toHaveBeenCalledTimes(1);
