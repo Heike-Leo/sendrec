@@ -121,6 +121,9 @@ func annotationFilename(index int, a editorAnnotation) string {
 }
 
 func prepareArrowFiles(dir string, timeline editTimeline) error {
+	if err := validateRenderAnnotations(timeline.Annotations); err != nil {
+		return err
+	}
 	if len(timeline.Annotations) == 0 {
 		return nil
 	}

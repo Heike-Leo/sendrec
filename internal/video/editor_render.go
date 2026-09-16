@@ -45,7 +45,7 @@ type editorCoverOverlay struct {
 	Text    string   `json:"text,omitempty"`
 }
 
-// Preview annotations are persisted, but not consumed by the export graph.
+// Shapes are rendered; text is persisted but explicitly render-gated for now.
 type editorAnnotation struct {
 	ID       string  `json:"id"`
 	Type     string  `json:"type"`
@@ -58,6 +58,8 @@ type editorAnnotation struct {
 	End      float64 `json:"end"`
 	Rotation float64 `json:"rotation"`
 	Color    string  `json:"color,omitempty"`
+	Text     string  `json:"text,omitempty"`
+	FontSize float64 `json:"fontSize,omitempty"`
 }
 
 type editorAudioSegment struct {
@@ -185,8 +187,15 @@ func validateEditTimeline(timeline *editTimeline) error {
 	annotationIDs := make(map[string]bool, len(timeline.Annotations))
 	for i := range timeline.Annotations {
 		annotation := &timeline.Annotations[i]
-		if strings.TrimSpace(annotation.ID) == "" || annotationIDs[annotation.ID] || (annotation.Type != "arrow" && annotation.Type != "circle" && annotation.Type != "symbol" && annotation.Type != "line") {
-			return fmt.Errorf("annotation requires a unique id and type arrow, circle, symbol or line")
+		if strings.TrimSpace(annotation.ID) == "" || annotationIDs[annotation.ID] || (annotation.Type != "arrow" && annotation.Type != "circle" && annotation.Type != "symbol" && annotation.Type != "line" && annotation.Type != "text") {
+			return fmt.Errorf("annotation requires a unique id and type arrow, circle, symbol, line or text")
+		}
+		if annotation.Type == "text" {
+			annotationIDs[annotation.ID] = true
+			if err := validateTextAnnotation(*annotation, totalDuration); err != nil {
+				return err
+			}
+			continue
 		}
 		if annotation.Type == "symbol" {
 			switch annotation.Symbol {
@@ -356,6 +365,10 @@ func (h *Handler) RenderEditorTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateRenderClipSpeeds(timeline.Clips); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateRenderAnnotations(timeline.Annotations); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}

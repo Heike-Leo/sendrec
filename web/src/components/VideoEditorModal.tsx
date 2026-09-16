@@ -8,6 +8,7 @@ import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorCl
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
 import { canContinueClipSource, EDITOR_CLIP_SPEEDS, readClipSpeed } from "./editorClipTime";
 import { changeClipSpeed } from "./editorAudioGeometry";
+import { requirePreviewAnnotations, type EditorAnnotation as StoredAnnotation, type GraphicAnnotation as EditorAnnotation } from "./editorAnnotations";
 import { effectiveAudioSpeed, audioSegmentTimelineDuration, audioGeometryDraft, commitAudioGeometry, requireSupportedAudioSpeed, type EditorAudioSegment } from "./editorAudioGeometry";
 
 export function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[] = []): EditorAudioSegment[] {
@@ -78,20 +79,6 @@ function SymbolShape({ symbol }: { symbol: AnnotationSymbol }) {
   return <g data-symbol={symbol} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">{paths[symbol]}</g>;
 }
 
-interface EditorAnnotation {
-  id: string;
-  type: "arrow" | "circle" | "symbol" | "line";
-  symbol?: AnnotationSymbol;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  start: number;
-  end: number;
-  rotation: number;
-  color?: string;
-}
-
 interface EditorHistoryEntry {
   clips: EditorClip[];
   audioSegments: EditorAudioSegment[];
@@ -105,7 +92,7 @@ interface StoredEditorState {
     clips: StoredEditorClip[];
     overlays?: EditorCoverOverlay[];
     audioSegments?: EditorAudioSegment[];
-    annotations?: EditorAnnotation[];
+    annotations?: StoredAnnotation[];
   };
   renderStatus: "none" | "processing" | "ready" | "failed";
   renderError: string | null;
@@ -127,7 +114,7 @@ const VISIBLE_OVERLAY_TRACKS = 4;
 const OVERLAY_TRACK_HEIGHT = 38;
 const OVERLAY_TRACK_GAP = 4;
 
-function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], annotations: EditorAnnotation[] = [], audioSegments?: EditorAudioSegment[]) {
+export function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], annotations: StoredAnnotation[] = [], audioSegments?: EditorAudioSegment[]) {
   return JSON.stringify({
     version: 1,
     clips: clips.map(clipToStored),
@@ -614,6 +601,7 @@ export function VideoEditorModal({
           try {
             restoredClips = state.timeline.clips.map(clipFromStored);
             restoredClips.forEach(clip => requireSupportedClipSpeed(clip.speed));
+            restoredAnnotations = requirePreviewAnnotations(state.timeline.annotations ?? []);
           } catch (err) {
             pausePreview();
             videoRef.current?.pause();
@@ -626,7 +614,6 @@ export function VideoEditorModal({
             mode: overlay.mode === "blur" ? "blur" : "cover",
           }));
           setCoverOverlays(restoredOverlays);
-          restoredAnnotations = state.timeline.annotations ?? [];
           setAnnotations(restoredAnnotations);
           setSelectedCoverOverlayId(null);
           activeClipIdRef.current = restoredClips[0].id;
