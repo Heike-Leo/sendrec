@@ -2,6 +2,7 @@ package video
 
 import (
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -13,6 +14,112 @@ import (
 	"strings"
 	"testing"
 )
+
+// Render contract for the canonical DOM tests. No change to persisted arrow
+// geometry or render positions is needed for any source aspect ratio.
+func TestArrowAspectRatioRenderContract(t *testing.T) {
+	a := editorAnnotation{ID: "aspect-arrow", Type: "arrow", X: 10, Y: 20, Width: 30, Height: 20, Rotation: 37, Start: .2, End: 5.8, Color: "#00ff00"}
+	if got := arrowBounds(a, 1920, 1080); got != image.Rect(192, 216, 768, 432) {
+		t.Fatal(got)
+	}
+	// Browser uses a 960x540 canonical canvas, independent of source metadata.
+	preview, output := arrowVertices(a, 960, 540), arrowVertices(a, 1920, 1080)
+	for i, p := range preview {
+		if math.Abs(p.x*2-output[i].x) > 1e-9 || math.Abs(p.y*2-output[i].y) > 1e-9 {
+			t.Fatal("canonical preview and render vertices disagree")
+		}
+	}
+}
+
+func TestArrowAspectRatioFFmpegIntegration(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := t.TempDir()
+	formats := []struct{ name, filter string }{
+		{"16:9", "color=c=blue:s=160x90:r=30:d=1"},
+		{"4:3", "color=c=blue:s=160x120:r=30:d=1"},
+		{"9:16", "color=c=blue:s=90x160:r=30:d=1"},
+		{"12:5", "color=c=blue:s=240x100:r=30:d=1"},
+		{"encoded-letterbox", "color=c=blue:s=160x90:r=30:d=1,drawbox=x=0:y=0:w=iw:h=15:c=black:t=fill,drawbox=x=0:y=75:w=iw:h=15:c=black:t=fill"},
+		{"encoded-pillarbox", "color=c=blue:s=160x90:r=30:d=1,drawbox=x=0:y=0:w=20:h=ih:c=black:t=fill,drawbox=x=140:y=0:w=20:h=ih:c=black:t=fill"},
+	}
+	var inputs []string
+	var clips []editClip
+	indexes, sources := map[string]int{}, map[string]sourceVideo{}
+	for i, format := range formats {
+		input := filepath.Join(dir, fmt.Sprintf("source-%d.mp4", i))
+		if out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", strings.ReplaceAll(format.filter, "d=1", "d=6"), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-y", input).CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v %s", format.name, err, out)
+		}
+		inputs = append(inputs, input)
+		clips = append(clips, editClip{ID: format.name, SourceID: format.name, SourceEnd: 1, Duration: 1})
+		indexes[format.name], sources[format.name] = i, sourceVideo{}
+	}
+	a := editorAnnotation{ID: "aspect-arrow", Type: "arrow", X: 10, Y: 20, Width: 30, Height: 20, Rotation: 37, Start: .2, End: 5.8, Color: "#00ff00"}
+	timeline := validTimeline(clips...)
+	timeline.Annotations = []editorAnnotation{a}
+	if err := prepareArrowFiles(dir, timeline); err != nil {
+		t.Fatal(err)
+	}
+	bounds, mask := arrowBounds(a, 1920, 1080), rasterArrow(a, 1920, 1080)
+	checkFrame := func(t *testing.T, output string, at float64) {
+		pixels, err := exec.Command("ffmpeg", "-v", "error", "-ss", fmt.Sprintf("%.3f", at), "-i", output, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1").Output()
+		if err != nil || len(pixels) != 1920*1080*3 {
+			t.Fatalf("decode %.1f: %v", at, err)
+		}
+		checked := 0
+		for y := 3; y < bounds.Dy()-3; y += 3 {
+			for x := 3; x < bounds.Dx()-3; x += 3 {
+				if mask.NRGBAAt(x, y).A != 255 || mask.NRGBAAt(x-3, y).A != 255 || mask.NRGBAAt(x+3, y).A != 255 || mask.NRGBAAt(x, y-3).A != 255 || mask.NRGBAAt(x, y+3).A != 255 {
+					continue
+				}
+				p := ((y+bounds.Min.Y)*1920 + x + bounds.Min.X) * 3
+				green := pixels[p+1] > 180 && pixels[p] < 60 && pixels[p+2] < 60
+				if green != (at >= a.Start && at <= a.End) {
+					t.Fatalf("arrow position/shape/time differs at %.1f pixel %d,%d", at, x, y)
+				}
+				checked++
+			}
+		}
+		if checked < 100 {
+			t.Fatalf("insufficient samples: %d", checked)
+		}
+		t.Logf("t=%.1f: %d raster samples confirm source-independent render position/shape and time", at, checked)
+	}
+	for i, format := range formats {
+		t.Run(format.name, func(t *testing.T) {
+			output := filepath.Join(dir, fmt.Sprintf("single-%d.mp4", i))
+			clip := clips[i]
+			clip.SourceEnd, clip.Duration = 6, 6
+			args := buildAnnotatedTimelineRenderArgs([]string{inputs[i]}, []editClip{clip}, map[string]int{format.name: 0}, sources, output, nil, timeline.Annotations)
+			cmd := exec.Command("ffmpeg", args...)
+			cmd.Dir = dir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("render: %v %s", err, out)
+			}
+			for _, at := range []float64{.1, 1, 5.9} {
+				checkFrame(t, output, at)
+			}
+		})
+	}
+	t.Run("known-mixed-source-SAR-mismatch", func(t *testing.T) {
+		args := buildAnnotatedTimelineRenderArgs(inputs, clips, indexes, sources, filepath.Join(dir, "mixed.mp4"), nil, timeline.Annotations)
+		cmd := exec.Command("ffmpeg", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		// Known independent defect: scaling 9:16 to an even raster changes SAR.
+		// Keep this explicit witness until a separately authorized SAR fix.
+		if err == nil || !strings.Contains(string(out), "SAR") || !strings.Contains(string(out), "do not match") {
+			t.Fatalf("expected known concat SAR failure, got %v: %s", err, out)
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, "do not match") {
+				t.Log(line)
+			}
+		}
+	})
+}
 
 func TestArrowRenderGeometry(t *testing.T) {
 	a := editorAnnotation{X: 10, Y: 20, Width: 30, Height: 40}

@@ -194,9 +194,11 @@ export function VideoEditorModal({
   const [showSymbolPicker, setShowSymbolPicker] = useState(false);
   const symbolPickerButtonRef = useRef<HTMLButtonElement>(null);
   const annotationFrameRef = useRef<HTMLDivElement>(null);
+  const arrowFrameRef = useRef<HTMLDivElement>(null);
   const textFrameRef = useRef<HTMLDivElement>(null);
   const [textFrameRect, setTextFrameRect] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const hasTextAnnotations = annotations.some(item => item.type === "text");
+  const hasCanonicalAnnotations = hasTextAnnotations || annotations.some(item => item.type === "arrow");
   const textAnnotationEditRef = useRef<string | null>(null);
   const [textAnnotationDraft, setTextAnnotationDraft] = useState<{ id: string; text: string } | null>(null);
   useEffect(() => {
@@ -553,7 +555,7 @@ export function VideoEditorModal({
     const observer = new ResizeObserver(updateVisibleVideoFrame);
     observer.observe(video);
     return () => observer.disconnect();
-  }, [videoUrl, hasTextAnnotations]);
+  }, [videoUrl, hasCanonicalAnnotations]);
 
   useEffect(() => {
     editorStateLoadedRef.current = false;
@@ -1830,7 +1832,7 @@ export function VideoEditorModal({
     e.preventDefault();
     e.stopPropagation();
     selectAnnotation(annotation.id);
-    const rect = (annotation.type === "text" ? textFrameRef : annotationFrameRef).current?.getBoundingClientRect();
+    const rect = (annotation.type === "text" ? textFrameRef : annotation.type === "arrow" ? arrowFrameRef : annotationFrameRef).current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
     cancelAnnotationDragRef.current?.();
     const startX = e.clientX;
@@ -1919,7 +1921,7 @@ export function VideoEditorModal({
     e.preventDefault();
     e.stopPropagation();
     selectAnnotation(annotation.id);
-    const rect = annotationFrameRef.current?.getBoundingClientRect();
+    const rect = (annotation.type === "arrow" ? arrowFrameRef : annotationFrameRef).current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
     cancelAnnotationDragRef.current?.();
     const width = rect.width * annotation.width / 100;
@@ -2292,9 +2294,9 @@ export function VideoEditorModal({
           <div
             ref={previewContainerRef}
             data-testid="video-editor-preview"
-            // Text uses the full canonical canvas; legacy-only projects retain
-            // their existing intrinsic-source preview layout.
-            style={{ position: "relative", width: hasTextAnnotations ? "min(100%, 85.3333333333vh, 995.5555555556px)" : "100%", marginInline: "auto", marginBottom: 16 }}
+            // Text and arrows use the full canonical canvas. Projects without
+            // either retain their existing intrinsic-source preview layout.
+            style={{ position: "relative", width: hasCanonicalAnnotations ? "min(100%, 85.3333333333vh, 995.5555555556px)" : "100%", marginInline: "auto", marginBottom: 16 }}
           >
             <video
               ref={videoRef}
@@ -2366,7 +2368,7 @@ export function VideoEditorModal({
               onEnded={advancePreviewToNextClip}
               style={{
                 width: "100%",
-                ...(hasTextAnnotations ? { aspectRatio: "16 / 9" } : {}),
+                ...(hasCanonicalAnnotations ? { aspectRatio: "16 / 9" } : {}),
                 maxHeight: "min(48vh, 560px)",
                 display: "block",
                 objectFit: "contain",
@@ -2375,21 +2377,25 @@ export function VideoEditorModal({
               }}
             />
 
-            <div
-              data-testid="video-editor-overlay-frame"
-              ref={annotationFrameRef}
+            {[false, true].map(isArrowFrame => {
+              // Arrows share the output canvas with text. All other shapes and
+              // covers retain their existing source-relative coordinate system.
+              const frameRect = isArrowFrame ? textFrameRect : videoFrameRect;
+              return <div key={String(isArrowFrame)}
+              data-testid={isArrowFrame ? "video-editor-arrow-frame" : "video-editor-overlay-frame"}
+              ref={isArrowFrame ? arrowFrameRef : annotationFrameRef}
               style={{
                 position: "absolute",
-                left: videoFrameRect.left,
-                top: videoFrameRect.top,
-                width: videoFrameRect.width,
-                height: videoFrameRect.height,
+                left: frameRect.left,
+                top: frameRect.top,
+                width: frameRect.width,
+                height: frameRect.height,
                 overflow: "hidden",
                 borderRadius: 8,
                 pointerEvents: "none",
               }}
             >
-              {annotations.filter((item) => item.type !== "text").filter((item) => timelineCurrentTime >= item.start && timelineCurrentTime <= item.end).map((item) => (
+              {annotations.filter((item) => item.type !== "text").filter(item => (item.type === "arrow") === isArrowFrame).filter((item) => timelineCurrentTime >= item.start && timelineCurrentTime <= item.end).map((item) => (
                 <div key={item.id} data-testid={`video-editor-${item.type}-${item.id}`}
                   onPointerDown={(e) => handleAnnotationPointerDown(e, item)}
                   onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
@@ -2420,7 +2426,7 @@ export function VideoEditorModal({
                       ...(item.type === "line" ? {
                         left: "50%", top: "50%", height: 8,
                         transform: `translate(-50%, -100%) rotate(${item.rotation}deg)`, transformOrigin: "bottom center",
-                      } : { right: 5, top: Math.max(-14, -videoFrameRect.height * item.y / 100), height: 18 }),
+                      } : { right: 5, top: Math.max(-14, -frameRect.height * item.y / 100), height: 18 }),
                       width: 1, background: "#FC2667", pointerEvents: "none" }} />
                     <button type="button" aria-label={`${annotationName(item)} drehen`} title={`${annotationName(item)} drehen`}
                       data-testid={`video-editor-${item.type}-rotate-${item.id}`}
@@ -2430,7 +2436,7 @@ export function VideoEditorModal({
                         ...(item.type === "line" ? {
                           left: `calc(50% + ${14 * Math.sin(item.rotation * Math.PI / 180)}px - 6px)`,
                           top: `calc(50% - ${14 * Math.cos(item.rotation * Math.PI / 180)}px - 6px)`,
-                        } : { right: 0, top: Math.max(-18, -videoFrameRect.height * item.y / 100) }),
+                        } : { right: 0, top: Math.max(-18, -frameRect.height * item.y / 100) }),
                         width: 12, height: 12, minWidth: 0, padding: 0, borderRadius: "50%", border: "2px solid #FC2667",
                         background: "#FFFFFF", cursor: "grab", touchAction: "none", pointerEvents: "auto" }} />
                   </>}
@@ -2444,7 +2450,7 @@ export function VideoEditorModal({
                       width: 12, height: 12, background: "#FC2667", cursor: item.type === "line" ? "grab" : "nwse-resize", touchAction: "none", pointerEvents: "auto" }} />}
                 </div>
               ))}
-              {visibleCoverOverlays.map(({ overlay }) => (
+              {!isArrowFrame && <>{visibleCoverOverlays.map(({ overlay }) => (
                 <div
                   key={overlay.id}
                   data-testid={`video-editor-cover-overlay-${overlay.id}`}
@@ -2609,7 +2615,9 @@ export function VideoEditorModal({
                   );
                 })}
               </div>
-            </div>
+            </>}
+            </div>;
+            })}
             {hasTextAnnotations && <div ref={textFrameRef} data-testid="video-editor-text-frame"
               style={{ position: "absolute", ...{ left: textFrameRect.left, top: textFrameRect.top, width: textFrameRect.width, height: textFrameRect.height },
                 pointerEvents: "none", overflow: "hidden", zIndex: 6 }}>

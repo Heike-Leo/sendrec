@@ -2282,6 +2282,130 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getByLabelText("Kreisfarbe")).toHaveValue("#ff9900");
   });
 
+  // Actual DOM projected onto a 1920x1080 output; every source must agree.
+  // The companion Go test renders the same
+  // saved arrow through FFmpeg. Encoded black bars are pixels, not metadata.
+  const arrowAspectCases = [
+    { name: "16:9", w: 1920, h: 1080, box: [192, 216, 576, 216] },
+    { name: "4:3 / generated pillarbox", w: 1440, h: 1080, box: [192, 216, 576, 216] },
+    { name: "9:16 portrait / generated pillarbox", w: 1080, h: 1920, box: [192, 216, 576, 216] },
+    { name: "12:5 / generated letterbox", w: 1920, h: 800, box: [192, 216, 576, 216] },
+    { name: "16:9 with encoded letterbox pixels", w: 1920, h: 1080, box: [192, 216, 576, 216] },
+    { name: "16:9 with encoded pillarbox pixels", w: 1920, h: 1080, box: [192, 216, 576, 216] },
+  ];
+  const aspectArrow = { id: "aspect-arrow", type: "arrow" as const, x: 10, y: 20, width: 30, height: 20, rotation: 37, start: .2, end: 5.8, color: "#00ff00" };
+
+  async function openArrowAspectPreview(mixed = false, withCircle = false) {
+    editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: { version: 1,
+      clips: mixed ? [
+        { id: "c1", sourceId: "original", sourceStart: 0, sourceEnd: 3, duration: 3 },
+        { id: "c2", sourceId: "inserted", sourceStart: 0, sourceEnd: 3, duration: 3 },
+      ] : [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 6, duration: 6 }],
+      annotations: [aspectArrow, ...(withCircle ? [{ ...aspectArrow, id: "unchanged-circle", type: "circle" as const }] : [])], audioSegments: [],
+    } };
+    const view = render(<VideoEditorModal videoId="original" duration={6} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-preview");
+    const video = view.container.querySelector("video")!;
+    const rect = { left: 0, top: 0, width: 960, height: 540, right: 960, bottom: 540 } as DOMRect;
+    vi.spyOn(video, "getBoundingClientRect").mockReturnValue(rect);
+    vi.spyOn(screen.getByTestId("video-editor-preview"), "getBoundingClientRect").mockReturnValue(rect);
+    for (const id of ["video-editor-arrow-frame", "video-editor-overlay-frame"]) {
+      const frame = screen.getByTestId(id);
+      vi.spyOn(frame, "getBoundingClientRect").mockImplementation(() => ({
+        left: parseFloat(frame.style.left), top: parseFloat(frame.style.top),
+        width: parseFloat(frame.style.width), height: parseFloat(frame.style.height),
+      } as DOMRect));
+    }
+    const measure = (w: number, h: number) => {
+      Object.defineProperty(video, "videoWidth", { configurable: true, value: w });
+      Object.defineProperty(video, "videoHeight", { configurable: true, value: h });
+      fireEvent.loadedMetadata(video);
+    };
+    const box = () => {
+      const arrow = screen.getByTestId("video-editor-arrow-aspect-arrow");
+      const frame = arrow.parentElement!;
+      expect(arrow.querySelector("svg")).toHaveAttribute("preserveAspectRatio", "none");
+      expect(arrow.querySelector("polygon")).toHaveAttribute("transform", "rotate(37 50 50)");
+      expect(arrow.querySelector("polygon")).toHaveAttribute("fill", "#00ff00");
+      const px = (key: "left" | "top" | "width" | "height") => parseFloat(frame.style[key]);
+      return [2 * (px("left") + px("width") * parseFloat(arrow.style.left) / 100),
+        2 * (px("top") + px("height") * parseFloat(arrow.style.top) / 100),
+        2 * px("width") * parseFloat(arrow.style.width) / 100,
+        2 * px("height") * parseFloat(arrow.style.height) / 100];
+    };
+    return { ...view, video, measure, box };
+  }
+
+  it.each(arrowAspectCases)("matches canonical arrow render geometry for $name", async ({ w, h, box: expected }) => {
+    const ui = await openArrowAspectPreview();
+    ui.measure(w, h);
+    ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    const actual = ui.box();
+    actual.forEach((value, i) => expect(value).toBeCloseTo(expected[i], 6));
+    // Actual backend rectangle, verified by arrowBounds and the FFmpeg test.
+    const rendered = [192, 216, 576, 216];
+    expect(Math.max(...actual.map((value, i) => Math.abs(value - rendered[i])))).toBe(0);
+    const screenAngle = (b: number[]) => Math.atan2(b[3] * Math.sin(37 * Math.PI / 180), b[2] * Math.cos(37 * Math.PI / 180));
+    expect(screenAngle(actual)).toBeCloseTo(screenAngle(rendered), 8);
+    expect(ui.video).toHaveStyle({ aspectRatio: "16 / 9", objectFit: "contain" });
+    expect(screen.getByTestId("video-editor-arrow-aspect-arrow").parentElement).toBe(screen.getByTestId("video-editor-arrow-frame"));
+    ui.video.currentTime = 5.9; fireEvent.timeUpdate(ui.video);
+    expect(screen.queryByTestId("video-editor-arrow-aspect-arrow")).toBeNull();
+    expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+  });
+
+  it("keeps canonical arrow geometry across a real preview source switch", async () => {
+    const ui = await openArrowAspectPreview(true);
+    ui.measure(1920, 1080);
+    ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    expect(ui.box()).toEqual(arrowAspectCases[0].box);
+    const track = screen.getByTestId("video-editor-timeline");
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({ left: 0, width: 600 } as DOMRect);
+    fireEvent.click(track, { clientX: 400 });
+    await waitFor(() => expect(ui.video.getAttribute("src")).toBe("https://media.example/inserted.mp4"));
+    ui.measure(1080, 1920);
+    ui.box().forEach((value, i) => expect(value).toBeCloseTo(arrowAspectCases[2].box[i], 6));
+    expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+  });
+
+  it.each(arrowAspectCases.slice(0, 4))("uses canonical arrow drag/resize/rotation with undo on $name", async ({ w, h }) => {
+    const ui = await openArrowAspectPreview();
+    ui.measure(w, h); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    const arrow = screen.getByTestId("video-editor-arrow-aspect-arrow");
+    const undo = () => {
+      fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+      fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+      expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    };
+    fireEvent.pointerDown(arrow, { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 48, clientY: 27 });
+    fireEvent.pointerMove(document, { clientX: 96, clientY: 54 });
+    fireEvent.pointerUp(document);
+    expect(arrow).toHaveStyle({ left: "20%", top: "30%" });
+    undo(); expect(arrow).toHaveStyle({ left: "10%", top: "20%" });
+    fireEvent.pointerDown(screen.getByTestId("video-editor-arrow-resize-aspect-arrow"), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 96, clientY: 54 });
+    fireEvent.pointerUp(document);
+    expect(arrow).toHaveStyle({ width: "40%", height: "30%" });
+    undo(); expect(arrow).toHaveStyle({ width: "30%", height: "20%" });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Pfeil drehen" }), { clientX: 384, clientY: 162 });
+    fireEvent.pointerMove(document, { clientX: 240 + 144 * Math.cos(53 * Math.PI / 180), clientY: 162 + 54 * Math.sin(53 * Math.PI / 180) });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Pfeilrichtung")).toHaveValue("90");
+    undo(); expect(screen.getByLabelText("Pfeilrichtung")).toHaveValue("37");
+  });
+
+  it("keeps other annotations source-relative beside a canonical arrow", async () => {
+    const ui = await openArrowAspectPreview(false, true);
+    ui.measure(1080, 1920); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    expect(ui.box()).toEqual([192, 216, 576, 216]);
+    const circle = screen.getByTestId("video-editor-circle-unchanged-circle");
+    expect(circle.parentElement).toBe(screen.getByTestId("video-editor-overlay-frame"));
+    expect(circle.parentElement).toHaveStyle({ left: "328.125px", top: "0px", width: "303.75px", height: "540px" });
+    expect(circle).toHaveStyle({ left: "10%", top: "20%", width: "30%", height: "20%" });
+    expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+  });
+
   it("colors legacy arrows independently and undoes color without changing geometry or timing", async () => {
     const original = { id: "legacy", type: "arrow" as const, x: 10, y: 20, width: 25, height: 25, start: 0, end: 5, rotation: 37 };
     editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: {
@@ -2378,7 +2502,7 @@ describe("VideoEditorModal multi-source preview", () => {
     render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-timeline");
     fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
-    const frame = screen.getByTestId("video-editor-overlay-frame");
+    const frame = screen.getByTestId("video-editor-arrow-frame");
     vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 500 } as DOMRect);
     const arrow = () => frame.querySelector('[data-testid^="video-editor-arrow-"]')!;
     const resize = () => frame.querySelector('[data-testid^="video-editor-arrow-resize-"]')!;
@@ -2437,7 +2561,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(copy.x + copy.width).toBeLessThanOrEqual(100);
     expect(copy.y + copy.height).toBeLessThanOrEqual(100);
     const element = screen.getByTestId(`video-editor-arrow-${copy.id}`);
-    expect(element.parentElement).toBe(screen.getByTestId("video-editor-overlay-frame"));
+    expect(element.parentElement).toBe(screen.getByTestId("video-editor-arrow-frame"));
     expect(element).toHaveStyle({ left: `${copy.x}%`, top: `${copy.y}%`, width: "30%", height: "20%" });
     expect(element.querySelector("polygon")).toHaveAttribute("transform", "rotate(315 50 50)");
   });
@@ -2616,7 +2740,7 @@ describe("VideoEditorModal multi-source preview", () => {
     const view = render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-timeline");
     fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
-    const frame = screen.getByTestId("video-editor-overlay-frame");
+    const frame = screen.getByTestId("video-editor-arrow-frame");
     vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 100, top: 50, width: 1000, height: 500 } as DOMRect);
     const point = (angle: number) => ({ clientX: 600 + 150 * Math.cos(angle * Math.PI / 180), clientY: 275 + 50 * Math.sin(angle * Math.PI / 180) });
     return { ...view, frame, point };
@@ -3592,7 +3716,11 @@ describe("VideoEditorModal multi-source preview", () => {
       fireEvent.loadedMetadata(video);
       const frame = screen.getByTestId("video-editor-overlay-frame");
       expect(frame).toHaveStyle({ left: "0px", top: "18.75px", width: "1000px", height: "562.5px" });
-      expect(screen.getByTestId("video-editor-arrow-arrow-frame").parentElement).toBe(frame);
+      const arrowFrame = screen.getByTestId("video-editor-arrow-frame");
+      expect(screen.getByTestId("video-editor-arrow-arrow-frame").parentElement).toBe(arrowFrame);
+      for (const key of ["left", "top", "width", "height"] as const) {
+        expect(parseFloat(arrowFrame.style[key])).toBeCloseTo(parseFloat(frame.style[key]), 8);
+      }
       expect(screen.getByTestId("video-editor-circle-circle-frame").parentElement).toBe(frame);
       expect(screen.getByTestId("video-editor-line-line-frame").parentElement).toBe(frame);
       expect(screen.getByTestId("video-editor-symbol-symbol-frame").parentElement).toBe(frame);
@@ -3612,6 +3740,7 @@ describe("VideoEditorModal multi-source preview", () => {
       });
       act(() => resizeCallback([], {} as ResizeObserver));
       expect(frame).toHaveStyle({ left: "0px", top: "131.25px", width: "600px", height: "337.5px" });
+      expect(arrowFrame).toHaveStyle({ left: "0px", top: "131.25px", width: "600px", height: "337.5px" });
       expect(screen.getByTestId("video-editor-circle-circle-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-arrow-arrow-frame").querySelector("polygon")).toHaveAttribute("transform", "rotate(37 50 50)");
       expect(screen.getByTestId("video-editor-line-line-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
@@ -3622,6 +3751,11 @@ describe("VideoEditorModal multi-source preview", () => {
       expect(screen.getByTestId("video-editor-cover-badge-cover-frame")).toHaveStyle({
         left: "80%", top: "80%",
       });
+      Object.defineProperty(video, "videoWidth", { configurable: true, value: 1080 });
+      Object.defineProperty(video, "videoHeight", { configurable: true, value: 1920 });
+      act(() => resizeCallback([], {} as ResizeObserver));
+      expect(arrowFrame).toHaveStyle({ left: "0px", top: "131.25px", width: "600px", height: "337.5px" });
+      expect(frame).toHaveStyle({ left: "131.25px", top: "0px", width: "337.5px", height: "600px" });
     } finally {
       vi.unstubAllGlobals();
     }
