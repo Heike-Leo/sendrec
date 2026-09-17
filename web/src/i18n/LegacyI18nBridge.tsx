@@ -7,7 +7,7 @@ const ATTRIBUTES = ["placeholder", "title", "aria-label"] as const;
 
 function translateTextNode(node: Text, language: "de" | "en") {
   const parent = node.parentElement;
-  if (!parent || SKIP_TAGS.has(parent.tagName)) return;
+  if (!parent || SKIP_TAGS.has(parent.tagName) || parent.closest('[translate="no"]')) return;
   const raw = node.nodeValue ?? "";
   const trimmed = raw.trim();
   if (!trimmed) return;

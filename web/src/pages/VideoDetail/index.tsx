@@ -1116,6 +1116,7 @@ export function VideoDetail() {
       {showVideoEditor && (
         <VideoEditorModal
           videoId={video.id}
+          videoTitle={video.title}
           duration={video.duration}
           onClose={() => setShowVideoEditor(false)}
           onTrimStarted={() => {

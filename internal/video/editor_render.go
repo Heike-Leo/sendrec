@@ -365,11 +365,19 @@ func (h *Handler) SaveEditorTimeline(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) RenderEditorTimeline(w http.ResponseWriter, r *http.Request) {
 	videoID := chi.URLParam(r, "id")
-	var timeline editTimeline
-	if err := json.NewDecoder(r.Body).Decode(&timeline); err != nil {
+	var request struct {
+		editTimeline
+		Title *string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if request.Title != nil && strings.TrimSpace(*request.Title) == "" {
+		httputil.WriteError(w, http.StatusBadRequest, "video title must not be empty")
+		return
+	}
+	timeline := request.editTimeline
 	if err := validateEditTimeline(&timeline); err != nil {
 		httputil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -398,6 +406,11 @@ func (h *Handler) RenderEditorTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job.Timeline = timeline
+	if request.Title == nil {
+		job.Title += " (bearbeitet)" // Preserve legacy API clients.
+	} else {
+		job.Title = strings.TrimSpace(*request.Title)
+	}
 	job.Sources = make(map[string]sourceVideo)
 	for _, sourceID := range renderSourceIDs(timeline) {
 		sourceWhere, sourceArgs := orgVideoFilter(r.Context(), sourceID, nil, "AND status = 'ready'")
@@ -739,7 +752,7 @@ func (h *Handler) renderTimelineAsync(ctx context.Context, job renderJob) {
 	err = h.db.QueryRow(ctx, `INSERT INTO videos
 		(user_id, organization_id, title, status, duration, file_size, file_key, share_token, content_type, ios_normalized)
 		VALUES ($1, $2, $3, 'ready', $4, $5, $6, $7, 'video/mp4', true) RETURNING id`,
-		job.OwnerID, job.OrganizationID, job.Title+" (bearbeitet)", int(totalDuration), info.Size(), resultKey, shareToken).Scan(&resultID)
+		job.OwnerID, job.OrganizationID, job.Title, int(totalDuration), info.Size(), resultKey, shareToken).Scan(&resultID)
 	if err != nil {
 		fail(err)
 		return

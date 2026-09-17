@@ -4,6 +4,13 @@ import { PromptDialog } from "./PromptDialog";
 import { expectNoA11yViolations } from "../test-utils/a11y";
 
 describe("PromptDialog", () => {
+  it("submits an initial value without requiring an edit", () => {
+    const onSubmit = vi.fn();
+    render(<PromptDialog title="Name" initialValue="Original – bearbeitet" submitLabel="Rendern" onSubmit={onSubmit} onCancel={vi.fn()} />);
+    expect(screen.getByRole("textbox")).toHaveValue("Original – bearbeitet");
+    fireEvent.click(screen.getByRole("button", { name: "Rendern" }));
+    expect(onSubmit).toHaveBeenCalledWith("Original – bearbeitet");
+  });
   it("renders title and input", () => {
     render(
       <PromptDialog
@@ -59,7 +66,7 @@ describe("PromptDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByText("Cancel"));
+    fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
     expect(onCancel).toHaveBeenCalledOnce();
   });
 

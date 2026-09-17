@@ -151,6 +151,7 @@ describe("text annotation preview", () => {
     expect(screen.getByLabelText("Textinhalt")).toHaveValue(multiline);
     expect(content(timeline.annotations[1].id).textContent).toBe(multiline);
     fireEvent.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rendern" }));
     await waitFor(() => expect(api.mock.calls.some(([, options]) => options?.method === "POST")).toBe(true));
     const request = api.mock.calls.find(([, options]) => options?.method === "POST")!;
     expect(JSON.parse(String(request[1].body)).annotations).toEqual(timeline.annotations);
@@ -296,6 +297,7 @@ describe("text annotation preview", () => {
     expect(timeline.annotations[1]).toEqual({...timeline.annotations[0],id:expect.any(String)});
     expect(timeline.annotations[1].id).not.toBe(timeline.annotations[0].id);
     fireEvent.click(screen.getByRole("button",{name:"Als neues Video rendern"}));
+    fireEvent.click(screen.getByRole("button", { name: "Rendern" }));
     await waitFor(() => expect(api.mock.calls.some(([,opts]) => opts?.method === "POST")).toBe(true));
     const request = api.mock.calls.find(([, options]) => options?.method === "POST")!;
     expect(JSON.parse(String(request[1].body)).annotations).toEqual(timeline.annotations);

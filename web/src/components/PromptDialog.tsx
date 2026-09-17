@@ -7,6 +7,8 @@ interface PromptDialogProps {
   onCancel: () => void;
   placeholder?: string;
   submitLabel?: string;
+  initialValue?: string;
+  cancelLabel?: string;
 }
 
 export function PromptDialog({
@@ -15,8 +17,10 @@ export function PromptDialog({
   onCancel,
   placeholder = "",
   submitLabel = "Submit",
+  initialValue = "",
+  cancelLabel,
 }: PromptDialogProps) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initialValue);
   const contentRef = useRef<HTMLDivElement>(null);
 
   useFocusTrap(contentRef);
@@ -115,7 +119,7 @@ export function PromptDialog({
                 cursor: "pointer",
               }}
             >
-              Abbrechen
+              {cancelLabel !== undefined ? <span translate="no">{cancelLabel}</span> : "Abbrechen"}
             </button>
             <button
               type="submit"

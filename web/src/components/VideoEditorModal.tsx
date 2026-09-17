@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
+import { PromptDialog } from "./PromptDialog";
 import { formatDuration } from "../utils/format";
 import type { Video } from "../types/video";
 import { EditorAudioPreview, audioTransportKey, validAudioVolume } from "./editorAudioPreview";
@@ -104,6 +105,7 @@ interface StoredEditorState {
 
 interface VideoEditorModalProps {
   videoId: string;
+  videoTitle?: string;
   duration: number;
   onClose: () => void;
   onTrimStarted?: () => void;
@@ -166,6 +168,7 @@ function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" 
 
 export function VideoEditorModal({
   videoId,
+  videoTitle = "Video",
   duration,
   onClose,
   onTrimStarted,
@@ -183,6 +186,7 @@ export function VideoEditorModal({
   const [trimEnd, setTrimEnd] = useState(duration);
   const [trimming, setTrimming] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [showRenderName, setShowRenderName] = useState(false);
   const [renderStatus, setRenderStatus] = useState<StoredEditorState["renderStatus"]>("none");
   const [renderedVideoId, setRenderedVideoId] = useState<string | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
@@ -705,12 +709,12 @@ export function VideoEditorModal({
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") closeEditor();
+      if (e.key === "Escape" && !showRenderName) closeEditor();
     }
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [onClose, showRenderName]);
 
   const clipLayout = layoutEditorClips(clips);
   const timelineDuration = clipLayout.at(-1)?.timelineEnd ?? 0;
@@ -2118,7 +2122,9 @@ export function VideoEditorModal({
     }
   }
 
-  async function handleRenderTimeline() {
+  async function handleRenderTimeline(title: string) {
+    if (!title.trim() || rendering) return;
+    setShowRenderName(false);
     if (clips.length === 0 || timelineDuration < 1) {
       setError("Die Timeline muss mindestens eine Sekunde lang sein.");
       return;
@@ -2132,6 +2138,7 @@ export function VideoEditorModal({
       await apiFetch(`/api/videos/${videoId}/editor/render`, {
         method: "POST",
         body: JSON.stringify({
+          title: title.trim(),
           version: 1,
           clips: clips.map(clipToStored),
           overlays: coverOverlays.map((overlay) => ({
@@ -3878,7 +3885,7 @@ export function VideoEditorModal({
 
           <button
             type="button"
-            onClick={handleRenderTimeline}
+            onClick={() => setShowRenderName(true)}
             disabled={rendering || clips.length === 0 || timelineDuration < 1}
             style={{
               background: "#E6467A",
@@ -3894,6 +3901,9 @@ export function VideoEditorModal({
             {rendering ? "Video wird gerendert..." : "Als neues Video rendern"}
           </button>
         </div>
+        {showRenderName && <PromptDialog title="Name für das neue Video"
+          initialValue={`${videoTitle} – bearbeitet`} submitLabel="Rendern" cancelLabel="Abbrechen"
+          onCancel={() => setShowRenderName(false)} onSubmit={handleRenderTimeline} />}
         {renderStatus === "ready" && renderedVideoId && (
           <div style={{ marginTop: 12, textAlign: "center", color: "var(--color-text)" }}>
             Render abgeschlossen. <a href={`/videos/${renderedVideoId}`}>Bearbeitetes Video öffnen</a>

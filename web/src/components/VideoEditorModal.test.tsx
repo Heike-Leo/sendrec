@@ -113,6 +113,42 @@ vi.mock("../api/client", () => ({
 }));
 
 describe("VideoEditorModal multi-source preview", () => {
+  it.each([false, true])("asks for a render name and submits via Enter (custom=%s)", async custom => {
+    const user = userEvent.setup();
+    render(<VideoEditorModal videoId="original" videoTitle="Meine Aufnahme" duration={120} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    await user.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
+    expect(screen.getByRole("dialog", { name: "Name für das neue Video" })).toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "Name für das neue Video" });
+    expect(input).toHaveValue("Meine Aufnahme – bearbeitet");
+    expect(mockApiFetch.mock.calls.some(([path]) => path.endsWith("/editor/render"))).toBe(false);
+    if (custom) { await user.clear(input); await user.type(input, "  Mein Schnitt äöü ß  "); }
+    await user.type(input, "{Enter}");
+    const request = mockApiFetch.mock.calls.find(([path]) => path.endsWith("/editor/render"));
+    expect(JSON.parse(request![1].body).title).toBe(custom ? "Mein Schnitt äöü ß" : "Meine Aufnahme – bearbeitet");
+    expect(screen.queryByRole("dialog", { name: "Name für das neue Video" })).toBeNull();
+  });
+
+  it("cancels render naming and blocks empty names without closing the editor", async () => {
+    const onClose = vi.fn();
+    render(<VideoEditorModal videoId="original" videoTitle="Original" duration={120} onClose={onClose} />);
+    await screen.findByTestId("video-editor-timeline");
+    const open = () => fireEvent.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
+    open();
+    for (const value of ["", "   "]) {
+      const input = screen.getByRole("textbox", { name: "Name für das neue Video" });
+      fireEvent.change(input, { target: { value } });
+      expect(screen.getByRole("button", { name: "Rendern" })).toBeDisabled();
+      fireEvent.submit(input.closest("form")!);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+    expect(screen.queryByRole("textbox", { name: "Name für das neue Video" })).toBeNull();
+    open();
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Name für das neue Video" }), { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mockApiFetch.mock.calls.some(([path]) => path.endsWith("/editor/render"))).toBe(false);
+    expect(screen.getByTestId("video-editor-timeline")).toBeInTheDocument();
+  });
   beforeEach(() => {
     mockApiFetch.mockReset();
     vi.mocked(loadAudioWaveformPeaks).mockReset().mockRejectedValue(new Error("No waveform in this test"));
@@ -252,6 +288,7 @@ describe("VideoEditorModal multi-source preview", () => {
     await waitFor(() => expect(view.container.querySelector("video")?.playbackRate).toBe(speed));
     expect(selectSpeedClip()).toHaveValue(String(speed));
     fireEvent.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rendern" }));
     await waitFor(() => {
       const call = mockApiFetch.mock.calls.find(([path]) => path.endsWith("/editor/render"));
       expect(JSON.parse(call![1].body).clips[0]).toMatchObject({ speed, duration: 10 / speed });
@@ -4393,6 +4430,7 @@ describe("VideoEditorModal multi-source preview", () => {
       expect(JSON.parse(save![1].body).audioSegments).toEqual(audioSegments);
     });
     fireEvent.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rendern" }));
     const request = mockApiFetch.mock.calls.find(([path]) => path === "/api/videos/original/editor/render");
     expect(JSON.parse(request![1].body).audioSegments).toEqual(audioSegments);
   });
@@ -4492,6 +4530,7 @@ describe("VideoEditorModal multi-source preview", () => {
     await renderWithInsertedVideo();
 
     await user.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rendern" }));
 
     await waitFor(() => {
       const renderCall = mockApiFetch.mock.calls.find(
@@ -4626,6 +4665,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.queryByRole("button", { name: "Abdeckung löschen" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rendern" }));
     await waitFor(() => {
       const renderCall = mockApiFetch.mock.calls.find(
         ([path]) => path === "/api/videos/original/editor/render",

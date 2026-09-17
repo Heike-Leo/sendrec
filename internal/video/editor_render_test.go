@@ -608,57 +608,94 @@ func TestCoverTextBounds(t *testing.T) {
 }
 
 func TestRenderEditorTimelineSavesTimelineAndQueuesResolvedSources(t *testing.T) {
-	mock, err := pgxmock.NewPool()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mock.Close()
-	handler := NewHandler(mock, &mockStorage{}, testBaseURL, 0, 0, 0, 0, testJWTSecret, true)
+	for _, tc := range []struct{ name, field, want string }{
+		{"legacy", "", "Original (bearbeitet)"},
+		{"default dialog", `"title":"Original – bearbeitet",`, "Original – bearbeitet"},
+		{"custom", `"title":"  Mein neues Video äöü ß  ",`, "Mein neues Video äöü ß"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mock, err := pgxmock.NewPool()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer mock.Close()
+			handler := NewHandler(mock, &mockStorage{}, testBaseURL, 0, 0, 0, 0, testJWTSecret, true)
 
-	mock.ExpectQuery(`SELECT user_id, organization_id, title FROM videos`).
-		WithArgs("video-main", testUserID).
-		WillReturnRows(pgxmock.NewRows([]string{"user_id", "organization_id", "title"}).
-			AddRow(testUserID, nil, "Original"))
-	mock.ExpectQuery(`SELECT file_key, content_type, duration FROM videos`).
-		WithArgs("video-main", testUserID).
-		WillReturnRows(pgxmock.NewRows([]string{"file_key", "content_type", "duration"}).
-			AddRow("recordings/main.mp4", "video/mp4", 20))
-	mock.ExpectQuery(`SELECT file_key, content_type, duration FROM videos`).
-		WithArgs("video-inserted", testUserID).
-		WillReturnRows(pgxmock.NewRows([]string{"file_key", "content_type", "duration"}).
-			AddRow("recordings/inserted.webm", "video/webm", 30))
-	mock.ExpectExec(`UPDATE videos SET edit_timeline = \$1, edit_render_status = 'processing'`).
-		WithArgs(pgxmock.AnyArg(), "video-main", testUserID).
-		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+			mock.ExpectQuery(`SELECT user_id, organization_id, title FROM videos`).
+				WithArgs("video-main", testUserID).
+				WillReturnRows(pgxmock.NewRows([]string{"user_id", "organization_id", "title"}).
+					AddRow(testUserID, nil, "Original"))
+			mock.ExpectQuery(`SELECT file_key, content_type, duration FROM videos`).
+				WithArgs("video-main", testUserID).
+				WillReturnRows(pgxmock.NewRows([]string{"file_key", "content_type", "duration"}).
+					AddRow("recordings/main.mp4", "video/mp4", 20))
+			mock.ExpectQuery(`SELECT file_key, content_type, duration FROM videos`).
+				WithArgs("video-inserted", testUserID).
+				WillReturnRows(pgxmock.NewRows([]string{"file_key", "content_type", "duration"}).
+					AddRow("recordings/inserted.webm", "video/webm", 30))
+			mock.ExpectExec(`UPDATE videos SET edit_timeline = \$1, edit_render_status = 'processing'`).
+				WithArgs(pgxmock.AnyArg(), "video-main", testUserID).
+				WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
-	originalEnqueue := enqueueTimelineRender
-	defer func() { enqueueTimelineRender = originalEnqueue }()
-	var queued renderJob
-	enqueueTimelineRender = func(_ *Handler, job renderJob) { queued = job }
+			originalEnqueue := enqueueTimelineRender
+			defer func() { enqueueTimelineRender = originalEnqueue }()
+			var queued renderJob
+			enqueueTimelineRender = func(_ *Handler, job renderJob) { queued = job }
 
-	body := `{"version":1,"clips":[` +
-		`{"id":"a","sourceId":"video-main","sourceStart":2,"sourceEnd":5,"duration":999},` +
-		`{"id":"b","sourceId":"video-inserted","sourceStart":7,"sourceEnd":11,"duration":999},` +
-		`{"id":"c","sourceId":"video-main","sourceStart":12,"sourceEnd":14,"duration":999}]}`
-	router := chi.NewRouter()
-	router.With(newAuthMiddleware()).Post("/api/videos/{id}/editor/render", handler.RenderEditorTimeline)
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, authenticatedRequest(t, http.MethodPost, "/api/videos/video-main/editor/render", []byte(body)))
+			body := `{` + tc.field + `"version":1,"clips":[` +
+				`{"id":"a","sourceId":"video-main","sourceStart":2,"sourceEnd":5,"duration":999},` +
+				`{"id":"b","sourceId":"video-inserted","sourceStart":7,"sourceEnd":11,"duration":999},` +
+				`{"id":"c","sourceId":"video-main","sourceStart":12,"sourceEnd":14,"duration":999}]}`
+			router := chi.NewRouter()
+			router.With(newAuthMiddleware()).Post("/api/videos/{id}/editor/render", handler.RenderEditorTimeline)
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, authenticatedRequest(t, http.MethodPost, "/api/videos/video-main/editor/render", []byte(body)))
 
-	if recorder.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d: %s", recorder.Code, recorder.Body.String())
+			if recorder.Code != http.StatusAccepted {
+				t.Fatalf("expected 202, got %d: %s", recorder.Code, recorder.Body.String())
+			}
+			if len(queued.Timeline.Clips) != 3 || queued.Timeline.Clips[1].SourceID != "video-inserted" {
+				t.Fatalf("queued timeline order changed: %+v", queued.Timeline.Clips)
+			}
+			if queued.Timeline.Clips[0].Duration != 3 || queued.Timeline.Clips[1].Duration != 4 {
+				t.Fatalf("server did not derive clip durations: %+v", queued.Timeline.Clips)
+			}
+			if len(queued.Sources) != 2 {
+				t.Fatalf("expected two unique resolved sources, got %d", len(queued.Sources))
+			}
+			if queued.Title != tc.want {
+				t.Fatalf("title: %q", queued.Title)
+			}
+			raw, _ := json.Marshal(queued.Timeline)
+			if strings.Contains(string(raw), `"title"`) {
+				t.Fatal("render title leaked into timeline")
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
-	if len(queued.Timeline.Clips) != 3 || queued.Timeline.Clips[1].SourceID != "video-inserted" {
-		t.Fatalf("queued timeline order changed: %+v", queued.Timeline.Clips)
-	}
-	if queued.Timeline.Clips[0].Duration != 3 || queued.Timeline.Clips[1].Duration != 4 {
-		t.Fatalf("server did not derive clip durations: %+v", queued.Timeline.Clips)
-	}
-	if len(queued.Sources) != 2 {
-		t.Fatalf("expected two unique resolved sources, got %d", len(queued.Sources))
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatal(err)
+}
+
+func TestRenderEditorTimelineRejectsEmptyTitle(t *testing.T) {
+	for _, title := range []string{"", "  \t\n "} {
+		mock, err := pgxmock.NewPool()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer mock.Close()
+		handler := NewHandler(mock, &mockStorage{}, testBaseURL, 0, 0, 0, 0, testJWTSecret, true)
+		router := chi.NewRouter()
+		router.With(newAuthMiddleware()).Post("/api/videos/{id}/editor/render", handler.RenderEditorTimeline)
+		body, _ := json.Marshal(map[string]any{"title": title})
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, authenticatedRequest(t, http.MethodPost, "/api/videos/video-main/editor/render", body))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("got %d", response.Code)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
