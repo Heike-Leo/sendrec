@@ -1,8 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { requirePreviewAnnotations, validateTextAnnotation, type TextAnnotation } from "./editorAnnotations";
+import { arrowShaftWidth, arrowPolygonPoints, requirePreviewAnnotations, validateTextAnnotation, type TextAnnotation } from "./editorAnnotations";
 import { serializeTimeline } from "./VideoEditorModal";
 
 const text: TextAnnotation = { id: "text-1", type: "text", text: "äöüÄÖÜß <b>Hinweis</b>", x: 10, y: 20, width: 40, height: 10, start: 1, end: 4, fontSize: 32, color: "#Ab12Cd" };
+describe("arrow shaft width", () => {
+  it("preserves the exact legacy polygon", () => {
+    expect(arrowShaftWidth()).toBe(12);
+    expect(arrowPolygonPoints()).toBe("8,44 65,44 65,28 94,50 65,72 65,56 8,56");
+  });
+  it.each([6, 9, 12, 18, 24])("scales shaft and both head dimensions at %s", width => {
+    const shoulder = 94 - 29 * width / 12, headHalf = 22 * width / 12;
+    expect(arrowPolygonPoints(width)).toBe(`8,${50-width/2} ${shoulder},${50-width/2} ${shoulder},${50-headHalf} 94,50 ${shoulder},${50+headHalf} ${shoulder},${50+width/2} 8,${50+width/2}`);
+    for (const point of arrowPolygonPoints(width).split(" ")) {
+      const [x, y] = point.split(",").map(Number);
+      expect(Math.hypot(x - 50, y - 50)).toBeLessThan(50);
+    }
+    const a = { ...text, type: "arrow" as const, rotation: 37, shaftWidth: width };
+    expect(requirePreviewAnnotations(JSON.parse(serializeTimeline([], [], [a])).annotations)[0]).toEqual(a);
+  });
+  it.each([0, 5, 25, NaN, Infinity])("rejects invalid width %s", width => {
+    expect(() => arrowShaftWidth(width)).toThrow();
+    expect(() => requirePreviewAnnotations([{ type: "arrow", shaftWidth: width }])).toThrow();
+  });
+});
 describe("text annotation contract", () => {
   it("preserves every field through the actual payload serializer and primitive snapshot", () => {
     validateTextAnnotation(text);

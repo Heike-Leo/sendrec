@@ -26,7 +26,14 @@ func arrowBounds(a editorAnnotation, width, height int) image.Rectangle {
 func arrowVertices(a editorAnnotation, width, height int) []arrowPoint {
 	// Same polygon and transform order as the preview SVG: rotate in its
 	// 100x100 viewBox, THEN scale (preserveAspectRatio="none") and translate.
-	points := []arrowPoint{{8, 44}, {65, 44}, {65, 28}, {94, 50}, {65, 72}, {65, 56}, {8, 56}}
+	shaft := 12.0
+	if a.ShaftWidth != nil {
+		shaft = *a.ShaftWidth
+	}
+	// Same linear head scaling as arrowPolygonPoints; keep tip and tail fixed.
+	scale := shaft / 12
+	shoulder, headHalf := 94-29*scale, 22*scale
+	points := []arrowPoint{{8, 50 - shaft/2}, {shoulder, 50 - shaft/2}, {shoulder, 50 - headHalf}, {94, 50}, {shoulder, 50 + headHalf}, {shoulder, 50 + shaft/2}, {8, 50 + shaft/2}}
 	sin, cos := math.Sincos(a.Rotation * math.Pi / 180)
 	for i, p := range points {
 		x, y := p.x-50, p.y-50

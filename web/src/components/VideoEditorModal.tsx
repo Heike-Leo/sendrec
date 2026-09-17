@@ -10,6 +10,7 @@ import { canContinueClipSource, EDITOR_CLIP_SPEEDS, readClipSpeed } from "./edit
 import { changeClipSpeed } from "./editorAudioGeometry";
 import { requirePreviewAnnotations, validateTextAnnotation, type EditorAnnotation, type EditorAnnotation as StoredAnnotation } from "./editorAnnotations";
 import { TEXT_FONTS, textTypography, type TextTypography } from "./editorTextTypography";
+import { ARROW_SHAFT_WIDTHS, arrowShaftWidth, arrowPolygonPoints } from "./editorAnnotations";
 import { TEXT_LAYOUT, textPreviewGeometry, textBoxToPixels, scaledTextFontSize } from "./editorTextGeometry";
 import { effectiveAudioSpeed, audioSegmentTimelineDuration, audioGeometryDraft, commitAudioGeometry, requireSupportedAudioSpeed, type EditorAudioSegment } from "./editorAudioGeometry";
 
@@ -1796,8 +1797,9 @@ export function VideoEditorModal({
     selectAnnotation(annotation.id);
   }
 
-  function updateAnnotation(patch: { start?: number; end?: number; rotation?: number; color?: string }) {
+  function updateAnnotation(patch: { start?: number; end?: number; rotation?: number; color?: string; shaftWidth?: number }) {
     if (!selectedAnnotation) return;
+    if (patch.shaftWidth !== undefined && (selectedAnnotation.type !== "arrow" || arrowShaftWidth(patch.shaftWidth) === arrowShaftWidth(selectedAnnotation.shaftWidth))) return;
     const currentColor = selectedAnnotation.type === "text" ? selectedAnnotation.color || TEXT_LAYOUT.color : selectedAnnotation.color ?? "#FC2667";
     if (patch.color !== undefined && (!/^#[0-9a-fA-F]{6}$/.test(patch.color) || patch.color === currentColor)) return;
     rememberEditorState();
@@ -2419,7 +2421,7 @@ export function VideoEditorModal({
                         </g>
                       : item.type === "circle"
                       ? <ellipse cx="50" cy="50" rx="47" ry="47" fill="none" stroke={item.color ?? "#FC2667"} strokeWidth="3" vectorEffect="non-scaling-stroke" />
-                      : <polygon fill={item.color ?? "#FC2667"} points="8,44 65,44 65,28 94,50 65,72 65,56 8,56" transform={`rotate(${item.rotation} 50 50)`} />}
+                      : <polygon fill={item.color ?? "#FC2667"} points={arrowPolygonPoints(item.shaftWidth)} transform={`rotate(${item.rotation} 50 50)`} />}
                   </svg>
                   {selectedAnnotationId === item.id && item.type !== "circle" && <>
                     <span aria-hidden="true" style={{ position: "absolute",
@@ -2848,6 +2850,10 @@ export function VideoEditorModal({
               onFocus={() => { textAnnotationEditRef.current = null; }} onBlur={() => { textAnnotationEditRef.current = null; }}
               onChange={event => updateTextProperty("fontSize", Number(event.target.value))} style={{ width: 70 }} /></label>
           </>}
+          {selectedAnnotation.type === "arrow" && <label>Stärke <select aria-label="Pfeilstärke" value={arrowShaftWidth(selectedAnnotation.shaftWidth)}
+            onChange={e => updateAnnotation({ shaftWidth: Number(e.target.value) })}>
+            {ARROW_SHAFT_WIDTHS.map(value => <option key={value} value={value}>{value === 12 ? "12 (Standard)" : value}</option>)}
+          </select></label>}
           <label>Farbe <input type="color" aria-label={`${selectedAnnotation.type === "line" ? "Linien" : annotationName(selectedAnnotation)}farbe`} value={selectedAnnotation.type === "text" ? selectedAnnotation.color || TEXT_LAYOUT.color : selectedAnnotation.color ?? "#FC2667"}
             onChange={(e) => updateAnnotation({ color: e.target.value })}
             style={{ width: 32, height: 28, padding: 2, cursor: "pointer" }} /></label>

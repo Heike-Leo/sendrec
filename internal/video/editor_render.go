@@ -47,22 +47,23 @@ type editorCoverOverlay struct {
 
 // Shapes are rendered; text is persisted but explicitly render-gated for now.
 type editorAnnotation struct {
-	ID         string  `json:"id"`
-	Type       string  `json:"type"`
-	Symbol     string  `json:"symbol,omitempty"`
-	X          float64 `json:"x"`
-	Y          float64 `json:"y"`
-	Width      float64 `json:"width"`
-	Height     float64 `json:"height"`
-	Start      float64 `json:"start"`
-	End        float64 `json:"end"`
-	Rotation   float64 `json:"rotation"`
-	Color      string  `json:"color,omitempty"`
-	Text       string  `json:"text,omitempty"`
-	FontSize   float64 `json:"fontSize,omitempty"`
-	FontFamily *string `json:"fontFamily,omitempty"`
-	Bold       *bool   `json:"bold,omitempty"`
-	Italic     *bool   `json:"italic,omitempty"`
+	ID         string   `json:"id"`
+	Type       string   `json:"type"`
+	Symbol     string   `json:"symbol,omitempty"`
+	X          float64  `json:"x"`
+	Y          float64  `json:"y"`
+	Width      float64  `json:"width"`
+	Height     float64  `json:"height"`
+	Start      float64  `json:"start"`
+	End        float64  `json:"end"`
+	Rotation   float64  `json:"rotation"`
+	ShaftWidth *float64 `json:"shaftWidth,omitempty"`
+	Color      string   `json:"color,omitempty"`
+	Text       string   `json:"text,omitempty"`
+	FontSize   float64  `json:"fontSize,omitempty"`
+	FontFamily *string  `json:"fontFamily,omitempty"`
+	Bold       *bool    `json:"bold,omitempty"`
+	Italic     *bool    `json:"italic,omitempty"`
 }
 
 type editorAudioSegment struct {
@@ -208,6 +209,12 @@ func validateEditTimeline(timeline *editTimeline) error {
 			}
 		}
 		annotationIDs[annotation.ID] = true
+		if annotation.Type == "arrow" && annotation.ShaftWidth != nil {
+			v := *annotation.ShaftWidth
+			if math.IsNaN(v) || math.IsInf(v, 0) || v < 6 || v > 24 {
+				return fmt.Errorf("arrow shaft width must be between 6 and 24")
+			}
+		}
 		if annotation.Color != "" && !isEditorCoverColor(annotation.Color) {
 			return fmt.Errorf("annotation color must be a six-digit hex color")
 		}

@@ -121,6 +121,116 @@ func TestArrowAspectRatioFFmpegIntegration(t *testing.T) {
 	})
 }
 
+func TestArrowShaftWidth(t *testing.T) {
+	a := editorAnnotation{ID: "strength", Type: "arrow", X: 10, Y: 20, Width: 30, Height: 20, Start: 0, End: 1}
+	legacy := arrowVertices(a, 1920, 1080)
+	for _, width := range []float64{6, 9, 12, 18, 24} {
+		a.ShaftWidth = &width
+		timeline := validTimeline(editClip{ID: "c", SourceID: "source", SourceEnd: 2, Duration: 2})
+		timeline.Annotations = []editorAnnotation{a}
+		if err := validateEditTimeline(&timeline); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := json.Marshal(a)
+		var loaded editorAnnotation
+		if err := json.Unmarshal(data, &loaded); err != nil || loaded.ShaftWidth == nil || *loaded.ShaftWidth != width {
+			t.Fatal("width roundtrip", err)
+		}
+		points := arrowVertices(loaded, 1920, 1080)
+		if math.Abs(points[6].y-points[0].y-width*2.16) > 1e-9 {
+			t.Fatal("shaft thickness")
+		}
+		if points[3] != legacy[3] || points[0].x != legacy[0].x {
+			t.Fatal("tip or tail moved")
+		}
+		if math.Abs((points[3].x-points[2].x)-29*width/12*5.76) > 1e-9 || math.Abs((points[4].y-points[2].y)-44*width/12*2.16) > 1e-9 {
+			t.Fatal("head dimensions must scale with shaft")
+		}
+		if width == 12 {
+			for i := range points {
+				if points[i] != legacy[i] {
+					t.Fatal("default changed")
+				}
+			}
+		}
+	}
+	for _, width := range []float64{0, 5, 25, math.NaN(), math.Inf(1)} {
+		a.ShaftWidth = &width
+		timeline := validTimeline(editClip{ID: "c", SourceID: "source", SourceEnd: 2, Duration: 2})
+		timeline.Annotations = []editorAnnotation{a}
+		if validateEditTimeline(&timeline) == nil {
+			t.Fatal("accepted invalid shaft width")
+		}
+	}
+}
+
+func TestArrowShaftWidthFFmpegIntegration(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := t.TempDir()
+	input := filepath.Join(dir, "source.mp4")
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=1920x1080:r=30:d=1", "-c:v", "libx264", "-y", input).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	for i, width := range []float64{6, 12, 24} {
+		a := editorAnnotation{ID: "strength", Type: "arrow", X: 10, Y: 20, Width: 30, Height: 20, Start: 0, End: 1, Color: "#00ff00", ShaftWidth: &width}
+		clip := editClip{ID: "c", SourceID: "source", SourceEnd: 1, Duration: 1}
+		timeline := validTimeline(clip)
+		timeline.Annotations = []editorAnnotation{a}
+		sub := filepath.Join(dir, fmt.Sprint(i))
+		if err := os.Mkdir(sub, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := prepareArrowFiles(sub, timeline); err != nil {
+			t.Fatal(err)
+		}
+		output := filepath.Join(sub, "out.mp4")
+		cmd := exec.Command("ffmpeg", buildAnnotatedTimelineRenderArgs([]string{input}, []editClip{clip}, map[string]int{"source": 0}, map[string]sourceVideo{"source": {}}, output, nil, timeline.Annotations)...)
+		cmd.Dir = sub
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v %s", err, out)
+		}
+		pixels, err := exec.Command("ffmpeg", "-v", "error", "-ss", "0.5", "-i", output, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1").Output()
+		if err != nil || len(pixels) != 1920*1080*3 {
+			t.Fatal("decode", err)
+		}
+		count := 0
+		for y := 216; y < 432; y++ {
+			p := (y*1920 + 350) * 3
+			if pixels[p+1] > 180 {
+				count++
+			}
+		}
+		if math.Abs(float64(count)-width*2.16) > 2 {
+			t.Fatalf("width %v: got %d pixels", width, count)
+		}
+		// Measure head height halfway from shoulder to tip in the encoded video.
+		// At this x the triangle is half its full height (and wider than shaft).
+		x := int(math.Round(192 + (94-14.5*width/12)*5.76))
+		headPixels := 0
+		for y := 216; y < 432; y++ {
+			if pixels[(y*1920+x)*3+1] > 180 {
+				headPixels++
+			}
+		}
+		if math.Abs(float64(headPixels)-22*width/12*2.16) > 3 {
+			t.Fatalf("head at width %v: %d pixels", width, headPixels)
+		}
+		// Just behind the shoulder only the shaft exists; just ahead the head
+		// must be visible above the shaft. This checks head length as well.
+		shoulderX := 192 + (94-29*width/12)*5.76
+		y := int(math.Round(324 - width*2.16))
+		for _, dx := range []int{-4, 4} {
+			x := int(math.Round(shoulderX)) + dx
+			green := pixels[(y*1920+x)*3+1] > 180
+			if green != (dx > 0) {
+				t.Fatalf("head shoulder at width %v dx %d", width, dx)
+			}
+		}
+	}
+}
+
 func TestArrowRenderGeometry(t *testing.T) {
 	a := editorAnnotation{X: 10, Y: 20, Width: 30, Height: 40}
 	for _, size := range [][2]int{{1920, 1080}, {640, 480}} {

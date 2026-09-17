@@ -7,6 +7,23 @@ export interface GraphicAnnotation extends AnnotationBase {
   type: "arrow" | "circle" | "symbol" | "line";
   symbol?: AnnotationSymbol;
   rotation: number;
+  shaftWidth?: number;
+}
+// Width in the arrow's existing 100x100 viewBox, not screen pixels.
+export const ARROW_SHAFT_WIDTHS = [6, 9, 12, 18, 24] as const;
+export function arrowShaftWidth(value?: number): number {
+  if (value === undefined) return 12;
+  if (!Number.isFinite(value) || value < 6 || value > 24) throw new Error("Invalid arrow shaft width");
+  return value;
+}
+export function arrowPolygonPoints(value?: number): string {
+  const half = arrowShaftWidth(value) / 2;
+  // Scale both head dimensions around the fixed tip; 12 reproduces the
+  // original polygon exactly. All vertices remain within the rotation circle.
+  const scale = half / 6;
+  const shoulder = 94 - 29 * scale;
+  const headHalf = 22 * scale;
+  return `8,${50-half} ${shoulder},${50-half} ${shoulder},${50-headHalf} 94,50 ${shoulder},${50+headHalf} ${shoulder},${50+half} 8,${50+half}`;
 }
 export interface TextAnnotation extends AnnotationBase, TextTypography {
   type: "text";
@@ -37,6 +54,7 @@ export function requirePreviewAnnotations(input: unknown): EditorAnnotation[] {
     if (annotation.type === "text") {
       validateTextAnnotation(annotation);
     }
+    if (annotation.type === "arrow") arrowShaftWidth(annotation.shaftWidth);
   }
   return input as EditorAnnotation[];
 }

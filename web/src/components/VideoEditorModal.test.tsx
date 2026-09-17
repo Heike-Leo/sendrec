@@ -2436,6 +2436,39 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(polygon("legacy")).toHaveAttribute("fill", "#FC2667");
   });
 
+  it("preserves arrow strength through preview, undo, copy and save/reload", async () => {
+    const original = { id: "strength", type: "arrow" as const, x: 10, y: 20, width: 30, height: 20, rotation: 37, start: 0, end: 5 };
+    editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: {
+      version: 1, clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 }], annotations: [original],
+    } };
+    const ui = render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pfeil 1" }));
+    const points = () => screen.getByTestId("video-editor-arrow-strength").querySelector("polygon")!.getAttribute("points");
+    expect(screen.getByLabelText("Pfeilstärke")).toHaveValue("12");
+    const legacy = points();
+    fireEvent.change(screen.getByLabelText("Pfeilstärke"), { target: { value: "24" } });
+    expect(points()).toBe("8,38 36,38 36,6 94,50 36,94 36,62 8,62");
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(points()).toBe(legacy);
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    fireEvent.change(screen.getByLabelText("Pfeilstärke"), { target: { value: "24" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil kopieren" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil einfügen" }));
+    await waitFor(() => {
+      const call = mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1);
+      expect(call && JSON.parse(call[1].body).annotations).toHaveLength(2);
+    });
+    const payload = JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
+    expect(payload.annotations[0]).toEqual({ ...original, shaftWidth: 24 });
+    expect(payload.annotations[1]).toEqual({ ...original, id: payload.annotations[1].id, shaftWidth: 24 });
+    expect(payload.annotations[1].id).not.toBe(original.id);
+    ui.unmount(); editorState = { ...editorState, timeline: payload };
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pfeil 1" }));
+    expect(screen.getByLabelText("Pfeilstärke")).toHaveValue("24");
+    expect(points()).toBe("8,38 36,38 36,6 94,50 36,94 36,62 8,62");
+  });
+
   it("adds an independent arrow and undoes direction, timing and creation", async () => {
     const { container } = render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-timeline");
