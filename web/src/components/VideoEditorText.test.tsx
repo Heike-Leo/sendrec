@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import userEvent from "@testing-library/user-event";
 import { VideoEditorModal } from "./VideoEditorModal";
 import type { EditorAnnotation, TextAnnotation } from "./editorAnnotations";
+import { TEXT_FONTS } from "./editorTextTypography";
 
 const api = vi.hoisted(() => vi.fn());
 vi.mock("../api/client", () => ({ apiFetch: api }));
@@ -55,6 +56,40 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("text annotation preview", () => {
+  for (const font of TEXT_FONTS) for (const bold of [false, true]) for (const italic of [false, true]) {
+    it(`previews ${font.id}/${bold}/${italic} with unchanged newlines and geometry`, async () => {
+      timeline.annotations = [text({ fontFamily: font.id, bold, italic, text: "Grüße\näöü ß", color: "#123456" })];
+      await open(); select();
+      expect(content().textContent).toBe("Grüße\näöü ß");
+      expect(content()).toHaveStyle({ fontFamily: font.css, fontWeight: bold ? "700" : "400", fontStyle: italic ? "italic" : "normal", whiteSpace: "pre", overflow: "hidden", fontSize: "16px", color: "#123456" });
+      expect(content().parentElement).toHaveStyle({ left: "96px", top: "108px", width: "384px", height: "54px" });
+    });
+  }
+
+  it("records one undo per typography change and none for default/no-op selection", async () => {
+    timeline.annotations = [text()]; await open(); select();
+    const font = screen.getByLabelText("Textschriftart");
+    fireEvent.change(font, { target: { value: "dejavu-sans" } });
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    fireEvent.change(font, { target: { value: "dejavu-serif" } });
+    fireEvent.change(font, { target: { value: "dejavu-serif" } });
+    fireEvent.click(screen.getByRole("button", { name: "Text fett" }));
+    fireEvent.click(screen.getByRole("button", { name: "Text kursiv" }));
+    expect(content()).toHaveStyle({ fontWeight: "700", fontStyle: "italic" });
+    undo(); expect(content()).toHaveStyle({ fontWeight: "700", fontStyle: "normal" });
+    undo(); expect(content()).toHaveStyle({ fontWeight: "400" });
+    undo(); expect(content()).toHaveStyle({ fontFamily: TEXT_FONTS[0].css });
+    select(); expect(screen.getByLabelText("Textschriftart")).toHaveValue("dejavu-sans");
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+  });
+
+  it("does not expose typography controls for arrows", async () => {
+    timeline.annotations = [{ id: "arrow", type: "arrow", x: 10, y: 10, width: 20, height: 10, rotation: 0, start: 0, end: 5 }];
+    await open(); fireEvent.click(screen.getByRole("button", { name: "Pfeil 1" }));
+    expect(screen.queryByLabelText("Textschriftart")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Text fett" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Text kursiv" })).toBeNull();
+  });
   it("enters two and three lines with Enter in one undo session, without growing the box", async () => {
     const user = userEvent.setup();
     timeline.annotations = [text()]; await open(); select();
@@ -251,7 +286,7 @@ describe("text annotation preview", () => {
   });
 
   it("copies all fields with new ID and persists/reloads without enabling render", async () => {
-    timeline.annotations = [text({fontSize:64,color:"#123456",text:"Änderung ß",start:1,end:6})];
+    timeline.annotations = [text({fontSize:64,color:"#123456",text:"Änderung ß",start:1,end:6,fontFamily:"dejavu-mono",bold:true,italic:false})];
     let view = await open(); select();
     fireEvent.click(screen.getByRole("button",{name:"Text kopieren"}));
     fireEvent.click(screen.getByRole("button",{name:"Text einfügen"}));
@@ -265,6 +300,9 @@ describe("text annotation preview", () => {
     view.unmount(); view = await open(); select(2);
     expect(screen.getByLabelText("Textinhalt")).toHaveValue("Änderung ß");
     expect(screen.getByLabelText("Textgröße")).toHaveValue(64);
+    expect(screen.getByLabelText("Textschriftart")).toHaveValue("dejavu-mono");
+    expect(screen.getByRole("button", { name: "Text fett" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Text kursiv" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByLabelText("Textfarbe")).toHaveValue("#123456");
     expect(screen.getByLabelText("Text Start")).toHaveValue(1);
     expect(screen.getByLabelText("Text Ende")).toHaveValue(6);
@@ -281,17 +319,23 @@ describe("text annotation preview", () => {
     fireEvent.change(screen.getByLabelText("Textgröße"), { target: { value: "48" } });
     fireEvent.blur(screen.getByLabelText("Textgröße"));
     fireEvent.change(screen.getByLabelText("Textfarbe"), { target: { value: "#e6467a" } });
+    fireEvent.change(screen.getByLabelText("Textschriftart"), { target: { value: "dejavu-serif" } });
+    fireEvent.click(screen.getByRole("button", { name: "Text fett" }));
+    fireEvent.click(screen.getByRole("button", { name: "Text kursiv" }));
     vi.spyOn(screen.getByTestId("video-editor-text-frame"), "getBoundingClientRect").mockReturnValue(rect(960,540));
     drag(content().parentElement!,96,54);
     drag(screen.getByTestId("video-editor-text-resize-text-a"),96,54);
     fireEvent.change(screen.getByLabelText("Text Start"),{target:{value:"1"}});
     fireEvent.change(screen.getByLabelText("Text Ende"),{target:{value:"7"}});
-    const expected = text({text:"Neu äöüß",fontSize:48,color:"#e6467a",x:20,y:30,width:50,height:20,start:1,end:7});
+    const expected = text({text:"Neu äöüß",fontSize:48,color:"#e6467a",x:20,y:30,width:50,height:20,start:1,end:7,fontFamily:"dejavu-serif",bold:true,italic:true});
     await waitFor(() => expect(timeline.annotations).toEqual([expected]));
     view.unmount(); view=await open(); select();
     expect(screen.getByLabelText("Textinhalt")).toHaveValue(expected.text);
     expect(screen.getByLabelText("Textgröße")).toHaveValue(48);
     expect(screen.getByLabelText("Textfarbe")).toHaveValue("#e6467a");
+    expect(screen.getByLabelText("Textschriftart")).toHaveValue("dejavu-serif");
+    expect(screen.getByRole("button", { name: "Text fett" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Text kursiv" })).toHaveAttribute("aria-pressed", "true");
     view.video.currentTime=2; fireEvent.timeUpdate(view.video);
     expect(content().parentElement).toHaveStyle({left:"192px",top:"162px",width:"480px",height:"108px"});
     expect(content()).toHaveStyle({fontSize:"24px"});

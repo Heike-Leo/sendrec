@@ -9,6 +9,7 @@ import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
 import { canContinueClipSource, EDITOR_CLIP_SPEEDS, readClipSpeed } from "./editorClipTime";
 import { changeClipSpeed } from "./editorAudioGeometry";
 import { requirePreviewAnnotations, validateTextAnnotation, type EditorAnnotation, type EditorAnnotation as StoredAnnotation } from "./editorAnnotations";
+import { TEXT_FONTS, textTypography, type TextTypography } from "./editorTextTypography";
 import { TEXT_LAYOUT, textPreviewGeometry, textBoxToPixels, scaledTextFontSize } from "./editorTextGeometry";
 import { effectiveAudioSpeed, audioSegmentTimelineDuration, audioGeometryDraft, commitAudioGeometry, requireSupportedAudioSpeed, type EditorAudioSegment } from "./editorAudioGeometry";
 
@@ -1802,6 +1803,17 @@ export function VideoEditorModal({
       item.id === selectedAnnotation.id ? { ...item, ...patch } : item));
   }
 
+  function updateTextTypography(patch: TextTypography) {
+    if (selectedAnnotation?.type !== "text") return;
+    const next = { ...selectedAnnotation, ...patch };
+    validateTextAnnotation(next);
+    const before = textTypography(selectedAnnotation), after = textTypography(next);
+    if (before.fontFamily === after.fontFamily && before.bold === after.bold && before.italic === after.italic) return;
+    textAnnotationEditRef.current = null;
+    rememberEditorState();
+    setAnnotations(previous => previous.map(item => item.id === next.id ? next : item));
+  }
+
   function updateTextProperty(field: "text" | "fontSize", value: string | number) {
     if (selectedAnnotation?.type !== "text") return;
     const patch = field === "text" ? { text: [...String(value)].slice(0, TEXT_LAYOUT.maxLength).join("") } : { fontSize: Number(value) };
@@ -2614,6 +2626,7 @@ export function VideoEditorModal({
                     outline: selectedAnnotationId === item.id ? "1px solid #FC2667" : "none", outlineOffset: -1 }}>
                   <span data-testid={`video-editor-annotation-text-content-${item.id}`}
                     style={{ position: "absolute", inset: 0, overflow: "hidden", whiteSpace: "pre", pointerEvents: "none",
+                      ...textTypography(item).style,
                       color: item.color || TEXT_LAYOUT.color, fontSize: scaledTextFontSize(item.fontSize, textFrameRect.height), lineHeight: 1.2, textAlign: "left" }}>
                     {textAnnotationDraft?.id === item.id ? textAnnotationDraft.text : item.text}
                   </span>
@@ -2813,6 +2826,14 @@ export function VideoEditorModal({
         {selectedAnnotation && <>
           <span>{annotationName(selectedAnnotation)}:</span>
           {selectedAnnotation.type === "text" && <>
+            <label>Schrift <select aria-label="Textschriftart" value={textTypography(selectedAnnotation).fontFamily}
+              onChange={event => updateTextTypography({ fontFamily: event.target.value })}>
+              {TEXT_FONTS.map(font => <option key={font.id} value={font.id}>{font.label}</option>)}
+            </select></label>
+            <button type="button" className="video-editor-tool-button" aria-label="Text fett" title="Text fett"
+              aria-pressed={selectedAnnotation.bold ?? false} onClick={() => updateTextTypography({ bold: !selectedAnnotation.bold })}><b>B</b></button>
+            <button type="button" className="video-editor-tool-button" aria-label="Text kursiv" title="Text kursiv"
+              aria-pressed={selectedAnnotation.italic ?? false} onClick={() => updateTextTypography({ italic: !selectedAnnotation.italic })}><i>I</i></button>
             <label>Text <textarea aria-label="Textinhalt" rows={2} style={{ resize: "none" }}
               value={textAnnotationDraft?.id === selectedAnnotation.id ? textAnnotationDraft.text : selectedAnnotation.text}
               onFocus={() => { textAnnotationEditRef.current = null; }}

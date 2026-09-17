@@ -386,6 +386,47 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(loadAudioWaveformPeaks).toHaveBeenCalledTimes(1);
   });
 
+  it.each([1, 2, 0.5])("draws real peaks inside the audio bar at %s× despite a cached non-CORS media response", async speed => {
+    const real = await vi.importActual<typeof import("./editorAudioWaveform")>("./editorAudioWaveform");
+    vi.mocked(loadAudioWaveformPeaks).mockImplementation(real.loadAudioWaveformPeaks);
+    const bytes = new ArrayBuffer(8);
+    const fetchMock = vi.fn((_url: string, options?: RequestInit) => options?.cache === "no-store"
+      ? Promise.resolve({ ok: true, arrayBuffer: async () => bytes })
+      : Promise.reject(new TypeError("Cached media response has no Access-Control-Allow-Origin")));
+    const decode = vi.fn().mockResolvedValue({ sampleRate: 1000, length: 10000, numberOfChannels: 1,
+      getChannelData: () => Float32Array.from({ length: 10000 }, (_, i) => i % 2 ? 0.75 : -0.5) });
+    const close = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("AudioContext", class { decodeAudioData = decode; close = close; });
+    const fillRect = vi.fn();
+    const context = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ clearRect: vi.fn(), fillRect } as unknown as CanvasRenderingContext2D);
+    const bounds = vi.spyOn(HTMLCanvasElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 200, height: 26 } as DOMRect);
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "one", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 / speed, speed }],
+      audioSegments: [{ id: "a", sourceClipId: "one", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0, geometryLinked: true }],
+    } };
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    try {
+      const canvas = await screen.findByTestId("audio-waveform");
+      await waitFor(() => expect(fillRect).toHaveBeenCalled());
+      expect(canvas.parentElement).toBe(screen.getByTestId("video-editor-audio-one"));
+      expect(canvas).toBeVisible();
+      expect(canvas).toHaveStyle({ position: "absolute", width: "100%", height: "100%", pointerEvents: "none" });
+      expect(fillRect.mock.calls.some(([, , , height]) => height > 1)).toBe(true);
+      expect(fetchMock).toHaveBeenCalledExactlyOnceWith("https://media.example/original.mp4", { cache: "no-store" });
+      expect(decode).toHaveBeenCalledWith(bytes);
+      expect(close).toHaveBeenCalledOnce();
+      fireEvent.click(canvas.parentElement!);
+      expect(screen.getByRole("button", { name: "Tonanfang kürzen" })).toBeEnabled();
+      const draws = fillRect.mock.calls.length;
+      fireEvent.click(screen.getByRole("button", { name: "Vergrößern" }));
+      await waitFor(() => expect(fillRect.mock.calls.length).toBeGreaterThan(draws));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount(); context.mockRestore(); bounds.mockRestore(); vi.unstubAllGlobals();
+    }
+  });
+
   it.each(["Teilen", "Video einfügen", "Clip löschen"])("blocks %s for independent audio without history or saves", async (action) => {
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: {
       version: 1,

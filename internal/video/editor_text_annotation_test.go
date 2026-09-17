@@ -39,6 +39,10 @@ func TestTextAnnotationSaveReload(t *testing.T) {
 	defer mock.Close()
 	handler := NewHandler(mock, &mockStorage{}, testBaseURL, 0, 0, 0, 0, testJWTSecret, true)
 	timeline := textTestTimeline()
+	family, bold, italic := "dejavu-serif", true, false
+	timeline.Annotations[0].FontFamily = &family
+	timeline.Annotations[0].Bold = &bold
+	timeline.Annotations[0].Italic = &italic
 	raw, _ := json.Marshal(timeline)
 	mock.ExpectExec(`UPDATE videos SET edit_timeline = \$1, updated_at = now\(\)`).
 		WithArgs(textTimelineArgument{timeline.Annotations[0]}, "video-main", testUserID).
@@ -68,6 +72,37 @@ func textTestTimeline() editTimeline {
 	timeline := validTimeline(editClip{ID: "clip", SourceID: "source", SourceStart: 0, SourceEnd: 10, Duration: 10})
 	timeline.Annotations = []editorAnnotation{{ID: "text", Type: "text", Text: "Grüße aus Oldenburg\näöü ÄÖÜ ß\n<b>Hinweis</b>", X: 10, Y: 20, Width: 40, Height: 10, Start: 1, End: 4, FontSize: 32, Color: "#Ab12Cd"}}
 	return timeline
+}
+
+func TestTextAnnotationTypography(t *testing.T) {
+	for _, family := range []string{"dejavu-sans", "dejavu-serif", "dejavu-mono", "", "Arial"} {
+		for _, bold := range []bool{false, true} {
+			for _, italic := range []bool{false, true} {
+				a := textTestTimeline().Annotations[0]
+				a.FontFamily, a.Bold, a.Italic = &family, &bold, &italic
+				err := validateTextAnnotation(a, 10)
+				if (err != nil) != (family == "" || family == "Arial") {
+					t.Fatalf("font %q: %v", family, err)
+				}
+				raw, _ := json.Marshal(a)
+				var restored editorAnnotation
+				if json.Unmarshal(raw, &restored) != nil || !reflect.DeepEqual(a, restored) {
+					t.Fatalf("roundtrip: %s", raw)
+				}
+			}
+		}
+	}
+	for _, raw := range []string{`{"bold":"true"}`, `{"italic":1}`, `{"fontFamily":42}`} {
+		var a editorAnnotation
+		if json.Unmarshal([]byte(raw), &a) == nil {
+			t.Fatalf("accepted wrong field type: %s", raw)
+		}
+	}
+	legacy := textTestTimeline().Annotations[0]
+	raw, _ := json.Marshal(legacy)
+	if strings.Contains(string(raw), "fontFamily") || strings.Contains(string(raw), "bold") || strings.Contains(string(raw), "italic") {
+		t.Fatalf("legacy changed: %s", raw)
+	}
 }
 
 func TestTextAnnotationRoundtrip(t *testing.T) {

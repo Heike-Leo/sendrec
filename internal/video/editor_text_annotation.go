@@ -30,6 +30,9 @@ func (a editorAnnotation) MarshalJSON() ([]byte, error) {
 }
 
 func validateTextAnnotation(a editorAnnotation, duration float64) error {
+	if a.FontFamily != nil && *a.FontFamily != "dejavu-sans" && *a.FontFamily != "dejavu-serif" && *a.FontFamily != "dejavu-mono" {
+		return fmt.Errorf("invalid text font family")
+	}
 	visible := false
 	if !utf8.ValidString(a.Text) || utf8.RuneCountInString(a.Text) > editorTextAnnotationMaxLength {
 		return fmt.Errorf("invalid annotation text")

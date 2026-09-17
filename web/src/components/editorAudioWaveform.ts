@@ -19,7 +19,10 @@ export async function loadAudioWaveformPeaks(
 ): Promise<AudioWaveformPeaks> {
   let response: Response;
   try {
-    response = await fetch(url);
+    // Media elements can cache a no-CORS response for this same signed URL.
+    // Analyze a fresh CORS response instead; the editor's peak cache still
+    // deduplicates analysis per source. Do not alter the URL/signature.
+    response = await fetch(url, { cache: "no-store" });
   } catch (cause) {
     throw new AudioWaveformLoadError("fetch", "Waveform-Quelle konnte nicht geladen werden (Netzwerk/CORS).", cause);
   }

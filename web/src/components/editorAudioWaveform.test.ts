@@ -26,7 +26,7 @@ describe("waveform URL loading", () => {
 
   it("fetches the supplied URL and analyzes the decoded buffer", async () => {
     const peaks = await loadAudioWaveformPeaks("https://media.example/source.mp4");
-    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("https://media.example/source.mp4");
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("https://media.example/source.mp4", { cache: "no-store" });
     expect(decode).toHaveBeenCalledExactlyOnceWith(bytes);
     expect(peaks).toEqual(createAudioWaveformPeaks(buffer([[0, 0.75, -0.5, 0]], 2000)));
     expect(context).toHaveBeenCalledTimes(1);
