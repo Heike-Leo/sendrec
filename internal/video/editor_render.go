@@ -522,8 +522,12 @@ func buildTimelineRenderArgsWithAudio(inputs []string, clips []editClip, sourceI
 		inputIndex := sourceIndexes[clip.SourceID]
 		// FPS conversion can leave the final decoded frame short of the clip's
 		// duration. Clone that frame, then trim the padding to the original end.
+		// Fit using display aspect ratio (including source SAR), not raster
+		// aspect ratio. Round to the nearest even pixel for yuv420p, then mark
+		// square pixels before padding. This avoids scale's rounding SAR being
+		// propagated to concat, while preserving anamorphic display proportions.
 		filters = append(filters, fmt.Sprintf(
-			"[%d:v]trim=start=%.3f:end=%.3f,setpts=%s,scale=1920:1080:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,tpad=stop_mode=clone:stop_duration=%.9f,trim=duration=%.9f,format=yuv420p[v%d]",
+			"[%d:v]trim=start=%.3f:end=%.3f,setpts=%s,scale=w='max(2,min(1920,round(1080*dar/2)*2))':h='max(2,min(1080,round(1920/dar/2)*2))',setsar=1,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,tpad=stop_mode=clone:stop_duration=%.9f,trim=duration=%.9f,format=yuv420p[v%d]",
 			inputIndex, clip.SourceStart, clip.SourceEnd, pts, duration, duration, i))
 		fmt.Fprintf(&concatInputs, "[v%d]", i)
 	}

@@ -103,20 +103,16 @@ func TestArrowAspectRatioFFmpegIntegration(t *testing.T) {
 			}
 		})
 	}
-	t.Run("known-mixed-source-SAR-mismatch", func(t *testing.T) {
+	t.Run("mixed-source-square-pixel-concat", func(t *testing.T) {
 		args := buildAnnotatedTimelineRenderArgs(inputs, clips, indexes, sources, filepath.Join(dir, "mixed.mp4"), nil, timeline.Annotations)
 		cmd := exec.Command("ffmpeg", args...)
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
-		// Known independent defect: scaling 9:16 to an even raster changes SAR.
-		// Keep this explicit witness until a separately authorized SAR fix.
-		if err == nil || !strings.Contains(string(out), "SAR") || !strings.Contains(string(out), "do not match") {
-			t.Fatalf("expected known concat SAR failure, got %v: %s", err, out)
+		if err != nil {
+			t.Fatalf("mixed-source concat: %v: %s", err, out)
 		}
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.Contains(line, "do not match") {
-				t.Log(line)
-			}
+		for _, at := range []float64{.1, .5, 1.5, 2.5, 3.5, 4.5, 5.5, 5.9} {
+			checkFrame(t, filepath.Join(dir, "mixed.mp4"), at)
 		}
 	})
 }

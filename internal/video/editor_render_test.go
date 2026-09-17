@@ -370,9 +370,9 @@ func TestBuildTimelineRenderArgsPreservesClipOrderAndRanges(t *testing.T) {
 		}
 		position = next
 	}
-	if !strings.Contains(joined, "force_original_aspect_ratio=decrease") ||
-		!strings.Contains(joined, "pad=1920:1080") {
-		t.Fatalf("render args must preserve aspect ratio and pad to the target frame: %s", joined)
+	const displayAspectFit = "scale=w='max(2,min(1920,round(1080*dar/2)*2))':h='max(2,min(1080,round(1920/dar/2)*2))',setsar=1,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+	if strings.Count(joined, displayAspectFit) != len(clips) {
+		t.Fatalf("each clip must preserve display aspect ratio, normalize SAR and pad to the target frame: %s", joined)
 	}
 	for _, clip := range clips {
 		padding := fmt.Sprintf("fps=30,tpad=stop_mode=clone:stop_duration=%.9f,trim=duration=%.9f,format=yuv420p", clip.Duration, clip.Duration)
