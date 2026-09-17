@@ -81,7 +81,7 @@ func rasterArrow(a editorAnnotation, width, height int) *image.NRGBA {
 
 func arrowFilename(index int) string { return fmt.Sprintf("arrow-%d.png", index) }
 
-// Keep order within each type: arrows, circles, symbols, then lines.
+// Keep order within each type: arrows, circles, symbols, lines, then text.
 func exportAnnotations(annotations []editorAnnotation) []editorAnnotation {
 	var arrows []editorAnnotation
 	for _, annotation := range annotations {
@@ -101,6 +101,11 @@ func exportAnnotations(annotations []editorAnnotation) []editorAnnotation {
 	}
 	for _, annotation := range annotations {
 		if annotation.Type == "line" {
+			arrows = append(arrows, annotation)
+		}
+	}
+	for _, annotation := range annotations {
+		if annotation.Type == "text" {
 			arrows = append(arrows, annotation)
 		}
 	}
@@ -131,6 +136,12 @@ func prepareArrowFiles(dir string, timeline editTimeline) error {
 		return err
 	}
 	for i, a := range exportAnnotations(timeline.Annotations) {
+		if a.Type == "text" {
+			if err := prepareTextAnnotationFiles(dir, i, a); err != nil {
+				return err
+			}
+			continue
+		}
 		f, err := os.OpenFile(filepath.Join(dir, annotationFilename(i, a)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 		if err != nil {
 			return fmt.Errorf("prepare arrow: %w", err)
@@ -177,8 +188,16 @@ func buildAnnotatedTimelineRenderArgs(inputs []string, clips []editClip, indexes
 	graph := strings.ReplaceAll(args[filterIndex+1], "[vout]", "[varrowbase]")
 	result := append([]string{}, args[:filterIndex]...)
 	previous := "varrowbase"
+	imageIndex := len(inputs)
 	for i, a := range annotations {
-		result = append(result, "-loop", "1", "-framerate", "30", "-i", annotationFilename(i, a))
+		layer := fmt.Sprintf("%d:v", imageIndex)
+		if a.Type == "text" {
+			graph += ";" + textAnnotationLayer(i, a)
+			layer = fmt.Sprintf("textannotation%d", i)
+		} else {
+			result = append(result, "-loop", "1", "-framerate", "30", "-i", annotationFilename(i, a))
+			imageIndex++
+		}
 		bounds := arrowBounds(a, editorRenderWidth, editorRenderHeight)
 		next := fmt.Sprintf("varrow%d", i)
 		if i == len(annotations)-1 {
@@ -186,8 +205,8 @@ func buildAnnotatedTimelineRenderArgs(inputs []string, clips []editClip, indexes
 		}
 		// RGB composition preserves exact pixel placement, including odd x/y,
 		// before the final yuv420p conversion required by the existing encoder.
-		graph += fmt.Sprintf(";[%s][%d:v]overlay=x=%d:y=%d:format=rgb:shortest=1:enable='between(t,%.6f,%.6f)'[%s]",
-			previous, len(inputs)+i, bounds.Min.X, bounds.Min.Y, a.Start, a.End, next+"rgb")
+		graph += fmt.Sprintf(";[%s][%s]overlay=x=%d:y=%d:format=rgb:shortest=1:enable='between(t,%.6f,%.6f)'[%s]",
+			previous, layer, bounds.Min.X, bounds.Min.Y, a.Start, a.End, next+"rgb")
 		previous = next + "rgb"
 	}
 	graph += fmt.Sprintf(";[%s]format=yuv420p[vout]", previous)

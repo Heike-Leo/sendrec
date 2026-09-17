@@ -50,6 +50,7 @@ beforeEach(() => {
     if (path.endsWith("/download")) return Promise.resolve({ downloadUrl: "https://media.example/video.mp4" });
     if (!options && path.endsWith("/editor")) return Promise.resolve({ timeline, renderStatus: "none", renderError: null, renderedVideoId: null });
     if (options?.method === "PUT") { timeline = JSON.parse(String(options.body)); return Promise.resolve(); }
+    if (options?.method === "POST" && path.endsWith("/editor/render")) return Promise.resolve();
     throw new Error(`Unexpected request ${path}`);
   });
 });
@@ -134,7 +135,7 @@ describe("text annotation preview", () => {
     expect(api.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
   });
 
-  it("preserves newlines through save, reload and copy/paste while keeping render blocked", async () => {
+  it("preserves newlines through save, reload, copy/paste and render payload", async () => {
     const multiline = "Zeile 1\nZeile 2\nZeile 3";
     timeline.annotations = [text()]; let view = await open(); select();
     fireEvent.focus(screen.getByLabelText("Textinhalt"));
@@ -150,8 +151,9 @@ describe("text annotation preview", () => {
     expect(screen.getByLabelText("Textinhalt")).toHaveValue(multiline);
     expect(content(timeline.annotations[1].id).textContent).toBe(multiline);
     fireEvent.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
-    expect(await screen.findByText("Text annotations are not yet supported for rendering")).toBeVisible();
-    expect(api.mock.calls.some(([, options]) => options?.method === "POST")).toBe(false);
+    await waitFor(() => expect(api.mock.calls.some(([, options]) => options?.method === "POST")).toBe(true));
+    const request = api.mock.calls.find(([, options]) => options?.method === "POST")!;
+    expect(JSON.parse(String(request[1].body)).annotations).toEqual(timeline.annotations);
   });
 
   it("adds defaults, selects, clips plain HTML text and undoes creation", async () => {
@@ -285,7 +287,7 @@ describe("text annotation preview", () => {
     expect(screen.getByLabelText("Text Start")).toHaveValue(0);
   });
 
-  it("copies all fields with new ID and persists/reloads without enabling render", async () => {
+  it("copies all fields with new ID and preserves typography in render and reload", async () => {
     timeline.annotations = [text({fontSize:64,color:"#123456",text:"Änderung ß",start:1,end:6,fontFamily:"dejavu-mono",bold:true,italic:false})];
     let view = await open(); select();
     fireEvent.click(screen.getByRole("button",{name:"Text kopieren"}));
@@ -294,8 +296,9 @@ describe("text annotation preview", () => {
     expect(timeline.annotations[1]).toEqual({...timeline.annotations[0],id:expect.any(String)});
     expect(timeline.annotations[1].id).not.toBe(timeline.annotations[0].id);
     fireEvent.click(screen.getByRole("button",{name:"Als neues Video rendern"}));
-    expect(await screen.findByText("Text annotations are not yet supported for rendering")).toBeVisible();
-    expect(api.mock.calls.some(([,opts]) => opts?.method === "POST")).toBe(false);
+    await waitFor(() => expect(api.mock.calls.some(([,opts]) => opts?.method === "POST")).toBe(true));
+    const request = api.mock.calls.find(([, options]) => options?.method === "POST")!;
+    expect(JSON.parse(String(request[1].body)).annotations).toEqual(timeline.annotations);
     const saved=structuredClone(timeline);
     view.unmount(); view = await open(); select(2);
     expect(screen.getByLabelText("Textinhalt")).toHaveValue("Änderung ß");

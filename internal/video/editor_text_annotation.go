@@ -71,10 +71,7 @@ func validateTextAnnotation(a editorAnnotation, duration float64) error {
 
 func validateRenderAnnotations(annotations []editorAnnotation) error {
 	for _, a := range annotations {
-		if a.Type == "text" {
-			return fmt.Errorf("Text annotations are not yet supported for rendering")
-		}
-		if a.Type != "arrow" && a.Type != "circle" && a.Type != "symbol" && a.Type != "line" {
+		if a.Type != "text" && a.Type != "arrow" && a.Type != "circle" && a.Type != "symbol" && a.Type != "line" {
 			return fmt.Errorf("unknown annotation type")
 		}
 	}

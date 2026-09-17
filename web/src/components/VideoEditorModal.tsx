@@ -2115,10 +2115,6 @@ export function VideoEditorModal({
   }
 
   async function handleRenderTimeline() {
-    if (hasTextAnnotations) {
-      setError("Text annotations are not yet supported for rendering");
-      return;
-    }
     if (clips.length === 0 || timelineDuration < 1) {
       setError("Die Timeline muss mindestens eine Sekunde lang sein.");
       return;

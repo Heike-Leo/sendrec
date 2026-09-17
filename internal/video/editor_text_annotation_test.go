@@ -175,17 +175,15 @@ func TestTextAnnotationValidation(t *testing.T) {
 	}
 }
 
-func TestTextAnnotationRenderGuards(t *testing.T) {
+func TestTextAnnotationRenderSupport(t *testing.T) {
 	timeline := textTestTimeline()
-	raw, _ := json.Marshal(timeline)
-	handler := &Handler{}
-	response := httptest.NewRecorder()
-	handler.RenderEditorTimeline(response, httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(raw))))
-	const message = "Text annotations are not yet supported for rendering"
-	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), message) {
-		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+	if err := validateRenderAnnotations(timeline.Annotations); err != nil {
+		t.Fatal(err)
 	}
-	if err := prepareArrowFiles(t.TempDir(), timeline); err == nil || err.Error() != message {
-		t.Fatalf("worker silently accepts text: %v", err)
+	if err := prepareArrowFiles(t.TempDir(), timeline); err != nil {
+		t.Fatal(err)
+	}
+	if validateRenderAnnotations([]editorAnnotation{{Type: "unknown"}}) == nil {
+		t.Fatal("unknown annotation accepted")
 	}
 }
