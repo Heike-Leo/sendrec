@@ -1838,7 +1838,7 @@ describe("VideoEditorModal multi-source preview", () => {
       }};
       const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
       await screen.findByRole("button", { name: "Linie 1" });
-      const frame = screen.getByTestId("video-editor-overlay-frame");
+      const frame = screen.getByTestId("video-editor-arrow-frame");
       vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 17, top: 29, width: frameWidth, height: frameHeight } as DOMRect);
       fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
       const geometry = () => {
@@ -1915,7 +1915,7 @@ describe("VideoEditorModal multi-source preview", () => {
     const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-timeline");
     fireEvent.click(screen.getByRole("button", { name: "Linie hinzufügen" }));
-    const frame = screen.getByTestId("video-editor-overlay-frame");
+    const frame = screen.getByTestId("video-editor-arrow-frame");
     const rect = vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 500 } as DOMRect);
     const shape = () => frame.querySelector("line")!;
     const box = () => shape().closest("svg")!.parentElement as HTMLElement;
@@ -2332,13 +2332,13 @@ describe("VideoEditorModal multi-source preview", () => {
   ];
   const aspectArrow = { id: "aspect-arrow", type: "arrow" as const, x: 10, y: 20, width: 30, height: 20, rotation: 37, start: .2, end: 5.8, color: "#00ff00" };
 
-  async function openArrowAspectPreview(mixed = false, withCircle = false) {
+  async function openArrowAspectPreview(mixed = false, withCircle = false, withLine = false) {
     editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: { version: 1,
       clips: mixed ? [
         { id: "c1", sourceId: "original", sourceStart: 0, sourceEnd: 3, duration: 3 },
         { id: "c2", sourceId: "inserted", sourceStart: 0, sourceEnd: 3, duration: 3 },
       ] : [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 6, duration: 6 }],
-      annotations: [aspectArrow, ...(withCircle ? [{ ...aspectArrow, id: "unchanged-circle", type: "circle" as const }] : [])], audioSegments: [],
+      annotations: [...(withLine ? [] : [aspectArrow]), ...(withCircle ? [{ ...aspectArrow, id: "unchanged-circle", type: "circle" as const }] : []), ...(withLine ? [{ ...aspectArrow, id: "aspect-line", type: "line" as const }] : [])], audioSegments: [],
     } };
     const view = render(<VideoEditorModal videoId="original" duration={6} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-preview");
@@ -2440,6 +2440,103 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(circle.parentElement).toBe(screen.getByTestId("video-editor-overlay-frame"));
     expect(circle.parentElement).toHaveStyle({ left: "328.125px", top: "0px", width: "303.75px", height: "540px" });
     expect(circle).toHaveStyle({ left: "10%", top: "20%", width: "30%", height: "20%" });
+    expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+  });
+
+  // Saved line values use the canonical output canvas, independently of source.
+  it.each([
+    { name: "16:9", w: 1920, h: 1080 },
+    { name: "4:3", w: 1440, h: 1080 },
+    { name: "9:16", w: 1080, h: 1920 },
+    { name: "12:5", w: 1920, h: 800 },
+  ])("matches canonical line preview and render on $name", async ({ w, h }) => {
+    const ui = await openArrowAspectPreview(false, false, true);
+    ui.measure(w, h); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    const line = screen.getByTestId("video-editor-line-aspect-line");
+    const parent = line.parentElement!;
+    const frame = ["left", "top", "width", "height"].map(key => parseFloat(parent.style[key as "left"]) * 2);
+    expect(parent).toBe(screen.getByTestId("video-editor-arrow-frame"));
+    expect(ui.video).toHaveStyle({ aspectRatio: "16 / 9", objectFit: "contain" });
+    ["left", "top", "width", "height"].forEach((key, i) =>
+      expect(parseFloat(parent.style[key as "left"]) * 2).toBeCloseTo([0, 0, 1920, 1080][i], 6));
+    expect(line).toHaveStyle({ left: "10%", top: "20%", width: "30%", height: "20%" });
+    expect(line.querySelector("g")).toHaveAttribute("transform", "rotate(37 50 50)");
+    expect(line.querySelector("line")).toHaveAttribute("x1", "8");
+    expect(line.querySelector("line")).toHaveAttribute("x2", "92");
+    const endpoints = (f: number[]) => [-.42, .42].map(k => [
+      f[0] + f[2] * (.1 + .3 * (.5 + k * Math.cos(37 * Math.PI / 180))),
+      f[1] + f[3] * (.2 + .2 * (.5 + k * Math.sin(37 * Math.PI / 180))),
+    ]);
+    const preview = endpoints(frame), output = endpoints([0, 0, 1920, 1080]);
+    const error = Math.max(...preview.flatMap((p, i) => p.map((v, j) => Math.abs(v - output[i][j]))));
+    expect(error).toBeLessThan(1e-9);
+    ui.video.currentTime = 5.9; fireEvent.timeUpdate(ui.video);
+    expect(screen.queryByTestId("video-editor-line-aspect-line")).toBeNull();
+    expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+  });
+
+  it("keeps canonical line geometry at a source switch without saved edits", async () => {
+    const ui = await openArrowAspectPreview(true, false, true);
+    ui.measure(1920, 1080); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    const frame = () => screen.getByTestId("video-editor-line-aspect-line").parentElement!;
+    expect(frame()).toHaveStyle({ width: "960px", left: "0px" });
+    const track = screen.getByTestId("video-editor-timeline");
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({ left: 0, width: 600 } as DOMRect);
+    fireEvent.click(track, { clientX: 400 });
+    await waitFor(() => expect(ui.video.getAttribute("src")).toBe("https://media.example/inserted.mp4"));
+    ui.measure(1080, 1920);
+    expect(frame()).toHaveStyle({ width: "960px", left: "0px" });
+    expect(screen.getByTestId("video-editor-line-aspect-line")).toHaveStyle({ left: "10%", width: "30%" });
+    expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+  });
+
+  it.each(arrowAspectCases.slice(0, 4))("uses canonical line drag, length and rotation with undo on $name", async ({ w, h }) => {
+    const ui = await openArrowAspectPreview(false, true, true);
+    ui.measure(w, h); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    const line = () => screen.getByTestId("video-editor-line-aspect-line");
+    const undo = () => {
+      fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+      fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+      expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    };
+    fireEvent.pointerDown(line(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 96, clientY: 54 }); fireEvent.pointerUp(document);
+    expect(line()).toHaveStyle({ left: "20%", top: "30%" });
+    undo(); expect(line()).toHaveStyle({ left: "10%", top: "20%" });
+    const r = 37 * Math.PI / 180;
+    const ax = .5 - .42 * Math.cos(r), ay = .5 - .42 * Math.sin(r);
+    const vx = .84 * 288 * Math.cos(r), vy = .84 * 108 * Math.sin(r);
+    fireEvent.pointerDown(screen.getByTestId("video-editor-line-resize-aspect-line"), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: vx * .1, clientY: vy * .1 }); fireEvent.pointerUp(document);
+    expect(parseFloat(line().style.width)).toBeCloseTo(33, 7);
+    expect(parseFloat(line().style.height)).toBeCloseTo(22, 7);
+    expect(parseFloat(line().style.left) + 33 * ax).toBeCloseTo(10 + 30 * ax, 7);
+    expect(parseFloat(line().style.top) + 22 * ay).toBeCloseTo(20 + 20 * ay, 7);
+    undo();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Linie drehen" }), { clientX: 384, clientY: 162 });
+    fireEvent.pointerMove(document, { clientX: 240 + 144 * Math.cos(53 * Math.PI / 180), clientY: 162 + 54 * Math.sin(53 * Math.PI / 180) });
+    fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Linienrichtung")).toHaveValue("90");
+    undo(); expect(screen.getByLabelText("Linienrichtung")).toHaveValue("37");
+    expect(screen.getByTestId("video-editor-circle-unchanged-circle").parentElement).toBe(screen.getByTestId("video-editor-overlay-frame"));
+  });
+
+  it("remeasures the canonical line frame on ResizeObserver without changing stored values", async () => {
+    const callbacks = new Set<ResizeObserverCallback>();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { callbacks.add(callback); }
+      observe() {} unobserve() {} disconnect() {}
+    });
+    const ui = await openArrowAspectPreview(false, false, true);
+    ui.measure(1080, 1920); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    const rect = { left: 0, top: 0, width: 480, height: 270 } as DOMRect;
+    vi.mocked(ui.video.getBoundingClientRect).mockReturnValue(rect);
+    vi.mocked(screen.getByTestId("video-editor-preview").getBoundingClientRect).mockReturnValue(rect);
+    act(() => callbacks.forEach(callback => callback([], {} as ResizeObserver)));
+    const line = screen.getByTestId("video-editor-line-aspect-line");
+    expect(line.parentElement).toHaveStyle({ width: "480px", height: "270px", left: "0px", top: "0px" });
+    expect(line).toHaveStyle({ left: "10%", top: "20%", width: "30%", height: "20%" });
+    expect(line.querySelector("g")).toHaveAttribute("transform", "rotate(37 50 50)");
     expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
   });
 
@@ -3792,7 +3889,7 @@ describe("VideoEditorModal multi-source preview", () => {
         expect(parseFloat(arrowFrame.style[key])).toBeCloseTo(parseFloat(frame.style[key]), 8);
       }
       expect(screen.getByTestId("video-editor-circle-circle-frame").parentElement).toBe(frame);
-      expect(screen.getByTestId("video-editor-line-line-frame").parentElement).toBe(frame);
+      expect(screen.getByTestId("video-editor-line-line-frame").parentElement).toBe(arrowFrame);
       expect(screen.getByTestId("video-editor-symbol-symbol-frame").parentElement).toBe(frame);
       expect(screen.getByTestId("video-editor-symbol-symbol-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-circle-circle-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });

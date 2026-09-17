@@ -203,7 +203,7 @@ export function VideoEditorModal({
   const textFrameRef = useRef<HTMLDivElement>(null);
   const [textFrameRect, setTextFrameRect] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const hasTextAnnotations = annotations.some(item => item.type === "text");
-  const hasCanonicalAnnotations = hasTextAnnotations || annotations.some(item => item.type === "arrow");
+  const hasCanonicalAnnotations = hasTextAnnotations || annotations.some(item => item.type === "arrow" || item.type === "line");
   const textAnnotationEditRef = useRef<string | null>(null);
   const [textAnnotationDraft, setTextAnnotationDraft] = useState<{ id: string; text: string } | null>(null);
   useEffect(() => {
@@ -1838,7 +1838,7 @@ export function VideoEditorModal({
     e.preventDefault();
     e.stopPropagation();
     selectAnnotation(annotation.id);
-    const rect = (annotation.type === "text" ? textFrameRef : annotation.type === "arrow" ? arrowFrameRef : annotationFrameRef).current?.getBoundingClientRect();
+    const rect = (annotation.type === "text" ? textFrameRef : annotation.type === "arrow" || annotation.type === "line" ? arrowFrameRef : annotationFrameRef).current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
     cancelAnnotationDragRef.current?.();
     const startX = e.clientX;
@@ -1927,7 +1927,7 @@ export function VideoEditorModal({
     e.preventDefault();
     e.stopPropagation();
     selectAnnotation(annotation.id);
-    const rect = (annotation.type === "arrow" ? arrowFrameRef : annotationFrameRef).current?.getBoundingClientRect();
+    const rect = (annotation.type === "arrow" || annotation.type === "line" ? arrowFrameRef : annotationFrameRef).current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
     cancelAnnotationDragRef.current?.();
     const width = rect.width * annotation.width / 100;
@@ -2387,7 +2387,7 @@ export function VideoEditorModal({
             />
 
             {[false, true].map(isArrowFrame => {
-              // Arrows share the output canvas with text. All other shapes and
+              // Arrows and lines share the output canvas with text. Other shapes and
               // covers retain their existing source-relative coordinate system.
               const frameRect = isArrowFrame ? textFrameRect : videoFrameRect;
               return <div key={String(isArrowFrame)}
@@ -2404,7 +2404,7 @@ export function VideoEditorModal({
                 pointerEvents: "none",
               }}
             >
-              {annotations.filter((item) => item.type !== "text").filter(item => (item.type === "arrow") === isArrowFrame).filter((item) => timelineCurrentTime >= item.start && timelineCurrentTime <= item.end).map((item) => (
+              {annotations.filter((item) => item.type !== "text").filter(item => (item.type === "arrow" || item.type === "line") === isArrowFrame).filter((item) => timelineCurrentTime >= item.start && timelineCurrentTime <= item.end).map((item) => (
                 <div key={item.id} data-testid={`video-editor-${item.type}-${item.id}`}
                   onPointerDown={(e) => handleAnnotationPointerDown(e, item)}
                   onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}

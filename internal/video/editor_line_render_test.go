@@ -11,6 +11,34 @@ import (
 	"testing"
 )
 
+// Same saved line as the DOM contract. The preview's canonical frame scales
+// uniformly to output pixels, regardless of the source's contained rectangle.
+func TestLineAspectRatioRenderContract(t *testing.T) {
+	a := editorAnnotation{ID: "aspect-line", Type: "line", X: 10, Y: 20, Width: 30, Height: 20, Rotation: 37, Start: .2, End: 5.8}
+	p, q := lineEndpoints(a, 1920, 1080)
+	for _, tc := range []struct {
+		name       string
+		x, y, w, h float64
+	}{
+		{"16:9", 0, 0, 1920, 1080}, {"4:3", 0, 0, 1920, 1080},
+		{"9:16", 0, 0, 1920, 1080}, {"12:5", 0, 0, 1920, 1080},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pp := arrowPoint{tc.x + p.x*tc.w/1920, tc.y + p.y*tc.h/1080}
+			pq := arrowPoint{tc.x + q.x*tc.w/1920, tc.y + q.y*tc.h/1080}
+			length := math.Hypot(q.x-p.x, q.y-p.y)
+			previewLength := math.Hypot(pq.x-pp.x, pq.y-pp.y)
+			angle := math.Atan2(q.y-p.y, q.x-p.x) * 180 / math.Pi
+			previewAngle := math.Atan2(pq.y-pp.y, pq.x-pp.x) * 180 / math.Pi
+			centerDX, centerDY := (pp.x+pq.x-p.x-q.x)/2, (pp.y+pq.y-p.y-q.y)/2
+			if math.Hypot(pp.x-p.x, pp.y-p.y) > 1e-9 || math.Hypot(pq.x-q.x, pq.y-q.y) > 1e-9 || math.Abs(previewLength-length) > 1e-9 || math.Abs(previewAngle-angle) > 1e-9 {
+				t.Fatal("canonical preview differs from unchanged render")
+			}
+			t.Logf("center delta=(%.3f,%.3f) px; length preview/render=%.3f/%.3f px; angle preview/render=%.3f/%.3f deg; endpoints preview=(%.3f,%.3f)-(%.3f,%.3f), render=(%.3f,%.3f)-(%.3f,%.3f)", centerDX, centerDY, previewLength, length, previewAngle, angle, pp.x, pp.y, pq.x, pq.y, p.x, p.y, q.x, q.y)
+		})
+	}
+}
+
 func TestLineEndpointBoundsPersistAtFrameEdge(t *testing.T) {
 	for _, angle := range []float64{0, 180, 90, 270, 45, 37, 217} {
 		sin, cos := math.Sincos(angle * math.Pi / 180)
