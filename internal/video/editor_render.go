@@ -216,11 +216,11 @@ func validateEditTimeline(timeline *editTimeline) error {
 				return fmt.Errorf("arrow shaft width must be between 6 and 24")
 			}
 		}
-		if annotation.Type == "line" && annotation.StrokeWidth != nil {
+		if (annotation.Type == "line" || annotation.Type == "circle") && annotation.StrokeWidth != nil {
 			switch *annotation.StrokeWidth {
 			case 1, 2, 3, 6, 9:
 			default:
-				return fmt.Errorf("line stroke width must be 1, 2, 3, 6 or 9")
+				return fmt.Errorf("%s stroke width must be 1, 2, 3, 6 or 9", annotation.Type)
 			}
 		}
 		if annotation.Color != "" && !isEditorCoverColor(annotation.Color) {

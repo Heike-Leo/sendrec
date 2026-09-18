@@ -11,7 +11,7 @@ import { canContinueClipSource, EDITOR_CLIP_SPEEDS, readClipSpeed } from "./edit
 import { changeClipSpeed } from "./editorAudioGeometry";
 import { requirePreviewAnnotations, validateTextAnnotation, type EditorAnnotation, type EditorAnnotation as StoredAnnotation } from "./editorAnnotations";
 import { TEXT_FONTS, textTypography, type TextTypography } from "./editorTextTypography";
-import { ARROW_SHAFT_WIDTHS, arrowShaftWidth, arrowPolygonPoints, LINE_STROKE_WIDTHS, lineStrokeWidth, linePreviewStrokeWidth } from "./editorAnnotations";
+import { ARROW_SHAFT_WIDTHS, arrowShaftWidth, arrowPolygonPoints, LINE_STROKE_WIDTHS, lineStrokeWidth, linePreviewStrokeWidth, CIRCLE_STROKE_WIDTHS, circleStrokeWidth, circlePreviewStrokeWidth } from "./editorAnnotations";
 import { TEXT_LAYOUT, textPreviewGeometry, textBoxToPixels, scaledTextFontSize } from "./editorTextGeometry";
 import { effectiveAudioSpeed, audioSegmentTimelineDuration, audioGeometryDraft, commitAudioGeometry, requireSupportedAudioSpeed, type EditorAudioSegment } from "./editorAudioGeometry";
 
@@ -1804,7 +1804,11 @@ export function VideoEditorModal({
   function updateAnnotation(patch: { start?: number; end?: number; rotation?: number; color?: string; shaftWidth?: number; strokeWidth?: number }) {
     if (!selectedAnnotation) return;
     if (patch.shaftWidth !== undefined && (selectedAnnotation.type !== "arrow" || arrowShaftWidth(patch.shaftWidth) === arrowShaftWidth(selectedAnnotation.shaftWidth))) return;
-    if (patch.strokeWidth !== undefined && (selectedAnnotation.type !== "line" || lineStrokeWidth(patch.strokeWidth) === lineStrokeWidth(selectedAnnotation.strokeWidth))) return;
+    if (patch.strokeWidth !== undefined) {
+      if (selectedAnnotation.type !== "line" && selectedAnnotation.type !== "circle") return;
+      const readStroke = selectedAnnotation.type === "circle" ? circleStrokeWidth : lineStrokeWidth;
+      if (readStroke(patch.strokeWidth) === readStroke(selectedAnnotation.strokeWidth)) return;
+    }
     const currentColor = selectedAnnotation.type === "text" ? selectedAnnotation.color || TEXT_LAYOUT.color : selectedAnnotation.color ?? "#FC2667";
     if (patch.color !== undefined && (!/^#[0-9a-fA-F]{6}$/.test(patch.color) || patch.color === currentColor)) return;
     rememberEditorState();
@@ -2429,7 +2433,7 @@ export function VideoEditorModal({
                           <g transform="translate(18 18) scale(4)"><SymbolShape symbol={item.symbol} /></g>
                         </g>
                       : item.type === "circle"
-                      ? <ellipse cx="50" cy="50" rx="47" ry="47" fill="none" stroke={item.color ?? "#FC2667"} strokeWidth="3" vectorEffect="non-scaling-stroke" />
+                      ? <ellipse cx="50" cy="50" rx="47" ry="47" fill="none" stroke={item.color ?? "#FC2667"} strokeWidth={circlePreviewStrokeWidth(item.strokeWidth, textFrameRect.width)} vectorEffect="non-scaling-stroke" />
                       : <polygon fill={item.color ?? "#FC2667"} points={arrowPolygonPoints(item.shaftWidth)} transform={`rotate(${item.rotation} 50 50)`} />}
                   </svg>
                   {selectedAnnotationId === item.id && item.type !== "circle" && <>
@@ -2862,6 +2866,10 @@ export function VideoEditorModal({
           {selectedAnnotation.type === "arrow" && <label>Stärke <select aria-label="Pfeilstärke" value={arrowShaftWidth(selectedAnnotation.shaftWidth)}
             onChange={e => updateAnnotation({ shaftWidth: Number(e.target.value) })}>
             {ARROW_SHAFT_WIDTHS.map(value => <option key={value} value={value}>{value === 12 ? "12 (Standard)" : value}</option>)}
+          </select></label>}
+          {selectedAnnotation.type === "circle" && <label>Stärke <select aria-label="Kreisstärke" value={circleStrokeWidth(selectedAnnotation.strokeWidth)}
+            onChange={e => updateAnnotation({ strokeWidth: Number(e.target.value) })}>
+            {CIRCLE_STROKE_WIDTHS.map(value => <option key={value} value={value}>{value}</option>)}
           </select></label>}
           {selectedAnnotation.type === "line" && <label>Stärke <select aria-label="Linienstärke" value={lineStrokeWidth(selectedAnnotation.strokeWidth)}
             onChange={e => updateAnnotation({ strokeWidth: Number(e.target.value) })}>

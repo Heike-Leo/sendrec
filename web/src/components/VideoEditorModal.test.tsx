@@ -2681,8 +2681,58 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(circle.parentElement).toHaveStyle({ width: "480px", height: "270px", left: "0px", top: "0px" });
     expect(circle).toHaveStyle({ left: "10%", top: "20%", width: "30%", height: "20%" });
     expect(circle.style.borderStyle).toBe("none");
-    expect(circle.querySelector("ellipse")).toHaveAttribute("stroke-width", "3");
+    expect(circle.querySelector("ellipse")).toHaveAttribute("stroke-width", "0.75");
     expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(false);
+  });
+
+  it.each([1920, 960, 640])("scales circle stroke without altering the oval at preview width %s", async width => {
+    const ui = await openArrowAspectPreview(false, true, false, true);
+    const rect = { left: 0, top: 0, width, height: width * 9 / 16 } as DOMRect;
+    vi.mocked(ui.video.getBoundingClientRect).mockReturnValue(rect);
+    vi.mocked(screen.getByTestId("video-editor-preview").getBoundingClientRect).mockReturnValue(rect);
+    ui.measure(1920, 1080); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 1" }));
+    const circle = screen.getByTestId("video-editor-circle-unchanged-circle");
+    const shape = circle.querySelector("ellipse")!;
+    expect(screen.getByLabelText("Kreisstärke")).toHaveValue("3");
+    expect(Number(shape.getAttribute("stroke-width"))).toBeCloseTo(3 * width / 1920);
+    for (const value of [1, 3, 9]) {
+      fireEvent.change(screen.getByLabelText("Kreisstärke"), { target: { value: String(value) } });
+      expect(Number(shape.getAttribute("stroke-width"))).toBeCloseTo(value * width / 1920);
+      expect(shape).toHaveAttribute("fill", "none");
+      expect(shape).toHaveAttribute("rx", "47"); expect(shape).toHaveAttribute("ry", "47");
+      expect(shape).toHaveAttribute("vector-effect", "non-scaling-stroke");
+      expect(circle).toHaveStyle({ left: "10%", top: "20%", width: "30%", height: "20%" });
+    }
+  });
+
+  it("undoes, copies and reloads circle stroke without changing geometry or time", async () => {
+    const ui = await openArrowAspectPreview(false, true, false, true);
+    ui.measure(1920, 1080); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 1" }));
+    fireEvent.change(screen.getByLabelText("Kreisstärke"), { target: { value: "9" } });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 1" }));
+    expect(screen.getByLabelText("Kreisstärke")).toHaveValue("3");
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Kreisstärke"), { target: { value: "9" } });
+    fireEvent.click(screen.getByRole("button", { name: "Kreis kopieren" }));
+    fireEvent.click(screen.getByRole("button", { name: "Kreis einfügen" }));
+    await waitFor(() => {
+      const saved = mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT").at(-1);
+      expect(saved).toBeDefined();
+      expect(JSON.parse(saved![1].body).annotations).toHaveLength(2);
+    });
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT").at(-1)![1].body);
+    const expected = { ...aspectArrow, id: "unchanged-circle", type: "circle", strokeWidth: 9 };
+    expect(timeline.annotations[0]).toEqual(expected);
+    expect(timeline.annotations[1]).toEqual({ ...expected, id: timeline.annotations[1].id });
+    expect(timeline.annotations[1].id).not.toBe(expected.id);
+    ui.unmount(); editorState = { ...emptyEditorState, timeline };
+    render(<VideoEditorModal videoId="original" duration={6} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Kreis 2" });
+    fireEvent.click(screen.getByRole("button", { name: "Kreis 2" }));
+    expect(screen.getByLabelText("Kreisstärke")).toHaveValue("9");
   });
 
   it("colors legacy arrows independently and undoes color without changing geometry or timing", async () => {

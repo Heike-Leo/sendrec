@@ -20,6 +20,16 @@ export function lineStrokeWidth(value?: number): number {
 export function linePreviewStrokeWidth(value: number | undefined, frameWidth: number): number {
   return lineStrokeWidth(value) * frameWidth / 1920;
 }
+// Circle contours use the same canonical-pixel units, independently of lines.
+export const CIRCLE_STROKE_WIDTHS = [1, 2, 3, 6, 9] as const;
+export function circleStrokeWidth(value?: number): number {
+  if (value === undefined) return 3;
+  if (!(CIRCLE_STROKE_WIDTHS as readonly number[]).includes(value)) throw new Error("Invalid circle stroke width");
+  return value;
+}
+export function circlePreviewStrokeWidth(value: number | undefined, frameWidth: number): number {
+  return circleStrokeWidth(value) * frameWidth / 1920;
+}
 // Width in the arrow's existing 100x100 viewBox, not screen pixels.
 export const ARROW_SHAFT_WIDTHS = [6, 9, 12, 18, 24] as const;
 export function arrowShaftWidth(value?: number): number {
@@ -67,6 +77,7 @@ export function requirePreviewAnnotations(input: unknown): EditorAnnotation[] {
     }
     if (annotation.type === "arrow") arrowShaftWidth(annotation.shaftWidth);
     if (annotation.type === "line") lineStrokeWidth(annotation.strokeWidth);
+    if (annotation.type === "circle") circleStrokeWidth(annotation.strokeWidth);
   }
   return input as EditorAnnotation[];
 }

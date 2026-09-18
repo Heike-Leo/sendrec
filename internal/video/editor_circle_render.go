@@ -7,10 +7,14 @@ import (
 	"strconv"
 )
 
-// Fixed output-pixel stroke, matching the preview's non-scaling 3px contour.
+// Canonical output pixels; preview scales this with the displayed frame.
 const editorCircleStroke = 3.0
 
 func rasterCircle(a editorAnnotation, width, height int) *image.NRGBA {
+	stroke := editorCircleStroke
+	if a.StrokeWidth != nil {
+		stroke = *a.StrokeWidth
+	}
 	bounds := arrowBounds(a, width, height) // shared percentage/frame geometry
 	img := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
 	w, h := a.Width*float64(width)/100, a.Height*float64(height)/100
@@ -27,7 +31,7 @@ func rasterCircle(a editorAnnotation, width, height int) *image.NRGBA {
 		for x := 0; x < bounds.Dx(); x++ {
 			// Conservative lower bound avoids supersampling the empty interior.
 			q := math.Hypot((float64(x)+.5-cx)/rx, (float64(y)+.5-cy)/ry)
-			if math.Abs(q-1)*math.Min(rx, ry) > editorCircleStroke/2+1 {
+			if math.Abs(q-1)*math.Min(rx, ry) > stroke/2+1 {
 				continue
 			}
 			covered := 0
@@ -41,7 +45,7 @@ func rasterCircle(a editorAnnotation, width, height int) *image.NRGBA {
 					// First-order distance to the ellipse gives a thin, uniform
 					// pixel contour even for non-square viewports (SVG vector-effect).
 					gradient := math.Hypot(dx/(rx*rx), dy/(ry*ry)) / q
-					if math.Abs(q-1)/gradient <= editorCircleStroke/2 {
+					if math.Abs(q-1)/gradient <= stroke/2 {
 						covered++
 					}
 				}

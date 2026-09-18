@@ -1,15 +1,128 @@
 package video
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	"math"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestCircleStrokeWidthContract(t *testing.T) {
+	a := editorAnnotation{ID: "circle", Type: "circle", X: 10, Y: 10, Width: 30, Height: 20, End: 2}
+	legacy := rasterCircle(a, 1920, 1080)
+	for _, stroke := range []float64{1, 2, 3, 6, 9} {
+		a.StrokeWidth = &stroke
+		timeline := validTimeline(editClip{ID: "c", SourceID: "s", SourceEnd: 2, Duration: 2})
+		timeline.Annotations = []editorAnnotation{a}
+		if err := validateEditTimeline(&timeline); err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(timeline)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored editTimeline
+		if err := json.Unmarshal(data, &restored); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(restored.Annotations[0], a) {
+			t.Fatal("stroke roundtrip")
+		}
+		img := rasterCircle(a, 1920, 1080)
+		if stroke == 3 && !bytes.Equal(img.Pix, legacy.Pix) {
+			t.Fatal("legacy raster changed")
+		}
+		// At the top of the oval, integrate alpha across the contour normal.
+		coverage := 0.
+		for y := 0; y < img.Bounds().Dy()/2; y++ {
+			coverage += float64(img.NRGBAAt(img.Bounds().Dx()/2, y).A) / 255
+		}
+		if math.Abs(coverage-stroke) > .15 {
+			t.Fatalf("stroke %v coverage %v", stroke, coverage)
+		}
+		if img.NRGBAAt(img.Bounds().Dx()/2, img.Bounds().Dy()/2).A != 0 {
+			t.Fatal("filled interior")
+		}
+	}
+	for _, stroke := range []float64{0, -1, 4, 10, math.NaN(), math.Inf(1)} {
+		a.StrokeWidth = &stroke
+		timeline := validTimeline(editClip{ID: "c", SourceID: "s", SourceEnd: 2, Duration: 2})
+		timeline.Annotations = []editorAnnotation{a}
+		if err := validateEditTimeline(&timeline); err == nil {
+			t.Fatalf("accepted %v", stroke)
+		}
+	}
+	// The thick contour is clipped at its unchanged box, never shifts or fills
+	// the center, even for the minimum one-percent oval at the frame edge.
+	stroke := 9.
+	a = editorAnnotation{ID: "edge", Type: "circle", Width: 1, Height: 1, End: 2, StrokeWidth: &stroke}
+	img := rasterCircle(a, 1920, 1080)
+	if img.Bounds() != arrowBounds(a, 1920, 1080) {
+		t.Fatal("box changed")
+	}
+	if img.NRGBAAt(img.Bounds().Dx()/2, img.Bounds().Dy()/2).A != 0 {
+		t.Fatal("small oval filled")
+	}
+	if img.NRGBAAt(img.Bounds().Dx()/2, 0).A == 0 {
+		t.Fatal("edge contour missing")
+	}
+}
+
+func TestCircleStrokeWidthFFmpegIntegration(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := t.TempDir()
+	input := filepath.Join(dir, "black.mp4")
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x180:r=30:d=1", "-c:v", "libx264", "-y", input).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	timeline := validTimeline(editClip{ID: "c", SourceID: "s", SourceEnd: 1, Duration: 1})
+	for i, stroke := range []float64{1, 3, 9} {
+		s := stroke
+		timeline.Annotations = append(timeline.Annotations, editorAnnotation{ID: fmt.Sprint(i), Type: "circle", X: 5 + float64(i)*30, Y: 20, Width: 25, Height: 40, Start: .2, End: .8, Color: "#ffffff", StrokeWidth: &s})
+	}
+	if err := prepareArrowFiles(dir, timeline); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "widths.mp4")
+	cmd := exec.Command("ffmpeg", buildAnnotatedTimelineRenderArgs([]string{input}, timeline.Clips, map[string]int{"s": 0}, map[string]sourceVideo{"s": {}}, output, nil, timeline.Annotations)...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	for _, at := range []string{"0.1", "0.5", "0.9"} {
+		pixels, err := exec.Command("ffmpeg", "-v", "error", "-ss", at, "-i", output, "-frames:v", "1", "-pix_fmt", "gray", "-f", "rawvideo", "-").Output()
+		if err != nil || len(pixels) != 1920*1080 {
+			t.Fatal("decode", err)
+		}
+		for _, a := range timeline.Annotations {
+			x, cy := int((a.X+a.Width/2)*19.2), int((a.Y+a.Height/2)*10.8)
+			top := int((a.Y + .03*a.Height) * 10.8)
+			coverage := 0.
+			for y := top - 10; y <= top+10; y++ {
+				coverage += float64(pixels[y*1920+x]) / 255
+			}
+			want := 0.
+			if at == "0.5" {
+				want = *a.StrokeWidth
+			}
+			if math.Abs(coverage-want) > .25 {
+				t.Fatalf("time %s stroke %v coverage %v", at, *a.StrokeWidth, coverage)
+			}
+			if pixels[cy*1920+x] > 25 {
+				t.Fatal("encoded interior filled")
+			}
+		}
+	}
+}
 
 func TestCircleCanonicalPreviewContract(t *testing.T) {
 	a := editorAnnotation{ID: "unchanged-circle", Type: "circle", X: 10, Y: 20, Width: 30, Height: 20, Start: .2, End: 5.8}
