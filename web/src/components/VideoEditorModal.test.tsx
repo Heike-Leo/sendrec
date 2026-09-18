@@ -1947,7 +1947,7 @@ describe("VideoEditorModal multi-source preview", () => {
     fireEvent.pointerUp(document);
     expect(parseFloat(box().style.width)).toBeGreaterThan(parseFloat(before[0]));
     expect(parseFloat(box().style.width)/parseFloat(box().style.height)).toBeCloseTo(parseFloat(before[0])/parseFloat(before[1]));
-    expect(shape()).toHaveAttribute("stroke-width", "3");
+    expect(Number(shape().getAttribute("stroke-width"))).toBeCloseTo(3 * parseFloat(frame.style.width || "0") / 1920);
     expect(shape()).toHaveAttribute("vector-effect", "non-scaling-stroke");
     fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
     expect([box().style.width,box().style.height]).toEqual(before);
@@ -2529,15 +2529,65 @@ describe("VideoEditorModal multi-source preview", () => {
     });
     const ui = await openArrowAspectPreview(false, false, true);
     ui.measure(1080, 1920); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    expect(screen.getByTestId("video-editor-line-aspect-line").querySelector("line")).toHaveAttribute("stroke-width", "1.5");
     const rect = { left: 0, top: 0, width: 480, height: 270 } as DOMRect;
     vi.mocked(ui.video.getBoundingClientRect).mockReturnValue(rect);
     vi.mocked(screen.getByTestId("video-editor-preview").getBoundingClientRect).mockReturnValue(rect);
     act(() => callbacks.forEach(callback => callback([], {} as ResizeObserver)));
     const line = screen.getByTestId("video-editor-line-aspect-line");
     expect(line.parentElement).toHaveStyle({ width: "480px", height: "270px", left: "0px", top: "0px" });
+    expect(line.querySelector("line")).toHaveAttribute("stroke-width", "0.75");
     expect(line).toHaveStyle({ left: "10%", top: "20%", width: "30%", height: "20%" });
     expect(line.querySelector("g")).toHaveAttribute("transform", "rotate(37 50 50)");
     expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+  });
+
+  it.each([1920, 960, 640])("scales legacy and selected line thickness at preview width %s", async width => {
+    const ui = await openArrowAspectPreview(false, false, true);
+    const rect = { left: 0, top: 0, width, height: width * 9 / 16 } as DOMRect;
+    vi.mocked(ui.video.getBoundingClientRect).mockReturnValue(rect);
+    vi.mocked(screen.getByTestId("video-editor-preview").getBoundingClientRect).mockReturnValue(rect);
+    ui.measure(1920, 1080); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+    const shape = () => screen.getByTestId("video-editor-line-aspect-line").querySelector("line")!;
+    expect(screen.getByLabelText("Linienstärke")).toHaveValue("3");
+    expect(Number(shape().getAttribute("stroke-width"))).toBeCloseTo(3 * width / 1920);
+    for (const value of [1, 3, 9]) {
+      fireEvent.change(screen.getByLabelText("Linienstärke"), { target: { value: String(value) } });
+      expect(Number(shape().getAttribute("stroke-width"))).toBeCloseTo(value * width / 1920);
+      expect(shape()).toHaveAttribute("stroke-linecap", "round");
+      expect(shape()).toHaveAttribute("vector-effect", "non-scaling-stroke");
+      expect(screen.getByTestId("video-editor-line-aspect-line")).toHaveStyle({ left: "10%", top: "20%", width: "30%", height: "20%" });
+    }
+  });
+
+  it("undoes, copies and reloads line thickness without changing geometry or time", async () => {
+    const ui = await openArrowAspectPreview(false, false, true);
+    ui.measure(1920, 1080); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+    fireEvent.change(screen.getByLabelText("Linienstärke"), { target: { value: "9" } });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    fireEvent.click(screen.getByRole("button", { name: "Linie 1" }));
+    expect(screen.getByLabelText("Linienstärke")).toHaveValue("3");
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Linienstärke"), { target: { value: "6" } });
+    fireEvent.click(screen.getByRole("button", { name: "Linie kopieren" }));
+    fireEvent.click(screen.getByRole("button", { name: "Linie einfügen" }));
+    await waitFor(() => {
+      const saved = mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT").at(-1);
+      expect(saved).toBeDefined();
+      expect(JSON.parse(saved![1].body).annotations).toHaveLength(2);
+    });
+    const timeline = JSON.parse(mockApiFetch.mock.calls.filter(([,o]) => o?.method === "PUT").at(-1)![1].body);
+    const expected = { ...aspectArrow, id: "aspect-line", type: "line", strokeWidth: 6 };
+    expect(timeline.annotations[0]).toEqual(expected);
+    expect(timeline.annotations[1]).toEqual({ ...expected, id: timeline.annotations[1].id });
+    expect(timeline.annotations[1].id).not.toBe(expected.id);
+    ui.unmount(); editorState = { ...emptyEditorState, timeline };
+    render(<VideoEditorModal videoId="original" duration={6} onClose={vi.fn()} />);
+    await screen.findByRole("button", { name: "Linie 2" });
+    fireEvent.click(screen.getByRole("button", { name: "Linie 2" }));
+    expect(screen.getByLabelText("Linienstärke")).toHaveValue("6");
   });
 
   it("colors legacy arrows independently and undoes color without changing geometry or timing", async () => {
@@ -3911,7 +3961,7 @@ describe("VideoEditorModal multi-source preview", () => {
       expect(screen.getByTestId("video-editor-circle-circle-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-arrow-arrow-frame").querySelector("polygon")).toHaveAttribute("transform", "rotate(37 50 50)");
       expect(screen.getByTestId("video-editor-line-line-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
-      expect(screen.getByTestId("video-editor-line-line-frame").querySelector("line")).toHaveAttribute("stroke-width", "3");
+      expect(screen.getByTestId("video-editor-line-line-frame").querySelector("line")).toHaveAttribute("stroke-width", "0.9375");
       expect(screen.getByTestId("video-editor-symbol-symbol-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-symbol-symbol-frame").querySelector("svg > g")).toHaveAttribute("transform", "rotate(37 50 50)");
       expect(screen.getByTestId("video-editor-arrow-arrow-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });

@@ -1,7 +1,9 @@
 package video
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"math"
 	"os/exec"
@@ -10,6 +12,115 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestLineStrokeWidthContract(t *testing.T) {
+	a := editorAnnotation{ID: "line", Type: "line", X: 10, Y: 10, Width: 30, Height: 20, End: 2}
+	legacy := rasterLine(a, 1920, 1080)
+	for _, stroke := range []float64{1, 2, 3, 6, 9} {
+		a.StrokeWidth = &stroke
+		timeline := validTimeline(editClip{ID: "c", SourceID: "s", SourceEnd: 2, Duration: 2})
+		timeline.Annotations = []editorAnnotation{a}
+		if err := validateEditTimeline(&timeline); err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(timeline)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored editTimeline
+		if err := json.Unmarshal(data, &restored); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(restored.Annotations[0], a) {
+			t.Fatal("stroke roundtrip")
+		}
+		img := rasterLine(a, 1920, 1080)
+		if stroke == 3 && !bytes.Equal(img.Pix, legacy.Pix) {
+			t.Fatal("legacy raster changed")
+		}
+		bounds := arrowBounds(a, 1920, 1080)
+		p, q := lineEndpoints(a, 1920, 1080)
+		at := func(x, y int) float64 { return float64(img.NRGBAAt(x-bounds.Min.X, y-bounds.Min.Y).A) / 255 }
+		coverage := 0.
+		for y := int(p.y) - 10; y <= int(p.y)+10; y++ {
+			coverage += at(int((p.x+q.x)/2), y)
+		}
+		if math.Abs(coverage-stroke) > .03 {
+			t.Fatalf("width %.1f coverage %.3f", stroke, coverage)
+		}
+		// Caps extend beyond the endpoint but not beyond their radius; corners
+		// of the cap's bounding square remain transparent (round, not square).
+		if stroke == 9 {
+			if at(int(p.x)-3, int(p.y)) == 0 || at(int(p.x)-6, int(p.y)) != 0 || at(int(p.x)-4, int(p.y)-5) != 0 {
+				t.Fatal("round cap geometry")
+			}
+		}
+		// Keep endpoint exactly on the video edge: clip the cap, never move it.
+		edge := a
+		edge.X = -.08 * edge.Width
+		edgeImg := rasterLine(edge, 1920, 1080)
+		if arrowBounds(edge, 1920, 1080).Min.X != 0 || edgeImg.NRGBAAt(0, int(p.y)-bounds.Min.Y).A == 0 {
+			t.Fatal("edge cap lost or moved")
+		}
+	}
+	for _, invalid := range []float64{0, -1, 4, 10, math.NaN(), math.Inf(1)} {
+		a.StrokeWidth = &invalid
+		timeline := validTimeline(editClip{ID: "c", SourceID: "s", SourceEnd: 2, Duration: 2})
+		timeline.Annotations = []editorAnnotation{a}
+		if validateEditTimeline(&timeline) == nil {
+			t.Fatalf("accepted invalid stroke %v", invalid)
+		}
+	}
+}
+
+func TestLineStrokeWidthFFmpegIntegration(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := t.TempDir()
+	input := filepath.Join(dir, "black.mp4")
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=black:s=320x180:r=30:d=1", "-c:v", "libx264", "-y", input).CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	timeline := validTimeline(editClip{ID: "c", SourceID: "s", SourceEnd: 1, Duration: 1})
+	for i, stroke := range []float64{1, 2, 3, 6, 9} {
+		s := stroke
+		timeline.Annotations = append(timeline.Annotations, editorAnnotation{ID: fmt.Sprint(i), Type: "line", X: 10, Y: 10 + float64(i)*15, Width: 30, Height: 10, Start: .2, End: .8, Color: "#ffffff", StrokeWidth: &s})
+	}
+	if err := prepareArrowFiles(dir, timeline); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "widths.mp4")
+	cmd := exec.Command("ffmpeg", buildAnnotatedTimelineRenderArgs([]string{input}, timeline.Clips, map[string]int{"s": 0}, map[string]sourceVideo{"s": {}}, output, nil, timeline.Annotations)...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	for _, at := range []string{"0.1", "0.5", "0.9"} {
+		pixels, err := exec.Command("ffmpeg", "-v", "error", "-ss", at, "-i", output, "-frames:v", "1", "-pix_fmt", "gray", "-f", "rawvideo", "-").Output()
+		if err != nil || len(pixels) != 1920*1080 {
+			t.Fatal("decode", err)
+		}
+		for _, a := range timeline.Annotations {
+			p, q := lineEndpoints(a, 1920, 1080)
+			x := int((p.x + q.x) / 2)
+			coverage := 0.
+			for y := int(p.y) - 10; y <= int(p.y)+10; y++ {
+				coverage += float64(pixels[y*1920+x]) / 255
+			}
+			want := 0.
+			if at == "0.5" {
+				want = *a.StrokeWidth
+			}
+			if math.Abs(coverage-want) > .2 {
+				t.Fatalf("time %s stroke %v: coverage %.3f", at, *a.StrokeWidth, coverage)
+			}
+			if at == "0.5" && *a.StrokeWidth == 9 && (pixels[int(p.y)*1920+int(p.x)-3] < 100 || pixels[(int(p.y)-4)*1920+int(p.x)-4] > 80) {
+				t.Fatal("encoded round cap")
+			}
+		}
+	}
+}
 
 // Same saved line as the DOM contract. The preview's canonical frame scales
 // uniformly to output pixels, regardless of the source's contained rectangle.

@@ -11,7 +11,7 @@ import { canContinueClipSource, EDITOR_CLIP_SPEEDS, readClipSpeed } from "./edit
 import { changeClipSpeed } from "./editorAudioGeometry";
 import { requirePreviewAnnotations, validateTextAnnotation, type EditorAnnotation, type EditorAnnotation as StoredAnnotation } from "./editorAnnotations";
 import { TEXT_FONTS, textTypography, type TextTypography } from "./editorTextTypography";
-import { ARROW_SHAFT_WIDTHS, arrowShaftWidth, arrowPolygonPoints } from "./editorAnnotations";
+import { ARROW_SHAFT_WIDTHS, arrowShaftWidth, arrowPolygonPoints, LINE_STROKE_WIDTHS, lineStrokeWidth, linePreviewStrokeWidth } from "./editorAnnotations";
 import { TEXT_LAYOUT, textPreviewGeometry, textBoxToPixels, scaledTextFontSize } from "./editorTextGeometry";
 import { effectiveAudioSpeed, audioSegmentTimelineDuration, audioGeometryDraft, commitAudioGeometry, requireSupportedAudioSpeed, type EditorAudioSegment } from "./editorAudioGeometry";
 
@@ -1801,9 +1801,10 @@ export function VideoEditorModal({
     selectAnnotation(annotation.id);
   }
 
-  function updateAnnotation(patch: { start?: number; end?: number; rotation?: number; color?: string; shaftWidth?: number }) {
+  function updateAnnotation(patch: { start?: number; end?: number; rotation?: number; color?: string; shaftWidth?: number; strokeWidth?: number }) {
     if (!selectedAnnotation) return;
     if (patch.shaftWidth !== undefined && (selectedAnnotation.type !== "arrow" || arrowShaftWidth(patch.shaftWidth) === arrowShaftWidth(selectedAnnotation.shaftWidth))) return;
+    if (patch.strokeWidth !== undefined && (selectedAnnotation.type !== "line" || lineStrokeWidth(patch.strokeWidth) === lineStrokeWidth(selectedAnnotation.strokeWidth))) return;
     const currentColor = selectedAnnotation.type === "text" ? selectedAnnotation.color || TEXT_LAYOUT.color : selectedAnnotation.color ?? "#FC2667";
     if (patch.color !== undefined && (!/^#[0-9a-fA-F]{6}$/.test(patch.color) || patch.color === currentColor)) return;
     rememberEditorState();
@@ -2417,7 +2418,7 @@ export function VideoEditorModal({
                         angle the actual polygon stays inside this viewport. */}
                     {item.type === "line"
                       ? <g transform={`rotate(${item.rotation} 50 50)`}>
-                          <line x1="8" y1="50" x2="92" y2="50" fill="none" stroke={item.color ?? "#FC2667"} strokeWidth="3" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                          <line x1="8" y1="50" x2="92" y2="50" fill="none" stroke={item.color ?? "#FC2667"} strokeWidth={linePreviewStrokeWidth(item.strokeWidth, textFrameRect.width)} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
                           <line data-testid={`video-editor-line-hit-${item.id}`} x1="8" y1="50" x2="92" y2="50" stroke="transparent" strokeWidth="12" vectorEffect="non-scaling-stroke" style={{ pointerEvents: "stroke" }} />
                         </g>
                       : item.type === "symbol" && item.symbol
@@ -2860,6 +2861,10 @@ export function VideoEditorModal({
           {selectedAnnotation.type === "arrow" && <label>Stärke <select aria-label="Pfeilstärke" value={arrowShaftWidth(selectedAnnotation.shaftWidth)}
             onChange={e => updateAnnotation({ shaftWidth: Number(e.target.value) })}>
             {ARROW_SHAFT_WIDTHS.map(value => <option key={value} value={value}>{value === 12 ? "12 (Standard)" : value}</option>)}
+          </select></label>}
+          {selectedAnnotation.type === "line" && <label>Stärke <select aria-label="Linienstärke" value={lineStrokeWidth(selectedAnnotation.strokeWidth)}
+            onChange={e => updateAnnotation({ strokeWidth: Number(e.target.value) })}>
+            {LINE_STROKE_WIDTHS.map(value => <option key={value} value={value}>{value === 3 ? "3 (Standard)" : value}</option>)}
           </select></label>}
           <label>Farbe <input type="color" aria-label={`${selectedAnnotation.type === "line" ? "Linien" : annotationName(selectedAnnotation)}farbe`} value={selectedAnnotation.type === "text" ? selectedAnnotation.color || TEXT_LAYOUT.color : selectedAnnotation.color ?? "#FC2667"}
             onChange={(e) => updateAnnotation({ color: e.target.value })}

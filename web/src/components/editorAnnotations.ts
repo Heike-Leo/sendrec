@@ -8,6 +8,17 @@ export interface GraphicAnnotation extends AnnotationBase {
   symbol?: AnnotationSymbol;
   rotation: number;
   shaftWidth?: number;
+  strokeWidth?: number;
+}
+// Line thickness in canonical 1920x1080 output pixels (not SVG viewBox units).
+export const LINE_STROKE_WIDTHS = [1, 2, 3, 6, 9] as const;
+export function lineStrokeWidth(value?: number): number {
+  if (value === undefined) return 3;
+  if (!(LINE_STROKE_WIDTHS as readonly number[]).includes(value)) throw new Error("Invalid line stroke width");
+  return value;
+}
+export function linePreviewStrokeWidth(value: number | undefined, frameWidth: number): number {
+  return lineStrokeWidth(value) * frameWidth / 1920;
 }
 // Width in the arrow's existing 100x100 viewBox, not screen pixels.
 export const ARROW_SHAFT_WIDTHS = [6, 9, 12, 18, 24] as const;
@@ -55,6 +66,7 @@ export function requirePreviewAnnotations(input: unknown): EditorAnnotation[] {
       validateTextAnnotation(annotation);
     }
     if (annotation.type === "arrow") arrowShaftWidth(annotation.shaftWidth);
+    if (annotation.type === "line") lineStrokeWidth(annotation.strokeWidth);
   }
   return input as EditorAnnotation[];
 }

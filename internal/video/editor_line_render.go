@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-// Match preview's non-scaling stroke and round caps, in output pixels.
+// Canonical output pixels; preview scales this with the displayed frame.
 const editorLineStroke = 3.0
 
 func lineEndpoints(a editorAnnotation, width, height int) (arrowPoint, arrowPoint) {
@@ -21,6 +21,10 @@ func lineEndpoints(a editorAnnotation, width, height int) (arrowPoint, arrowPoin
 }
 
 func rasterLine(a editorAnnotation, width, height int) *image.NRGBA {
+	stroke := editorLineStroke
+	if a.StrokeWidth != nil {
+		stroke = *a.StrokeWidth
+	}
 	bounds := arrowBounds(a, width, height)
 	img := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
 	p, q := lineEndpoints(a, width, height)
@@ -41,13 +45,13 @@ func rasterLine(a editorAnnotation, width, height int) *image.NRGBA {
 	for y := 0; y < bounds.Dy(); y++ {
 		for x := 0; x < bounds.Dx(); x++ {
 			px, py := float64(bounds.Min.X+x), float64(bounds.Min.Y+y)
-			if distance(px+.5, py+.5) > editorLineStroke/2+1 {
+			if distance(px+.5, py+.5) > stroke/2+1 {
 				continue
 			}
 			covered := 0
 			for sy := 0; sy < 4; sy++ {
 				for sx := 0; sx < 4; sx++ {
-					if distance(px+(float64(sx)+.5)/4, py+(float64(sy)+.5)/4) <= editorLineStroke/2 {
+					if distance(px+(float64(sx)+.5)/4, py+(float64(sy)+.5)/4) <= stroke/2 {
 						covered++
 					}
 				}

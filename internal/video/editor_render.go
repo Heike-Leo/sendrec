@@ -47,23 +47,24 @@ type editorCoverOverlay struct {
 
 // Shapes are rendered; text is persisted but explicitly render-gated for now.
 type editorAnnotation struct {
-	ID         string   `json:"id"`
-	Type       string   `json:"type"`
-	Symbol     string   `json:"symbol,omitempty"`
-	X          float64  `json:"x"`
-	Y          float64  `json:"y"`
-	Width      float64  `json:"width"`
-	Height     float64  `json:"height"`
-	Start      float64  `json:"start"`
-	End        float64  `json:"end"`
-	Rotation   float64  `json:"rotation"`
-	ShaftWidth *float64 `json:"shaftWidth,omitempty"`
-	Color      string   `json:"color,omitempty"`
-	Text       string   `json:"text,omitempty"`
-	FontSize   float64  `json:"fontSize,omitempty"`
-	FontFamily *string  `json:"fontFamily,omitempty"`
-	Bold       *bool    `json:"bold,omitempty"`
-	Italic     *bool    `json:"italic,omitempty"`
+	ID          string   `json:"id"`
+	Type        string   `json:"type"`
+	Symbol      string   `json:"symbol,omitempty"`
+	X           float64  `json:"x"`
+	Y           float64  `json:"y"`
+	Width       float64  `json:"width"`
+	Height      float64  `json:"height"`
+	Start       float64  `json:"start"`
+	End         float64  `json:"end"`
+	Rotation    float64  `json:"rotation"`
+	ShaftWidth  *float64 `json:"shaftWidth,omitempty"`
+	StrokeWidth *float64 `json:"strokeWidth,omitempty"`
+	Color       string   `json:"color,omitempty"`
+	Text        string   `json:"text,omitempty"`
+	FontSize    float64  `json:"fontSize,omitempty"`
+	FontFamily  *string  `json:"fontFamily,omitempty"`
+	Bold        *bool    `json:"bold,omitempty"`
+	Italic      *bool    `json:"italic,omitempty"`
 }
 
 type editorAudioSegment struct {
@@ -213,6 +214,13 @@ func validateEditTimeline(timeline *editTimeline) error {
 			v := *annotation.ShaftWidth
 			if math.IsNaN(v) || math.IsInf(v, 0) || v < 6 || v > 24 {
 				return fmt.Errorf("arrow shaft width must be between 6 and 24")
+			}
+		}
+		if annotation.Type == "line" && annotation.StrokeWidth != nil {
+			switch *annotation.StrokeWidth {
+			case 1, 2, 3, 6, 9:
+			default:
+				return fmt.Errorf("line stroke width must be 1, 2, 3, 6 or 9")
 			}
 		}
 		if annotation.Color != "" && !isEditorCoverColor(annotation.Color) {

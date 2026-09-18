@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { arrowShaftWidth, arrowPolygonPoints, requirePreviewAnnotations, validateTextAnnotation, type TextAnnotation } from "./editorAnnotations";
+import { lineStrokeWidth, linePreviewStrokeWidth, arrowShaftWidth, arrowPolygonPoints, requirePreviewAnnotations, validateTextAnnotation, type TextAnnotation } from "./editorAnnotations";
 import { serializeTimeline } from "./VideoEditorModal";
 
 const text: TextAnnotation = { id: "text-1", type: "text", text: "äöüÄÖÜß <b>Hinweis</b>", x: 10, y: 20, width: 40, height: 10, start: 1, end: 4, fontSize: 32, color: "#Ab12Cd" };
+describe("line stroke width", () => {
+  it("defaults legacy lines to three reference pixels without adding data", () => {
+    const line = { ...text, type: "line" as const, rotation: 37 };
+    expect(lineStrokeWidth()).toBe(3);
+    expect(requirePreviewAnnotations(JSON.parse(serializeTimeline([], [], [line])).annotations)).toEqual([line]);
+  });
+  it.each([1, 2, 3, 6, 9])("scales and roundtrips %s reference pixels", strokeWidth => {
+    for (const width of [1920, 960, 640]) expect(linePreviewStrokeWidth(strokeWidth, width)).toBe(strokeWidth * width / 1920);
+    const line = { ...text, type: "line" as const, rotation: 37, strokeWidth };
+    expect(requirePreviewAnnotations(JSON.parse(serializeTimeline([], [], [line])).annotations)).toEqual([line]);
+  });
+  it.each([0, -1, 4, 10, NaN, Infinity])("rejects invalid width %s", strokeWidth => {
+    expect(() => requirePreviewAnnotations([{ type: "line", strokeWidth }])).toThrow("Invalid line stroke width");
+  });
+});
 describe("arrow shaft width", () => {
   it("preserves the exact legacy polygon", () => {
     expect(arrowShaftWidth()).toBe(12);
