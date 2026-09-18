@@ -48,7 +48,7 @@ func TestAudioSegmentsPersistence(t *testing.T) {
 	}
 	cases = append(cases,
 		strings.Replace(legacy, `"id":`, `"trackId":"original","id":`, 1),
-		`[{"id":"voice","trackId":"voice-over","source":{"kind":"audioAsset","assetId":"550e8400-e29b-41d4-a716-446655440001"},"geometryLinked":false,"speed":1,"sourceStart":0,"sourceEnd":2,"timelineStart":0,"muted":false,"volume":0.5}]`,
+		`[{"id":"voice","trackId":"voiceover-1","source":{"kind":"audioAsset","assetId":"550e8400-e29b-41d4-a716-446655440001"},"geometryLinked":false,"speed":1,"sourceStart":0,"sourceEnd":2,"timelineStart":0,"muted":false,"volume":0.5}]`,
 		`[{"id":"typed","trackId":"original","source":{"kind":"video","videoId":"video-main","clipId":"a"},"sourceStart":0,"sourceEnd":2,"timelineStart":0}]`)
 	for _, audio := range cases {
 		t.Run("audio="+audio, func(t *testing.T) {

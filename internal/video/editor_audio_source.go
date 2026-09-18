@@ -22,7 +22,7 @@ func audioTrackID(s editorAudioSegment) string {
 }
 
 func validateAudioSourceContract(s editorAudioSegment) error {
-	if s.TrackID != nil && (strings.TrimSpace(*s.TrackID) == "" || strings.TrimSpace(*s.TrackID) != *s.TrackID) {
+	if track := audioTrackID(s); track != "original" && track != "voiceover-1" {
 		return fmt.Errorf("invalid audio track id")
 	}
 	if s.Source == nil {

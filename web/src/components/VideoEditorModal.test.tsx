@@ -296,10 +296,10 @@ describe("VideoEditorModal multi-source preview", () => {
   });
 
   it.each(["asset", "tracks"])("blocks unsupported %s playback without saving partial audio", async kind => {
-    const audio: EditorAudioSegment[] = kind === "asset" ? [{ id: "voice", trackId: "voice-over", source: { kind: "audioAsset", assetId: "asset" }, geometryLinked: false,
+    const audio: EditorAudioSegment[] = kind === "asset" ? [{ id: "voice", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" }, geometryLinked: false,
       sourceStart: 0, sourceEnd: 2, timelineStart: 0 }] : [
       { id: "a", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 2, timelineStart: 0 },
-      { id: "b", trackId: "voice-over", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 2, timelineStart: 0 },
+      { id: "b", trackId: "voiceover-1", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 2, timelineStart: 0 },
     ];
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1, clips: [
       { id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }], audioSegments: audio } };

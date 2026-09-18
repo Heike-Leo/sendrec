@@ -20,9 +20,25 @@ export interface EditorAudioSegment {
 }
 
 export const ORIGINAL_AUDIO_TRACK = "original";
+export const AUDIO_TRACK_ORDER = [ORIGINAL_AUDIO_TRACK, "voiceover-1"] as const;
+export type EditorAudioTrackId = typeof AUDIO_TRACK_ORDER[number];
 export function audioTrackId(segment: EditorAudioSegment): string {
-  if (segment.trackId !== undefined && (!segment.trackId.trim() || segment.trackId !== segment.trackId.trim())) throw new Error("Ungültige Audiospur.");
+  if (segment.trackId !== undefined && !AUDIO_TRACK_ORDER.some(id => id === segment.trackId)) throw new Error("Ungültige Audiospur: erlaubt sind original und voiceover-1.");
   return segment.trackId ?? ORIGINAL_AUDIO_TRACK;
+}
+
+// Stable track order and segment order; never mutate persisted data or materialize defaults.
+export function groupAudioSegments(segments: EditorAudioSegment[]) {
+  const groups = new Map<string, EditorAudioSegment[]>();
+  for (const segment of segments) {
+    const track = audioTrackId(segment);
+    const items = groups.get(track) ?? [];
+    items.push(segment);
+    groups.set(track, items);
+  }
+  return AUDIO_TRACK_ORDER.filter(track => groups.has(track)).map(trackId => ({
+    trackId, segments: groups.get(trackId)!,
+  }));
 }
 
 export function audioSource(segment: EditorAudioSegment): EditorAudioSource {
@@ -30,6 +46,7 @@ export function audioSource(segment: EditorAudioSegment): EditorAudioSource {
   const valid = (id: unknown): id is string => typeof id === "string" && id.trim().length > 0;
   if (source !== undefined) {
     if (segment.sourceClipId !== undefined || segment.sourceVideoId !== undefined) throw new Error("Mehrdeutige Audioquelle.");
+    if (source === null || typeof source !== "object") throw new Error("Ungültige Audioquelle.");
     if (source.kind === "video" && valid(source.videoId) && valid(source.clipId) && !("assetId" in source)) return source;
     if (source.kind === "audioAsset" && valid(source.assetId) && !("videoId" in source) && !("clipId" in source) && segment.geometryLinked !== true) return source;
     throw new Error("Ungültige Audioquelle.");

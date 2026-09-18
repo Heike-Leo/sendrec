@@ -11,7 +11,7 @@ func TestAudioSourceTrackContract(t *testing.T) {
 		`{"id":"a","sourceClipId":"c","sourceVideoId":"v","sourceEnd":2}`,
 		`{"id":"a","trackId":"original","sourceClipId":"c","sourceVideoId":"v","sourceEnd":2}`,
 		`{"id":"a","trackId":"original","source":{"kind":"video","videoId":"v","clipId":"c"},"sourceEnd":2}`,
-		`{"id":"a","trackId":"voice-over","source":{"kind":"audioAsset","assetId":"asset"},"sourceEnd":2,"geometryLinked":false,"speed":1,"muted":true,"volume":0.5}`,
+		`{"id":"a","trackId":"voiceover-1","source":{"kind":"audioAsset","assetId":"asset"},"sourceEnd":2,"geometryLinked":false,"speed":1,"muted":true,"volume":0.5}`,
 	} {
 		var s editorAudioSegment
 		if err := json.Unmarshal([]byte(raw), &s); err != nil {
@@ -45,7 +45,7 @@ func TestAudioSourceTrackContract(t *testing.T) {
 }
 
 func TestAudioTracksOverlapAndRenderGuard(t *testing.T) {
-	original, voice := "original", "voice-over"
+	original, voice := "original", "voiceover-1"
 	segments := []editorAudioSegment{{ID: "a", SourceClipID: "c", SourceVideoID: "v", SourceEnd: 2}, {ID: "b", TrackID: &voice, Source: &editorAudioSource{Kind: "audioAsset", AssetID: "asset"}, SourceEnd: 2}}
 	timeline := validTimeline(editClip{ID: "c", SourceID: "v", SourceEnd: 10})
 	timeline.AudioSegments = &segments
@@ -54,6 +54,14 @@ func TestAudioTracksOverlapAndRenderGuard(t *testing.T) {
 	}
 	if requireSupportedAudioRender(&segments) == nil {
 		t.Fatal("asset render must be gated")
+	}
+	voiceSegments := []editorAudioSegment{segments[1], segments[1]}
+	voiceSegments[1].ID = "second-voice"
+	voiceSegments[1].TimelineStart = 1
+	voiceTimeline := timeline
+	voiceTimeline.AudioSegments = &voiceSegments
+	if validateEditTimeline(&voiceTimeline) == nil {
+		t.Fatal("overlap within voiceover-1 accepted")
 	}
 	segments[1].TrackID = &original
 	if validateEditTimeline(&timeline) == nil {
@@ -87,6 +95,24 @@ func TestAudioSourceRejectsAmbiguity(t *testing.T) {
 		if validateAudioSourceContract(s) == nil {
 			t.Fatal("invalid source accepted", s)
 		}
+	}
+}
+
+func TestAudioTracksV1Restrictions(t *testing.T) {
+	for _, track := range []string{"voice-over", "voiceover-2", "unknown", "", " original"} {
+		t.Run(track, func(t *testing.T) {
+			voice := "voiceover-1"
+			audio := []editorAudioSegment{
+				{ID: "original", SourceVideoID: "v", SourceClipID: "c", SourceEnd: 2},
+				{ID: "voice", TrackID: &voice, Source: &editorAudioSource{Kind: "audioAsset", AssetID: "asset"}, SourceEnd: 2},
+				{ID: "third", TrackID: &track, Source: &editorAudioSource{Kind: "audioAsset", AssetID: "asset"}, SourceEnd: 2},
+			}
+			timeline := validTimeline(editClip{ID: "c", SourceID: "v", SourceEnd: 10})
+			timeline.AudioSegments = &audio
+			if err := validateEditTimeline(&timeline); err == nil || !strings.Contains(err.Error(), "track") {
+				t.Fatalf("unknown/third track accepted: %v", err)
+			}
+		})
 	}
 }
 
