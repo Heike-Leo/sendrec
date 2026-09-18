@@ -203,7 +203,7 @@ export function VideoEditorModal({
   const textFrameRef = useRef<HTMLDivElement>(null);
   const [textFrameRect, setTextFrameRect] = useState({ left: 0, top: 0, width: 0, height: 0 });
   const hasTextAnnotations = annotations.some(item => item.type === "text");
-  const hasCanonicalAnnotations = hasTextAnnotations || annotations.some(item => item.type === "arrow" || item.type === "line" || item.type === "circle");
+  const hasCanonicalAnnotations = hasTextAnnotations || annotations.some(item => item.type === "arrow" || item.type === "line" || item.type === "circle" || item.type === "symbol");
   const textAnnotationEditRef = useRef<string | null>(null);
   const [textAnnotationDraft, setTextAnnotationDraft] = useState<{ id: string; text: string } | null>(null);
   useEffect(() => {
@@ -1843,7 +1843,7 @@ export function VideoEditorModal({
     e.preventDefault();
     e.stopPropagation();
     selectAnnotation(annotation.id);
-    const rect = (annotation.type === "text" ? textFrameRef : annotation.type === "arrow" || annotation.type === "line" || annotation.type === "circle" ? arrowFrameRef : annotationFrameRef).current?.getBoundingClientRect();
+    const rect = (annotation.type === "text" ? textFrameRef : annotation.type === "arrow" || annotation.type === "line" || annotation.type === "circle" || annotation.type === "symbol" ? arrowFrameRef : annotationFrameRef).current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
     cancelAnnotationDragRef.current?.();
     const startX = e.clientX;
@@ -1932,7 +1932,7 @@ export function VideoEditorModal({
     e.preventDefault();
     e.stopPropagation();
     selectAnnotation(annotation.id);
-    const rect = (annotation.type === "arrow" || annotation.type === "line" ? arrowFrameRef : annotationFrameRef).current?.getBoundingClientRect();
+    const rect = (annotation.type === "arrow" || annotation.type === "line" || annotation.type === "symbol" ? arrowFrameRef : annotationFrameRef).current?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
     cancelAnnotationDragRef.current?.();
     const width = rect.width * annotation.width / 100;
@@ -2392,8 +2392,8 @@ export function VideoEditorModal({
             />
 
             {[false, true].map(isArrowFrame => {
-              // Arrows, lines and circles share the output canvas with text. Other shapes and
-              // covers retain their existing source-relative coordinate system.
+              // Symbols also share the canonical output canvas. Covers retain
+              // their existing source-relative coordinate system.
               const frameRect = isArrowFrame ? textFrameRect : videoFrameRect;
               return <div key={String(isArrowFrame)}
               data-testid={isArrowFrame ? "video-editor-arrow-frame" : "video-editor-overlay-frame"}
@@ -2409,15 +2409,15 @@ export function VideoEditorModal({
                 pointerEvents: "none",
               }}
             >
-              {annotations.filter((item) => item.type !== "text").filter(item => (item.type === "arrow" || item.type === "line" || item.type === "circle") === isArrowFrame).filter((item) => timelineCurrentTime >= item.start && timelineCurrentTime <= item.end).map((item) => (
+              {annotations.filter((item) => item.type !== "text").filter(item => (item.type === "arrow" || item.type === "line" || item.type === "circle" || item.type === "symbol") === isArrowFrame).filter((item) => timelineCurrentTime >= item.start && timelineCurrentTime <= item.end).map((item) => (
                 <div key={item.id} data-testid={`video-editor-${item.type}-${item.id}`}
                   onPointerDown={(e) => handleAnnotationPointerDown(e, item)}
                   onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
                   style={{ position: "absolute", left: `${item.x}%`, top: `${item.y}%`, width: `${item.width}%`, height: `${item.height}%`,
                     pointerEvents: item.type === "line" ? "none" : "auto", touchAction: "none", cursor: "move", boxSizing: "border-box",
                     zIndex: selectedAnnotationId === item.id ? 4 : 3,
-                    border: item.type === "line" || item.type === "circle" ? "none" : selectedAnnotationId === item.id ? "1px solid #FC2667" : "1px solid transparent",
-                    ...(item.type === "circle" ? { outline: selectedAnnotationId === item.id ? "1px solid #FC2667" : "none", outlineOffset: -1 } : {}) }}>
+                    border: item.type === "line" || item.type === "circle" || item.type === "symbol" ? "none" : selectedAnnotationId === item.id ? "1px solid #FC2667" : "1px solid transparent",
+                    ...(item.type === "circle" || item.type === "symbol" ? { outline: selectedAnnotationId === item.id ? "1px solid #FC2667" : "none", outlineOffset: -1 } : {}) }}>
                   <svg aria-hidden="true" width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ display: "block", pointerEvents: "none" }}>
                     {/* Every vertex is within radius 44 of (50,50), so at any
                         angle the actual polygon stays inside this viewport. */}

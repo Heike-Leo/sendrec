@@ -13,6 +13,35 @@ import (
 
 var testSymbolIDs = []string{"check", "cross", "warning", "info", "star", "pointer", "plus", "question"}
 
+// Counterpart of the canonical DOM regression: source aspect ratio never enters symbol
+// rasterization; the output box and the rotated plus arm remain canonical.
+func TestSymbolCanonicalDiagnosticContract(t *testing.T) {
+	a := editorAnnotation{ID: "aspect-symbol", Type: "symbol", Symbol: "plus", X: 10, Y: 20, Width: 30, Height: 20, Rotation: 37, Start: .2, End: 5.8, Color: "#00ff00"}
+	bounds := arrowBounds(a, 1920, 1080)
+	if bounds != image.Rect(192, 216, 768, 432) {
+		t.Fatal("canonical bounds changed", bounds)
+	}
+	img := rasterSymbol(a, 1920, 1080)
+	r := 37 * math.Pi / 180
+	// Horizontal plus arm is (3,8)..(13,8), becoming (30,50)..(70,50).
+	for _, offset := range []float64{-15, 0, 15} {
+		x := int((50 + offset*math.Cos(r)) * 5.76)
+		y := int((50 + offset*math.Sin(r)) * 2.16)
+		if p := img.NRGBAAt(x, y); p.A == 0 || p.G != 255 {
+			t.Fatalf("missing rotated arm at %d,%d: %v", x, y, p)
+		}
+	}
+	angle := math.Atan2(216*math.Sin(r), 576*math.Cos(r)) * 180 / math.Pi
+	t.Logf("all sources: box 192,216 576x216; center 480,324; rotated plus arm angle %.9f degrees", angle)
+	clips := []editClip{{ID: "one", SourceID: "wide", SourceEnd: 3, Duration: 3}, {ID: "two", SourceID: "portrait", SourceEnd: 3, Duration: 3}}
+	args := strings.Join(buildAnnotatedTimelineRenderArgs([]string{"wide.mp4", "portrait.mp4"}, clips, map[string]int{"wide": 0, "portrait": 1}, map[string]sourceVideo{"wide": {}, "portrait": {}}, "out.mp4", nil, []editorAnnotation{a}), " ")
+	for _, want := range []string{"overlay=x=192:y=216", "between(t,0.200000,5.800000)"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("missing %s: %s", want, args)
+		}
+	}
+}
+
 func TestSymbolRasterGeometry(t *testing.T) {
 	// Independent SVG landmarks: one point on each stroke and a transparent
 	// point. These catch missing shapes or accidental backgrounds.

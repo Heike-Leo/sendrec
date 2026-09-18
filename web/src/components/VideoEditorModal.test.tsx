@@ -1619,12 +1619,12 @@ describe("VideoEditorModal multi-source preview", () => {
       await user.click(screen.getByRole("button", { name: label }));
       expect(screen.queryByRole("dialog", { name: "Symbol auswählen" })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: `Symbol ${index + 1}` })).toHaveAttribute("aria-pressed", "true");
-      const shape = screen.getByTestId("video-editor-overlay-frame").querySelector(`[data-symbol="${id}"]`)!;
+      const shape = screen.getByTestId("video-editor-arrow-frame").querySelector(`[data-symbol="${id}"]`)!;
       expect(shape).toHaveAttribute("fill", "none");
       expect(shape.children.length).toBeGreaterThan(0);
       expect(shape.closest("svg")).toHaveStyle({ pointerEvents: "none" });
     }
-    const frame = screen.getByTestId("video-editor-overlay-frame");
+    const frame = screen.getByTestId("video-editor-arrow-frame");
     vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 500 } as DOMRect);
     const selected = frame.querySelector('[data-symbol="question"]')!.closest("svg")!.parentElement as HTMLElement;
     const point = (angle: number) => ({
@@ -1708,7 +1708,7 @@ describe("VideoEditorModal multi-source preview", () => {
     await screen.findByTestId("video-editor-timeline");
     fireEvent.click(screen.getByRole("button", { name: "Symbol hinzufügen" }));
     fireEvent.click(screen.getByRole("button", { name: "Haken" }));
-    const frame = screen.getByTestId("video-editor-overlay-frame");
+    const frame = screen.getByTestId("video-editor-arrow-frame");
     const rect = vi.spyOn(frame, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 500 } as DOMRect);
     const symbol = () => frame.querySelector('[data-testid^="video-editor-symbol-"]') as HTMLElement;
     const originalWidth = symbol().style.width;
@@ -2332,13 +2332,13 @@ describe("VideoEditorModal multi-source preview", () => {
   ];
   const aspectArrow = { id: "aspect-arrow", type: "arrow" as const, x: 10, y: 20, width: 30, height: 20, rotation: 37, start: .2, end: 5.8, color: "#00ff00" };
 
-  async function openArrowAspectPreview(mixed = false, withCircle = false, withLine = false, circleOnly = false) {
+  async function openArrowAspectPreview(mixed = false, withCircle = false, withLine = false, circleOnly = false, symbolOnly = false) {
     editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: { version: 1,
       clips: mixed ? [
         { id: "c1", sourceId: "original", sourceStart: 0, sourceEnd: 3, duration: 3 },
         { id: "c2", sourceId: "inserted", sourceStart: 0, sourceEnd: 3, duration: 3 },
       ] : [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 6, duration: 6 }],
-      annotations: [...(withLine || circleOnly ? [] : [aspectArrow]), ...(withCircle ? [{ ...aspectArrow, id: "unchanged-circle", type: "circle" as const }] : []), ...(withLine ? [{ ...aspectArrow, id: "aspect-line", type: "line" as const }] : [])], audioSegments: [],
+      annotations: [...(withLine || circleOnly || symbolOnly ? [] : [aspectArrow]), ...(withCircle ? [{ ...aspectArrow, id: "unchanged-circle", type: "circle" as const }] : []), ...(withLine ? [{ ...aspectArrow, id: "aspect-line", type: "line" as const }] : []), ...(symbolOnly ? [{ ...aspectArrow, id: "aspect-symbol", type: "symbol" as const, symbol: "plus" as const }] : [])], audioSegments: [],
     } };
     const view = render(<VideoEditorModal videoId="original" duration={6} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-preview");
@@ -2372,6 +2372,111 @@ describe("VideoEditorModal multi-source preview", () => {
     };
     return { ...view, video, measure, box };
   }
+
+  // Canonical contract: selection must never consume SVG content space.
+  function measuredSymbolGeometry() {
+    const symbol = screen.getByTestId("video-editor-symbol-aspect-symbol");
+    const frame = symbol.parentElement!;
+    expect(frame).toBe(screen.getByTestId("video-editor-arrow-frame"));
+    const fw = parseFloat(frame.style.width), fh = parseFloat(frame.style.height);
+    const box = [2*(parseFloat(frame.style.left)+fw*.1), 2*(parseFloat(frame.style.top)+fh*.2), 2*fw*.3, 2*fh*.2];
+    const css = getComputedStyle(symbol);
+    expect(css.boxSizing).toBe("border-box");
+    expect(symbol.style.borderStyle).toBe("none");
+    const content = [...box];
+    const angle = (b: number[]) => Math.atan2(b[3]*Math.sin(37*Math.PI/180), b[2]*Math.cos(37*Math.PI/180))*180/Math.PI;
+    expect(symbol.querySelector("svg")).toHaveAttribute("preserveAspectRatio", "none");
+    expect(symbol.querySelector("svg > g")).toHaveAttribute("transform", "rotate(37 50 50)");
+    expect(symbol.querySelector('[data-symbol="plus"] path')).toHaveAttribute("d", "M8 3v10M3 8h10");
+    return { symbol, box, content, angle: angle(content), renderAngle: angle([192,216,576,216]) };
+  }
+
+  it.each([
+    { name: "16:9", w: 1920, h: 1080, box: [192,216,576,216] },
+    { name: "4:3", w: 1440, h: 1080, box: [192,216,576,216] },
+    { name: "9:16", w: 1080, h: 1920, box: [192,216,576,216] },
+    { name: "12:5", w: 1920, h: 800, box: [192,216,576,216] },
+  ])("matches symbol/render geometry on $name, selected and unselected", async ({ w, h, box }) => {
+    const ui = await openArrowAspectPreview(false, false, false, false, true);
+    ui.measure(w,h); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    const before = measuredSymbolGeometry();
+    before.box.forEach((v,i) => expect(v).toBeCloseTo(box[i], 8));
+    expect(before.symbol.style.outline).toBe("none");
+    expect(before.content).toEqual([192,216,576,216]);
+    expect(before.angle).toBeCloseTo(before.renderAngle, 10);
+    expect(ui.video).toHaveStyle({ aspectRatio: "16 / 9", objectFit: "contain" });
+    fireEvent.click(screen.getByRole("button", { name: "Symbol 1" }));
+    const after = measuredSymbolGeometry();
+    expect(after.symbol.style.outline).toBe("1px solid #FC2667");
+    expect(after.symbol.style.outlineOffset).toBe("-1px");
+    expect(after.content).toEqual(before.content);
+    expect(after.angle).toBe(before.angle);
+    expect(screen.getByLabelText("Symbol Start")).toHaveValue(.2);
+    expect(screen.getByLabelText("Symbol Ende")).toHaveValue(5.8);
+    ui.video.currentTime = 5.9; fireEvent.timeUpdate(ui.video);
+    expect(screen.queryByTestId("video-editor-symbol-aspect-symbol")).toBeNull();
+    expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(false);
+  });
+
+  it("keeps canonical symbol geometry on source switch without saved changes", async () => {
+    const ui = await openArrowAspectPreview(true, false, false, false, true);
+    ui.measure(1920,1080); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    const before = measuredSymbolGeometry();
+    const track = screen.getByTestId("video-editor-timeline");
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({ left: 0, width: 600 } as DOMRect);
+    fireEvent.click(track, { clientX: 400 });
+    await waitFor(() => expect(ui.video.getAttribute("src")).toBe("https://media.example/inserted.mp4"));
+    ui.measure(1080,1920);
+    const after = measuredSymbolGeometry();
+    expect(before.box).toEqual([192,216,576,216]);
+    expect(after.box).toEqual(before.box);
+    expect(after.angle).toBe(before.angle);
+    expect(after.symbol).toHaveStyle({ left: "10%", top: "20%", width: "30%", height: "20%" });
+    expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(false);
+  });
+
+  it.each(arrowAspectCases.slice(0,4))("uses canonical symbol drag, resize and rotation on $name", async ({ w, h }) => {
+    const ui = await openArrowAspectPreview(false, false, false, false, true);
+    ui.measure(w,h); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    const symbol = () => screen.getByTestId("video-editor-symbol-aspect-symbol");
+    const undo = () => {
+      fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+      fireEvent.click(screen.getByRole("button", { name: "Symbol 1" }));
+      expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    };
+    fireEvent.pointerDown(symbol(), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 96, clientY: 54 }); fireEvent.pointerUp(document);
+    expect(symbol()).toHaveStyle({ left: "20%", top: "30%" });
+    undo(); expect(symbol()).toHaveStyle({ left: "10%", top: "20%" });
+    fireEvent.pointerDown(screen.getByTestId("video-editor-symbol-resize-aspect-symbol"), { clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(document, { clientX: 96, clientY: 54 }); fireEvent.pointerUp(document);
+    expect(symbol()).toHaveStyle({ width: "40%", height: "30%" });
+    undo(); expect(symbol()).toHaveStyle({ width: "30%", height: "20%" });
+    const point = (angle: number) => ({ clientX: 240 + 144*Math.cos(angle*Math.PI/180), clientY: 162 + 54*Math.sin(angle*Math.PI/180) });
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Symbol drehen" }), point(0));
+    fireEvent.pointerMove(document, point(53)); fireEvent.pointerUp(document);
+    expect(screen.getByLabelText("Symbolrichtung")).toHaveValue("90");
+    undo(); expect(screen.getByLabelText("Symbolrichtung")).toHaveValue("37");
+  });
+
+  it("remeasures the canonical symbol frame on preview resize without saving", async () => {
+    const callbacks = new Set<ResizeObserverCallback>();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { callbacks.add(callback); }
+      observe() {} unobserve() {} disconnect() {}
+    });
+    const ui = await openArrowAspectPreview(false, false, false, false, true);
+    ui.measure(1080,1920); ui.video.currentTime = 1; fireEvent.timeUpdate(ui.video);
+    const rect = { left: 0, top: 0, width: 480, height: 270 } as DOMRect;
+    vi.mocked(ui.video.getBoundingClientRect).mockReturnValue(rect);
+    vi.mocked(screen.getByTestId("video-editor-preview").getBoundingClientRect).mockReturnValue(rect);
+    act(() => callbacks.forEach(callback => callback([], {} as ResizeObserver)));
+    const result = measuredSymbolGeometry();
+    expect(result.box).toEqual([96,108,288,108]);
+    expect(result.angle).toBeCloseTo(result.renderAngle,10);
+    expect(result.symbol.parentElement).toHaveStyle({ width: "480px", height: "270px" });
+    expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(false);
+  });
 
   it.each(arrowAspectCases)("matches canonical arrow render geometry for $name", async ({ w, h, box: expected }) => {
     const ui = await openArrowAspectPreview();
@@ -4085,7 +4190,7 @@ describe("VideoEditorModal multi-source preview", () => {
       }
       expect(screen.getByTestId("video-editor-circle-circle-frame").parentElement).toBe(arrowFrame);
       expect(screen.getByTestId("video-editor-line-line-frame").parentElement).toBe(arrowFrame);
-      expect(screen.getByTestId("video-editor-symbol-symbol-frame").parentElement).toBe(frame);
+      expect(screen.getByTestId("video-editor-symbol-symbol-frame").parentElement).toBe(arrowFrame);
       expect(screen.getByTestId("video-editor-symbol-symbol-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-circle-circle-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
       expect(screen.getByTestId("video-editor-arrow-arrow-frame")).toHaveStyle({ left: "80%", top: "80%", width: "20%", height: "20%" });
