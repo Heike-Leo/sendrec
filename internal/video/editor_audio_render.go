@@ -19,6 +19,9 @@ func readAudioSpeed(speed *float64) (float64, error) {
 }
 
 func validateRenderAudioSpeeds(segments *[]editorAudioSegment) error {
+	if err := requireSupportedAudioRender(segments); err != nil {
+		return err
+	}
 	if segments == nil {
 		return nil
 	}
@@ -34,6 +37,7 @@ func validateRenderAudioSpeeds(segments *[]editorAudioSegment) error {
 // Linked audio inherits exactly once, and only from its uniquely identified,
 // geometrically matching clip. Inconsistent explicit linkage is a render error.
 func effectiveRenderAudioSpeed(segment editorAudioSegment, clips []editClip) (float64, error) {
+	segment = videoAudioProjection(segment)
 	own, err := readAudioSpeed(segment.Speed)
 	if err != nil || segment.GeometryLinked == nil || !*segment.GeometryLinked {
 		return own, err
@@ -69,7 +73,11 @@ func validateAudioVolume(volume *float64) error {
 
 func renderAudioSegments(clips []editClip, stored *[]editorAudioSegment) []editorAudioSegment {
 	if stored != nil {
-		return append([]editorAudioSegment{}, (*stored)...)
+		result := append([]editorAudioSegment{}, (*stored)...)
+		for i := range result {
+			result[i] = videoAudioProjection(result[i])
+		}
+		return result
 	}
 	segments := make([]editorAudioSegment, 0, len(clips))
 	offset := 0.0
@@ -102,6 +110,9 @@ func renderSourceIDs(timeline editTimeline) []string {
 }
 
 func validateRenderAudio(timeline editTimeline, sources map[string]sourceVideo) error {
+	if err := requireSupportedAudioRender(timeline.AudioSegments); err != nil {
+		return err
+	}
 	if err := validateRenderClipSpeeds(timeline.Clips); err != nil {
 		return err
 	}

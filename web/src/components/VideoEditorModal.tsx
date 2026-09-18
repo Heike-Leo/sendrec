@@ -8,7 +8,7 @@ import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWav
 import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorClips, timelineClipPosition, clipSourceToTimelineTime, splitEditorClip, timelineDuration as clipTimelineDuration, type EditorClip, type StoredEditorClip } from "./editorClipTime";
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
 import { canContinueClipSource, EDITOR_CLIP_SPEEDS, readClipSpeed } from "./editorClipTime";
-import { changeClipSpeed } from "./editorAudioGeometry";
+import { changeClipSpeed, audioTrackId, audioTrackNeighbours, videoAudioSource, previewAudioSegments, cloneAudioSegment } from "./editorAudioGeometry";
 import { requirePreviewAnnotations, validateTextAnnotation, type EditorAnnotation, type EditorAnnotation as StoredAnnotation } from "./editorAnnotations";
 import { TEXT_FONTS, textTypography, type TextTypography } from "./editorTextTypography";
 import { ARROW_SHAFT_WIDTHS, arrowShaftWidth, arrowPolygonPoints, LINE_STROKE_WIDTHS, lineStrokeWidth, linePreviewStrokeWidth, CIRCLE_STROKE_WIDTHS, circleStrokeWidth, circlePreviewStrokeWidth } from "./editorAnnotations";
@@ -18,15 +18,16 @@ import { effectiveAudioSpeed, audioSegmentTimelineDuration, audioGeometryDraft, 
 export function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[] = []): EditorAudioSegment[] {
   const used = new Set(previous.map((segment) => segment.id));
   return layoutEditorClips(clips).map(({ clip, timelineStart }) => {
-    const existing = previous.find((segment) => segment.sourceClipId === clip.id);
+    const existing = previous.find((segment) => videoAudioSource(segment)?.clipId === clip.id);
     let id = existing?.id ?? `audio:${clip.id}`;
     if (!existing) {
       while (used.has(id)) id = `audio:${id}`;
     }
     used.add(id);
-    const segment = { ...(existing ? { geometryLinked: existing.geometryLinked, speed: existing.speed } : { geometryLinked: true }),
+    const segment = { ...(existing ? { geometryLinked: existing.geometryLinked, speed: existing.speed, ...(existing.trackId !== undefined ? { trackId: existing.trackId } : {}) } : { geometryLinked: true }),
       id, sourceClipId: clip.id, sourceVideoId: clip.sourceVideoId,
       sourceStart: clip.start, sourceEnd: clip.end, timelineStart };
+    if (existing?.source) return { ...segment, sourceClipId: undefined, sourceVideoId: undefined, source: { ...existing.source } };
     return segment;
   });
 }
@@ -34,14 +35,15 @@ export function coupledAudio(clips: EditorClip[], previous: EditorAudioSegment[]
 export function isAudioStillCoupled(clips: EditorClip[], audioSegments: EditorAudioSegment[]): boolean {
   const expected = coupledAudio(clips);
   if (expected.length !== audioSegments.length) return false;
-  const byClip = new Map(audioSegments.map((segment) => [segment.sourceClipId, segment]));
+  if (audioSegments.some(segment => audioTrackId(segment) !== "original" || !videoAudioSource(segment))) return false;
+  const byClip = new Map(audioSegments.map((segment) => [videoAudioSource(segment)?.clipId, segment]));
   if (byClip.size !== audioSegments.length) return false;
   // One microsecond tolerates arithmetic noise, not meaningful audio edits.
   const sameTime = (a: number, b: number) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 0.000001;
   return expected.every((segment) => {
     const actual = byClip.get(segment.sourceClipId);
     return actual !== undefined && actual.muted !== true && validAudioVolume(actual.volume) &&
-      Math.abs((actual.volume ?? 1) - 1) <= 1e-6 && actual.sourceVideoId === segment.sourceVideoId &&
+      Math.abs((actual.volume ?? 1) - 1) <= 1e-6 && videoAudioSource(actual)?.videoId === segment.sourceVideoId &&
       sameTime(actual.sourceStart, segment.sourceStart) &&
       sameTime(actual.sourceEnd, segment.sourceEnd) &&
       sameTime(actual.timelineStart, segment.timelineStart);
@@ -361,7 +363,7 @@ export function VideoEditorModal({
     const audio = audioRef.current;
     if (!audio) return;
     const preview = new EditorAudioPreview(audio, {
-      segments: () => audioInputsRef.current.audioSegments,
+      segments: () => previewAudioSegments(audioInputsRef.current.audioSegments),
       speed: segment => {
         const inputs = audioInputsRef.current;
         const original = inputs.audioSegments.find(item => item.id === segment.id);
@@ -659,7 +661,7 @@ export function VideoEditorModal({
           }
         }
         const restoredAudio = state.timeline?.audioSegments ?? coupledAudio(restoredClips);
-        try { restoredAudio.forEach(requireSupportedAudioSpeed); }
+        try { restoredAudio.forEach(requireSupportedAudioSpeed); previewAudioSegments(restoredAudio); }
         catch (err) { pausePreview(); videoRef.current?.pause(); setClipSpeedBlocked(true); throw err; }
         if (restoredAudio.some(segment => !validAudioVolume(segment.volume))) throw new Error("Ungültige Audio-Lautstärke.");
         setAudioSegments(restoredAudio);
@@ -750,7 +752,7 @@ export function VideoEditorModal({
     if (edge === "move") {
       if (![rect.left, rect.top, timelineDuration, e.clientX, scroller.scrollLeft].every(Number.isFinite)) return;
       // Freeze temporal neighbours, without reordering persisted segments.
-      const ordered = [...audioSegments].sort((a, b) => a.timelineStart - b.timelineStart);
+      const ordered = audioTrackNeighbours(audioSegments, segment);
       const index = ordered.findIndex(item => item.id === segment.id);
       if (index < 0 || new Set(ordered.map(item => item.id)).size !== ordered.length) return;
       let previousEnd = 0;
@@ -1252,7 +1254,7 @@ export function VideoEditorModal({
       ...history.slice(-49),
       {
         clips: clips.map((clip) => ({ ...clip })),
-        audioSegments: audioSegments.map((segment) => ({ ...segment })),
+        audioSegments: audioSegments.map(cloneAudioSegment),
         coverOverlays: coverOverlays.map((overlay) => ({ ...overlay })),
         annotations: annotations.map((annotation) => ({ ...annotation })),
       },
@@ -3745,10 +3747,10 @@ export function VideoEditorModal({
           {audioSegments.map((segment, index) => {
             const visual = audioResizeDraft?.id === segment.id ? audioResizeDraft : segment;
             return (
-            <div key={segment.id} data-testid={`video-editor-audio-${segment.sourceClipId}`}
+            <div key={segment.id} data-testid={`video-editor-audio-${videoAudioSource(segment)?.clipId ?? segment.id}`}
               onPointerDown={e => handleAudioResize(e, segment, "move")}
               onClick={e => { e.stopPropagation(); setSelectedAudioId(segment.id); }}
-              data-audio-id={segment.id} data-clip-id={segment.sourceClipId} data-source-video-id={segment.sourceVideoId}
+              data-audio-id={segment.id} data-track-id={audioTrackId(segment)} data-clip-id={videoAudioSource(segment)?.clipId} data-source-video-id={videoAudioSource(segment)?.videoId}
               data-source-start={segment.sourceStart} data-source-end={segment.sourceEnd}
               data-timeline-start={segment.timelineStart}
               title={`Originalton · Segment ${index + 1}`}
@@ -3761,7 +3763,7 @@ export function VideoEditorModal({
                 boxSizing: "border-box", border: "1px solid rgba(255,255,255,0.35)", background: "#334155",
                 color: "#fff", fontSize: 12, padding: "0 12px", display: "flex", alignItems: "center",
                 gap: 6, whiteSpace: "nowrap", overflow: "hidden" }}>
-              <AudioSegmentWaveform sourceVideoId={visual.sourceVideoId} sourceStart={visual.sourceStart}
+              <AudioSegmentWaveform sourceVideoId={videoAudioSource(visual)!.videoId} sourceStart={visual.sourceStart}
                 sourceEnd={visual.sourceEnd} zoom={timelineZoom} cache={waveformCacheRef.current} loadUrl={loadVideoUrl} />
               <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
                 strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, position: "relative", background: "#334155" }}>

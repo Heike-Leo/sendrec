@@ -46,6 +46,10 @@ func TestAudioSegmentsPersistence(t *testing.T) {
 			cases = append(cases, strings.Replace(legacy, `"id":`, `"speed":`+speed+`,`+linked+`"id":`, 1))
 		}
 	}
+	cases = append(cases,
+		strings.Replace(legacy, `"id":`, `"trackId":"original","id":`, 1),
+		`[{"id":"voice","trackId":"voice-over","source":{"kind":"audioAsset","assetId":"asset"},"geometryLinked":false,"speed":1,"sourceStart":0,"sourceEnd":2,"timelineStart":0,"muted":false,"volume":0.5}]`,
+		`[{"id":"typed","trackId":"original","source":{"kind":"video","videoId":"video-main","clipId":"a"},"sourceStart":0,"sourceEnd":2,"timelineStart":0}]`)
 	for _, audio := range cases {
 		t.Run("audio="+audio, func(t *testing.T) {
 			expected := audio

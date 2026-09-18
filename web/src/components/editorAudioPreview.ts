@@ -17,7 +17,7 @@ export function validAudioVolume(volume: number | undefined): boolean {
 }
 
 // Gain is not transport state: changing it must never reload or seek media.
-export function audioTransportKey(segments: readonly AudioSegment[]): string {
+export function audioTransportKey(segments: readonly { volume?: number }[]): string {
   return JSON.stringify(segments.map(({ volume: _volume, ...segment }) => segment));
 }
 

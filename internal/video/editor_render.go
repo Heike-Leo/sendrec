@@ -68,16 +68,18 @@ type editorAnnotation struct {
 }
 
 type editorAudioSegment struct {
-	Speed          *float64 `json:"speed,omitempty"`
-	GeometryLinked *bool    `json:"geometryLinked,omitempty"`
-	Volume         *float64 `json:"volume,omitempty"`
-	Muted          bool     `json:"muted"`
-	ID             string   `json:"id"`
-	SourceClipID   string   `json:"sourceClipId"`
-	SourceVideoID  string   `json:"sourceVideoId"`
-	SourceStart    float64  `json:"sourceStart"`
-	SourceEnd      float64  `json:"sourceEnd"`
-	TimelineStart  float64  `json:"timelineStart"`
+	TrackID        *string            `json:"trackId,omitempty"`
+	Source         *editorAudioSource `json:"source,omitempty"`
+	Speed          *float64           `json:"speed,omitempty"`
+	GeometryLinked *bool              `json:"geometryLinked,omitempty"`
+	Volume         *float64           `json:"volume,omitempty"`
+	Muted          bool               `json:"muted"`
+	ID             string             `json:"id"`
+	SourceClipID   string             `json:"sourceClipId,omitempty"`
+	SourceVideoID  string             `json:"sourceVideoId,omitempty"`
+	SourceStart    float64            `json:"sourceStart"`
+	SourceEnd      float64            `json:"sourceEnd"`
+	TimelineStart  float64            `json:"timelineStart"`
 }
 
 type editTimeline struct {
@@ -168,10 +170,13 @@ func validateEditTimeline(timeline *editTimeline) error {
 			if err := validateAudioVolume(segment.Volume); err != nil {
 				return err
 			}
-			if strings.TrimSpace(segment.ID) == "" || ids[segment.ID] || strings.TrimSpace(segment.SourceClipID) == "" || strings.TrimSpace(segment.SourceVideoID) == "" {
+			if strings.TrimSpace(segment.ID) == "" || ids[segment.ID] {
 				return fmt.Errorf("audio segment requires unique id and source references")
 			}
 			ids[segment.ID] = true
+			if err := validateAudioSourceContract(segment); err != nil {
+				return err
+			}
 			for _, value := range []float64{segment.SourceStart, segment.SourceEnd, segment.TimelineStart} {
 				if math.IsNaN(value) || math.IsInf(value, 0) {
 					return fmt.Errorf("audio segment times must be finite")
@@ -180,6 +185,9 @@ func validateEditTimeline(timeline *editTimeline) error {
 			if segment.SourceStart < 0 || segment.SourceEnd < segment.SourceStart || segment.TimelineStart < 0 {
 				return fmt.Errorf("audio segment time range is invalid")
 			}
+		}
+		if err := validateAudioTrackGeometry(timeline.Clips, *timeline.AudioSegments); err != nil {
+			return err
 		}
 	}
 

@@ -1,23 +1,88 @@
 import { layoutEditorClips, readClipSpeed, requireSupportedClipSpeed, timelineDuration, type EditorClip } from "./editorClipTime";
 
+export type EditorAudioSource =
+  | { kind: "video"; videoId: string; clipId: string }
+  | { kind: "audioAsset"; assetId: string };
+
 export interface EditorAudioSegment {
+  trackId?: string;
+  source?: EditorAudioSource;
   speed?: number;
   geometryLinked?: boolean;
   volume?: number;
   muted?: boolean;
   id: string;
-  sourceClipId: string;
-  sourceVideoId: string;
+  sourceClipId?: string;
+  sourceVideoId?: string;
   sourceStart: number;
   sourceEnd: number;
   timelineStart: number;
+}
+
+export const ORIGINAL_AUDIO_TRACK = "original";
+export function audioTrackId(segment: EditorAudioSegment): string {
+  if (segment.trackId !== undefined && (!segment.trackId.trim() || segment.trackId !== segment.trackId.trim())) throw new Error("Ungültige Audiospur.");
+  return segment.trackId ?? ORIGINAL_AUDIO_TRACK;
+}
+
+export function audioSource(segment: EditorAudioSegment): EditorAudioSource {
+  const source = segment.source;
+  const valid = (id: unknown): id is string => typeof id === "string" && id.trim().length > 0;
+  if (source !== undefined) {
+    if (segment.sourceClipId !== undefined || segment.sourceVideoId !== undefined) throw new Error("Mehrdeutige Audioquelle.");
+    if (source.kind === "video" && valid(source.videoId) && valid(source.clipId) && !("assetId" in source)) return source;
+    if (source.kind === "audioAsset" && valid(source.assetId) && !("videoId" in source) && !("clipId" in source) && segment.geometryLinked !== true) return source;
+    throw new Error("Ungültige Audioquelle.");
+  }
+  if (!valid(segment.sourceClipId) || !valid(segment.sourceVideoId)) throw new Error("Audioquelle fehlt.");
+  return { kind: "video", videoId: segment.sourceVideoId, clipId: segment.sourceClipId };
+}
+
+export function videoAudioSource(segment: EditorAudioSegment) {
+  const source = audioSource(segment);
+  return source.kind === "video" ? source : undefined;
+}
+
+export function audioTrackNeighbours(segments: EditorAudioSegment[], segment: EditorAudioSegment) {
+  return segments.filter(item => audioTrackId(item) === audioTrackId(segment)).sort((a, b) => a.timelineStart - b.timelineStart);
+}
+
+export function cloneAudioSegment(segment: EditorAudioSegment): EditorAudioSegment {
+  return { ...segment, ...(segment.source ? { source: { ...segment.source } } : {}) };
+}
+
+export function validateAudioSegments(segments: EditorAudioSegment[], clips: EditorClip[]): void {
+  const ids = new Set<string>();
+  const ends = new Map<string, number>();
+  for (const segment of [...segments].sort((a,b) => a.timelineStart - b.timelineStart)) {
+    audioSource(segment);
+    const track = audioTrackId(segment);
+    if (!segment.id.trim() || ids.has(segment.id)) throw new Error("Ungültige Audiosegment-ID.");
+    ids.add(segment.id);
+    if (![segment.sourceStart, segment.sourceEnd, segment.timelineStart].every(Number.isFinite) || segment.sourceStart < 0 || segment.sourceEnd < segment.sourceStart || segment.timelineStart < 0) throw new Error("Ungültige Audiozeiten.");
+    const duration = audioSegmentTimelineDuration(segment, clips);
+    if (duration === 0) continue;
+    if (segment.timelineStart < (ends.get(track) ?? 0) - 0.001) throw new Error("Audiosegmente derselben Spur dürfen sich nicht überlappen.");
+    ends.set(track, segment.timelineStart + duration);
+  }
+}
+
+// Storage supports future tracks/assets; the single-player engine must not silently omit them.
+export function previewAudioSegments(segments: EditorAudioSegment[]) {
+  if (new Set(segments.map(audioTrackId)).size > 1) throw new Error("Mehrspur-Audiovorschau wird noch nicht unterstützt.");
+  return segments.map(segment => {
+    const source = videoAudioSource(segment);
+    if (!source) throw new Error("Audio-Asset-Vorschau wird noch nicht unterstützt.");
+    return { ...segment, sourceVideoId: source.videoId };
+  });
 }
 
 // Current geometry only, not linkage intent or permission to regenerate audio.
 // The caller supplies the expected clip position; no audio speed is derived here.
 export function audioGeometryMatchesClip(segment: EditorAudioSegment, clip: EditorClip, timelineStart: number): boolean {
   const sameTime = (a: number, b: number) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 1e-6;
-  return segment.sourceClipId === clip.id && segment.sourceVideoId === clip.sourceVideoId &&
+  const source = videoAudioSource(segment);
+  return source?.clipId === clip.id && source.videoId === clip.sourceVideoId &&
     sameTime(segment.sourceStart, clip.start) && sameTime(segment.sourceEnd, clip.end) &&
     sameTime(segment.timelineStart, timelineStart);
 }
@@ -25,10 +90,11 @@ export function audioGeometryMatchesClip(segment: EditorAudioSegment, clip: Edit
 export function effectiveAudioSpeed(segment: EditorAudioSegment, clips: EditorClip[]): number {
   const ownSpeed = readClipSpeed(segment.speed);
   if (segment.geometryLinked !== true) return ownSpeed;
+  const clipId = videoAudioSource(segment)?.clipId;
   // A missing or ambiguous reference must never inherit a different source's rate.
-  if (clips.filter(clip => clip.id === segment.sourceClipId).length !== 1) return 1;
+  if (clips.filter(clip => clip.id === clipId).length !== 1) return 1;
   try {
-    const item = layoutEditorClips(clips).find(item => item.clip.id === segment.sourceClipId)!;
+    const item = layoutEditorClips(clips).find(item => item.clip.id === clipId)!;
     return audioGeometryMatchesClip(segment, item.clip, item.timelineStart) ? item.speed : 1;
   } catch {
     // Invalid clip speeds are rejected at editor load; fail closed for malformed internal input too.
@@ -48,7 +114,7 @@ export function changeClipSpeed(clips: EditorClip[], audio: EditorAudioSegment[]
   const nextClips = clips.map(clip => clip.id === id ? { ...clip, speed } : clip);
   const after = layoutEditorClips(nextClips);
   const nextAudio = audio.map(segment => {
-    const matches = before.filter(item => item.clip.id === segment.sourceClipId);
+    const matches = before.filter(item => item.clip.id === videoAudioSource(segment)?.clipId);
     const item = matches[0];
     if (segment.geometryLinked !== true || matches.length !== 1 ||
       !audioGeometryMatchesClip(segment, item.clip, item.timelineStart)) return segment;
@@ -56,13 +122,14 @@ export function changeClipSpeed(clips: EditorClip[], audio: EditorAudioSegment[]
   });
   const duration = after.at(-1)?.timelineEnd ?? 0;
   if (duration < 1) throw new Error("Die Timeline muss mindestens eine Sekunde lang bleiben.");
-  let end = 0;
+  const ends = new Map<string, number>();
   for (const segment of [...nextAudio].sort((a, b) => a.timelineStart - b.timelineStart)) {
     const segmentEnd = segment.timelineStart + audioSegmentTimelineDuration(segment, nextClips);
-    if (segmentEnd > duration + 0.001 || segment.timelineStart < end - 0.001) {
+    const track = audioTrackId(segment);
+    if (segmentEnd > duration + 0.001 || segment.timelineStart < (ends.get(track) ?? 0) - 0.001) {
       throw new Error("Die Geschwindigkeit würde Audiosegmente überlappen lassen oder über das Videoende hinausschieben.");
     }
-    end = segmentEnd;
+    ends.set(track, segmentEnd);
   }
   return { clips: nextClips, audioSegments: nextAudio, duration };
 }

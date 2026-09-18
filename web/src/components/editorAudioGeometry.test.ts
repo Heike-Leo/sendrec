@@ -4,6 +4,7 @@ import { EditorAudioPreview } from "./editorAudioPreview";
 import { coupledAudio, isAudioStillCoupled } from "./VideoEditorModal";
 import { splitEditorClip } from "./editorClipTime";
 import { changeClipSpeed } from "./editorAudioGeometry";
+import { previewAudioSegments } from "./editorAudioGeometry";
 
 const clip = { id: "c", sourceVideoId: "v", start: 2, end: 12 };
 const segment: EditorAudioSegment = { id: "a", sourceClipId: "c", sourceVideoId: "v", sourceStart: 2, sourceEnd: 12, timelineStart: 0 };
@@ -180,7 +181,7 @@ describe("linked audio speed", () => {
     vi.spyOn(audio, "load").mockImplementation(() => {});
     const error = vi.fn();
     let time = 1;
-    const preview = new EditorAudioPreview(audio, { segments: () => segments, time: () => time,
+    const preview = new EditorAudioPreview(audio, { segments: () => previewAudioSegments(segments), time: () => time,
       url: () => "https://media.example/v.mp4", error, canCheckDrift: () => true,
       speed: s => effectiveAudioSpeed(segments.find(item => item.id === s.id)!, clips) });
     try {
