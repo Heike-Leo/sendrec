@@ -11,6 +11,33 @@ import (
 	"testing"
 )
 
+func TestCircleCanonicalPreviewContract(t *testing.T) {
+	a := editorAnnotation{ID: "unchanged-circle", Type: "circle", X: 10, Y: 20, Width: 30, Height: 20, Start: .2, End: 5.8}
+	if arrowBounds(a, 1920, 1080) != image.Rect(192, 216, 768, 432) {
+		t.Fatal("render box changed")
+	}
+	img := rasterCircle(a, 1920, 1080)
+	if img.NRGBAAt(288, 108).A != 0 {
+		t.Fatal("ring interior filled")
+	}
+	for _, c := range []struct {
+		name       string
+		x, y, w, h float64
+	}{
+		{"16:9", 0, 0, 1920, 1080}, {"4:3", 0, 0, 1920, 1080},
+		{"9:16", 0, 0, 1920, 1080}, {"12:5", 0, 0, 1920, 1080},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cx, cy := c.x+c.w*.25, c.y+c.h*.3
+			w, h := c.w*.3, c.h*.2
+			if cx != 480 || cy != 324 || w != 576 || h != 216 {
+				t.Fatal("canonical box mismatch")
+			}
+			t.Logf("center %.3f,%.3f; full SVG content %.3fx%.3f; ring centerline diameters %.3fx%.3f", cx, cy, w, h, .94*w, .94*h)
+		})
+	}
+}
+
 func TestCircleRasterGeometryAndColor(t *testing.T) {
 	for _, size := range [][2]int{{1000, 1000}, {1920, 1080}, {640, 360}} {
 		for _, hex := range []string{"", "#12ab34"} {
