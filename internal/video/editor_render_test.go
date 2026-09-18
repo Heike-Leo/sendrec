@@ -48,7 +48,7 @@ func TestAudioSegmentsPersistence(t *testing.T) {
 	}
 	cases = append(cases,
 		strings.Replace(legacy, `"id":`, `"trackId":"original","id":`, 1),
-		`[{"id":"voice","trackId":"voice-over","source":{"kind":"audioAsset","assetId":"asset"},"geometryLinked":false,"speed":1,"sourceStart":0,"sourceEnd":2,"timelineStart":0,"muted":false,"volume":0.5}]`,
+		`[{"id":"voice","trackId":"voice-over","source":{"kind":"audioAsset","assetId":"550e8400-e29b-41d4-a716-446655440001"},"geometryLinked":false,"speed":1,"sourceStart":0,"sourceEnd":2,"timelineStart":0,"muted":false,"volume":0.5}]`,
 		`[{"id":"typed","trackId":"original","source":{"kind":"video","videoId":"video-main","clipId":"a"},"sourceStart":0,"sourceEnd":2,"timelineStart":0}]`)
 	for _, audio := range cases {
 		t.Run("audio="+audio, func(t *testing.T) {
@@ -75,6 +75,9 @@ func TestAudioSegmentsPersistence(t *testing.T) {
 				body += `,"audioSegments":` + audio
 			}
 			body += `}`
+			if strings.Contains(audio, `"audioAsset"`) {
+				mock.ExpectQuery(`SELECT id, storage_key.*FROM audio_assets`).WithArgs(testAudioAssetID, testUserID, "").WillReturnRows(testAudioAssetRows(2))
+			}
 			mock.ExpectExec(`UPDATE videos SET edit_timeline = \$1, updated_at = now\(\)`).WithArgs(audioJSONArgument{expected}, "video-main", testUserID).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 			mock.ExpectQuery(`SELECT COALESCE\(edit_timeline`).WithArgs("video-main", testUserID).WillReturnRows(pgxmock.NewRows([]string{"edit_timeline", "edit_render_status", "edit_render_error", "edit_render_video_id"}).AddRow([]byte(body), "none", nil, nil))
 			router := chi.NewRouter()

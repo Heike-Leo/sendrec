@@ -466,6 +466,13 @@ func (s *Server) routes() {
 			r.Get("/dashboard/export", s.videoHandler.DashboardExport)
 		})
 
+		s.router.Route("/api/audio-assets", func(r chi.Router) {
+			r.Use(s.authHandler.Middleware)
+			r.Use(organization.Middleware(s.db))
+			r.Get("/{assetId}", s.videoHandler.GetAudioAsset)
+			r.With(organization.RequireWriter).Post("/", s.videoHandler.UploadAudioAsset)
+		})
+
 		s.router.Route("/api/folders", func(r chi.Router) {
 			r.Use(s.authHandler.Middleware)
 			r.Use(organization.Middleware(s.db))

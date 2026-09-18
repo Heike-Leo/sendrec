@@ -360,6 +360,10 @@ func (h *Handler) SaveEditorTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.validateTimelineAudioAssets(r.Context(), timeline); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	raw, err := json.Marshal(timeline)
 	if err != nil {
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to save timeline")
