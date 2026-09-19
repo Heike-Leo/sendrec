@@ -52,8 +52,8 @@ func TestAudioTracksOverlapAndRenderGuard(t *testing.T) {
 	if err := validateEditTimeline(&timeline); err != nil {
 		t.Fatal(err)
 	}
-	if requireSupportedAudioRender(&segments) == nil {
-		t.Fatal("asset render must be gated")
+	if err := requireSupportedAudioRender(&segments); err != nil {
+		t.Fatal("asset render must be supported", err)
 	}
 	voiceSegments := []editorAudioSegment{segments[1], segments[1]}
 	voiceSegments[1].ID = "second-voice"
@@ -73,8 +73,8 @@ func TestAudioTracksOverlapAndRenderGuard(t *testing.T) {
 	if err := validateEditTimeline(&timeline); err != nil {
 		t.Fatal(err)
 	}
-	if requireSupportedAudioRender(&segments) == nil {
-		t.Fatal("mixing must be gated")
+	if err := requireSupportedAudioRender(&segments); err != nil {
+		t.Fatal("mixing must be supported", err)
 	}
 	segments = segments[:1]
 	if err := requireSupportedAudioRender(&segments); err != nil {

@@ -78,20 +78,30 @@ func validateAudioTrackGeometry(clips []editClip, audio []editorAudioSegment) er
 	return nil
 }
 
-// Until asset resolution and mixing exist, fail explicitly instead of omitting sound.
+// Render V1 supports the two contracted tracks. Browser preview is gated separately.
 func requireSupportedAudioRender(segments *[]editorAudioSegment) error {
 	if segments == nil {
 		return nil
 	}
-	tracks := map[string]bool{}
 	for _, s := range *segments {
-		if s.Source != nil && s.Source.Kind == "audioAsset" {
-			return fmt.Errorf("audio asset rendering is not supported yet")
+		if err := validateAudioSourceContract(s); err != nil {
+			return err
 		}
-		tracks[audioTrackID(s)] = true
-	}
-	if len(tracks) > 1 {
-		return fmt.Errorf("multitrack audio rendering is not supported yet")
+		if s.Source != nil && s.Source.Kind == "audioAsset" {
+			rate, err := readAudioSpeed(s.Speed)
+			if err != nil || rate != 1 {
+				return fmt.Errorf("audio asset rendering currently requires speed 1")
+			}
+		}
 	}
 	return nil
+}
+
+// Video keys stay unchanged for the legacy render path. Asset keys cannot
+// collide with database video UUIDs, even if both resources have the same UUID.
+func audioRenderSourceKey(s editorAudioSegment) string {
+	if s.Source != nil && s.Source.Kind == "audioAsset" {
+		return "audioAsset:" + s.Source.AssetID
+	}
+	return videoAudioProjection(s).SourceVideoID
 }

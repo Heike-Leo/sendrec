@@ -104,7 +104,9 @@ func renderSourceIDs(timeline editTimeline) []string {
 		add(clip.SourceID)
 	}
 	for _, segment := range renderAudioSegments(timeline.Clips, timeline.AudioSegments) {
-		add(segment.SourceVideoID)
+		if segment.Source == nil || segment.Source.Kind != "audioAsset" {
+			add(segment.SourceVideoID)
+		}
 	}
 	return ids
 }
@@ -122,7 +124,7 @@ func validateRenderAudio(timeline editTimeline, sources map[string]sourceVideo) 
 	}
 	segments := renderAudioSegments(timeline.Clips, timeline.AudioSegments)
 	sort.SliceStable(segments, func(i, j int) bool { return segments[i].TimelineStart < segments[j].TimelineStart })
-	end := 0.0
+	ends := map[string]float64{}
 	for _, s := range segments {
 		speed, err := effectiveRenderAudioSpeed(s, timeline.Clips)
 		if err != nil {
@@ -139,11 +141,18 @@ func validateRenderAudio(timeline editTimeline, sources map[string]sourceVideo) 
 		if s.SourceStart < 0 || s.SourceEnd < s.SourceStart || s.TimelineStart < 0 {
 			return fmt.Errorf("audio segment time range is invalid")
 		}
-		source, ok := sources[s.SourceVideoID]
+		source, ok := sources[audioRenderSourceKey(s)]
 		if !ok {
 			return fmt.Errorf("audio segment references an unavailable source")
 		}
-		if s.SourceEnd > float64(source.Duration)+editorAudioTolerance {
+		sourceDuration := float64(source.Duration)
+		if source.AudioAsset != nil {
+			sourceDuration = source.AudioAsset.Duration
+		}
+		if s.Source != nil && s.Source.Kind == "audioAsset" && source.AudioAsset == nil {
+			return fmt.Errorf("audio asset metadata unavailable")
+		}
+		if s.SourceEnd > sourceDuration+editorAudioTolerance {
 			return fmt.Errorf("audio segment exceeds source duration")
 		}
 		segmentEnd := s.TimelineStart + (s.SourceEnd-s.SourceStart)/speed
@@ -153,17 +162,42 @@ func validateRenderAudio(timeline editTimeline, sources map[string]sourceVideo) 
 		if s.SourceEnd == s.SourceStart {
 			continue
 		}
-		if s.TimelineStart < end-editorAudioTolerance {
+		track := audioTrackID(s)
+		if s.TimelineStart < ends[track]-editorAudioTolerance {
 			return fmt.Errorf("audio segments must not overlap")
 		}
-		end = math.Max(end, segmentEnd)
+		ends[track] = math.Max(ends[track], segmentEnd)
 	}
 	return nil
 }
 
-// One sequential track, no mixing and no implicit clip audio. Boundaries are
-// rounded to 48-kHz sample positions to avoid cumulative per-segment drift.
+// Preserve the single-track graph verbatim; mix only genuinely distinct tracks.
 func timelineAudioFilters(clips []editClip, stored *[]editorAudioSegment, indexes map[string]int, sources map[string]sourceVideo) []string {
+	tracks := map[string][]editorAudioSegment{}
+	if stored != nil {
+		for _, s := range *stored {
+			tracks[audioTrackID(s)] = append(tracks[audioTrackID(s)], s)
+		}
+	}
+	if len(tracks) <= 1 {
+		return singleTrackAudioFilters(clips, stored, indexes, sources, "", "aout")
+	}
+	var filters []string
+	for i, track := range []string{"original", "voiceover-1"} {
+		segments := tracks[track]
+		filters = append(filters, singleTrackAudioFilters(clips, &segments, indexes, sources, fmt.Sprintf("mix%d_", i), fmt.Sprintf("mix%d", i))...)
+	}
+	duration := 0.0
+	for _, clip := range clips {
+		duration += clipTimelineDuration(clip)
+	}
+	total := int64(math.Round(duration * 48000))
+	filters = append(filters, fmt.Sprintf("[mix0][mix1]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS[aout]", total, total))
+	return filters
+}
+
+// Boundaries are rounded to 48-kHz sample positions to avoid cumulative drift.
+func singleTrackAudioFilters(clips []editClip, stored *[]editorAudioSegment, indexes map[string]int, sources map[string]sourceVideo, prefix, output string) []string {
 	segments := renderAudioSegments(clips, stored)
 	sort.SliceStable(segments, func(i, j int) bool { return segments[i].TimelineStart < segments[j].TimelineStart })
 	duration := 0.0
@@ -175,7 +209,7 @@ func timelineAudioFilters(clips []editClip, stored *[]editorAudioSegment, indexe
 	var labels strings.Builder
 	parts := 0
 	appendPart := func(filter string) {
-		label := fmt.Sprintf("at%d", parts)
+		label := fmt.Sprintf("%sat%d", prefix, parts)
 		filters = append(filters, filter+"["+label+"]")
 		fmt.Fprintf(&labels, "[%s]", label)
 		parts++
@@ -201,7 +235,8 @@ func timelineAudioFilters(clips []editClip, stored *[]editorAudioSegment, indexe
 		}
 		silence(start - cursor)
 		count := end - start
-		if sources[s.SourceVideoID].HasAudio && !s.Muted {
+		key := audioRenderSourceKey(s)
+		if sources[key].HasAudio && !s.Muted {
 			sourceStart := s.SourceStart + math.Max(0, float64(start)/48000-s.TimelineStart)*speed
 			tempo := ""
 			align := ",aresample=48000:first_pts=0"
@@ -218,13 +253,13 @@ func timelineAudioFilters(clips []editClip, stored *[]editorAudioSegment, indexe
 			// Anchor to the requested source time, not the first available audio
 			// frame. Keep the source offset in PTS through atempo, then pad its
 			// scaled origin. Feeding silence through WSOLA would distort its length.
-			appendPart(fmt.Sprintf("[%d:a:0]atrim=start=%.9f:end=%.9f,asetpts=PTS-%.9f/TB,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo%s%s%s,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS", indexes[s.SourceVideoID], sourceStart, s.SourceEnd, sourceStart, tempo, align, gain, count, count))
+			appendPart(fmt.Sprintf("[%d:a:0]atrim=start=%.9f:end=%.9f,asetpts=PTS-%.9f/TB,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo%s%s%s,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS", indexes[key], sourceStart, s.SourceEnd, sourceStart, tempo, align, gain, count, count))
 		} else {
 			silence(count)
 		}
 		cursor = end
 	}
 	silence(total - cursor)
-	filters = append(filters, fmt.Sprintf("%sconcat=n=%d:v=0:a=1,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS[aout]", labels.String(), parts, total, total))
+	filters = append(filters, fmt.Sprintf("%sconcat=n=%d:v=0:a=1,apad=whole_len=%d,atrim=end_sample=%d,asetpts=PTS-STARTPTS[%s]", labels.String(), parts, total, total, output))
 	return filters
 }

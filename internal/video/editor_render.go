@@ -98,6 +98,7 @@ type editorStateResponse struct {
 }
 
 type sourceVideo struct {
+	AudioAsset  *audioAsset // Authorized immutable job snapshot; Duration below remains legacy video seconds.
 	ID          string
 	FileKey     string
 	ContentType string
@@ -443,6 +444,10 @@ func (h *Handler) RenderEditorTimeline(w http.ResponseWriter, r *http.Request) {
 		}
 		job.Sources[source.ID] = source
 	}
+	if err := h.resolveRenderAudioAssets(r.Context(), timeline, job.Sources); err != nil {
+		httputil.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	for _, clip := range timeline.Clips {
 		if clip.SourceEnd > float64(job.Sources[clip.SourceID].Duration)+0.001 {
 			httputil.WriteError(w, http.StatusBadRequest, "clip exceeds source duration")
@@ -714,17 +719,21 @@ func (h *Handler) renderTimelineAsync(ctx context.Context, job renderJob) {
 
 	inputs := make([]string, 0, len(job.Sources))
 	indexes := make(map[string]int, len(job.Sources))
-	for _, sourceID := range renderSourceIDs(job.Timeline) {
+	for _, sourceID := range renderInputKeys(job.Timeline) {
 		source := job.Sources[sourceID]
 		if _, exists := indexes[source.ID]; exists {
 			continue
 		}
-		path := filepath.Join(tmpDir, fmt.Sprintf("source-%d%s", len(inputs), extensionForContentType(source.ContentType)))
-		if err := h.storage.DownloadToFile(ctx, source.FileKey, path); err != nil {
+		path := filepath.Join(tmpDir, fmt.Sprintf("source-%d%s", len(inputs), renderSourceExtension(source)))
+		if err := h.downloadRenderSource(ctx, source, path); err != nil {
 			fail(err)
 			return
 		}
 		source.HasAudio = probeHasAudio(path)
+		if source.AudioAsset != nil && !source.HasAudio {
+			fail(fmt.Errorf("audio asset has no readable audio stream"))
+			return
+		}
 		job.Sources[source.ID] = source
 		indexes[source.ID] = len(inputs)
 		inputs = append(inputs, path)
