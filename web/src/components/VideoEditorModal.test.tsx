@@ -271,7 +271,7 @@ describe("VideoEditorModal multi-source preview", () => {
   it.each([0.5, 0.75, 1, 1.25, 1.5, 2])("saves, reloads and renders selected speed %s", async speed => {
     let view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-audio-track");
-    await waitFor(() => expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1));
+    await waitFor(() => expect(screen.getByTestId("video-editor-audio-track").querySelectorAll("[data-audio-id]")).toHaveLength(1));
     const select = selectSpeedClip();
     // Explicit 1 must also survive a real edit, not just the default omission.
     fireEvent.change(select, { target: { value: speed === 1 ? "2" : String(speed) } });
@@ -296,7 +296,7 @@ describe("VideoEditorModal multi-source preview", () => {
     });
   });
 
-  it.each(["asset", "tracks"])("loads supported %s playback without rewriting audio or adding a visible track", async kind => {
+  it.each(["asset", "tracks"])("loads supported %s playback and displays only used tracks without rewriting audio", async kind => {
     const audio: EditorAudioSegment[] = kind === "asset" ? [{ id: "voice", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" }, geometryLinked: false,
       sourceStart: 0, sourceEnd: 2, timelineStart: 0 }] : [
       { id: "a", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 2, timelineStart: 0 },
@@ -308,9 +308,73 @@ describe("VideoEditorModal multi-source preview", () => {
     await screen.findByTestId("video-editor-clip-c");
     await waitFor(() => expect(view.container.querySelector("video")).not.toBeNull());
     expect(screen.queryByText(/wird noch nicht unterstützt/)).toBeNull();
-    expect(screen.getAllByTestId("video-editor-audio-track")).toHaveLength(1);
+    expect(screen.queryAllByTestId("video-editor-audio-track")).toHaveLength(kind === "asset" ? 0 : 1);
+    expect(screen.getByRole("group", { name: "Voice-over" })).toBeInTheDocument();
     view.unmount();
     expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+  });
+
+  it.each(["move", "start", "end", "delete", "mute", "volume"] as const)("edits visible voiceover independently, persists and undoes: %s", async action => {
+    const original: EditorAudioSegment = { id: "o", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 13, timelineStart: 0 };
+    const voice = (id: string, start: number, end: number): EditorAudioSegment => ({ id, trackId: "voiceover-1",
+      source: { kind: "audioAsset", assetId: "asset" }, sourceStart: 0, sourceEnd: end, timelineStart: start,
+      geometryLinked: false, speed: 1, volume: .7, muted: false });
+    // Deliberately reverse storage track order; rendering must not rewrite persisted order.
+    const audio = [voice("v", 2, 4), original, voice("v2", 8, 2)];
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 13, duration: 13 }], audioSegments: audio } };
+    vi.mocked(loadAudioWaveformPeaks).mockResolvedValue({ min: new Float32Array([-1]), max: new Float32Array([1]), sampleRate: 1000, sampleCount: 13000, samplesPerPeak: 13000 });
+    let view = render(<VideoEditorModal videoId="original" duration={13} onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getAllByTestId("audio-waveform")).toHaveLength(3));
+    const rows = [...view.container.querySelectorAll<HTMLElement>("[data-audio-track]")];
+    expect(rows.map(row => row.getAttribute("aria-label"))).toEqual(["Originalton", "Voice-over"]);
+    const bar = screen.getByTestId("video-editor-audio-v");
+    expect(bar.parentElement).toBe(rows[1]);
+    expect(parseFloat(bar.style.left)).toBeCloseTo(2 / 13 * 100);
+    expect(parseFloat(bar.style.width)).toBeCloseTo(4 / 13 * 100);
+    expect(screen.getByTestId("video-editor-audio-v2")).toHaveAttribute("data-timeline-start", "8");
+    expect(loadAudioWaveformPeaks).toHaveBeenCalledTimes(2);
+    expect(loadAudioWaveformPeaks).toHaveBeenCalledWith("https://media.example/voice.m4a");
+    fireEvent.click(screen.getByRole("button", { name: "Vergrößern" }));
+    rows.forEach(row => expect(row.style.width).toBe("200%"));
+    const timeline = screen.getByTestId("video-editor-timeline");
+    vi.spyOn(timeline, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1300 } as DOMRect);
+    fireEvent.click(timeline, { clientX: 300 });
+    expect(screen.getByTestId("audio-playhead-original").style.left).toBe(screen.getByTestId("audio-playhead-voiceover-1").style.left);
+    expect(parseFloat(screen.getByTestId("audio-playhead-original").style.left)).toBeCloseTo(3 / 13 * 100);
+    vi.spyOn(rows[1], "getBoundingClientRect").mockReturnValue({ left: 0, top: 40, width: 1300 } as DOMRect);
+    fireEvent.click(bar);
+    if (["move", "start", "end"].includes(action)) {
+      const handle = action === "move" ? bar : screen.getByRole("button", { name: action === "start" ? "Tonanfang kürzen" : "Tonende kürzen" });
+      fireEvent.pointerDown(handle, { clientX: 300, pointerId: 1 });
+      // Move clamps at next voiceover start 8 minus duration 4, ignoring full-length original.
+      fireEvent.pointerMove(document, { clientX: action === "move" ? 1200 : action === "start" ? 400 : 200, clientY: 999, pointerId: 1 });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+    } else if (action === "delete") fireEvent.click(screen.getByRole("button", { name: "Ton löschen" }));
+    else if (action === "mute") fireEvent.click(screen.getByRole("button", { name: "Ton aus" }));
+    else {
+      fireEvent.change(screen.getByRole("slider", { name: "Audio-Lautstärke" }), { target: { value: "30" } });
+      fireEvent.blur(screen.getByRole("slider", { name: "Audio-Lautstärke" }));
+    }
+    const latest = () => JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
+    await waitFor(() => expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(true));
+    const saved = latest();
+    expect(saved.audioSegments.find((s: EditorAudioSegment) => s.id === "o")).toEqual(original);
+    expect(saved.audioSegments.find((s: EditorAudioSegment) => s.id === "v2")).toEqual(audio[2]);
+    const changed = saved.audioSegments.find((s: EditorAudioSegment) => s.id === "v");
+    if (action === "delete") expect(changed).toBeUndefined();
+    else expect(changed).toMatchObject({ trackId: "voiceover-1", source: audio[0].source,
+      ...(action === "move" ? { timelineStart: 4 } : action === "start" ? { sourceStart: 1, timelineStart: 3 }
+        : action === "end" ? { sourceEnd: 3 } : action === "mute" ? { muted: true } : { volume: .3 }) });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    await waitFor(() => expect(latest().audioSegments).toEqual(audio));
+    expect(loadAudioWaveformPeaks).toHaveBeenCalledTimes(2);
+    view.unmount();
+    editorState = { ...editorState, timeline: saved };
+    view = render(<VideoEditorModal videoId="original" duration={13} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-audio-v2");
+    expect(screen.getByRole("group", { name: "Voice-over" }).querySelectorAll("[data-audio-id]")).toHaveLength(action === "delete" ? 1 : 2);
+    if (action !== "delete") expect(screen.getByTestId("video-editor-audio-v")).toHaveAttribute("data-timeline-start", String(changed.timelineStart));
   });
 
   it.each(["normal", "mute-original", "mute-voice"])("integrates parallel transport, gaps, gain and cleanup: %s", async mode => {
@@ -451,7 +515,7 @@ describe("VideoEditorModal multi-source preview", () => {
 
   it("splits an activated 2x clip with both speeds and linked audio intact", async () => {
     render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
-    await waitFor(() => expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1));
+    await waitFor(() => expect(screen.getByTestId("video-editor-audio-track").querySelectorAll("[data-audio-id]")).toHaveLength(1));
     fireEvent.change(selectSpeedClip(), { target: { value: "2" } });
     selectSpeedClip(0.4);
     fireEvent.click(screen.getByRole("button", { name: "Teilen" }));
@@ -831,9 +895,9 @@ describe("VideoEditorModal multi-source preview", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clip löschen" }));
     fireEvent.pointerUp(document, { pointerId: 1 });
     expect(ui.bar).toHaveAttribute("data-source-end", "10");
-    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1);
+    expect(screen.getByTestId("video-editor-audio-track").querySelectorAll("[data-audio-id]")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
-    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(2);
+    expect(screen.getByTestId("video-editor-audio-track").querySelectorAll("[data-audio-id]")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
   });
 
@@ -1084,7 +1148,7 @@ describe("VideoEditorModal multi-source preview", () => {
     fireEvent.pointerMove(document, { clientX: 500 + dx, pointerId: 1 });
     fireEvent.pointerUp(document, { pointerId: 1 });
     expect(bar).toHaveAttribute("data-timeline-start", String(result));
-    expect(Array.from(ui.track.children).map(e => e.getAttribute("data-audio-id"))).toEqual(["b", "a"]);
+    expect(Array.from(ui.track.querySelectorAll("[data-audio-id]")).map(e => e.getAttribute("data-audio-id"))).toEqual(["b", "a"]);
   });
 
   it("includes zoom width and horizontal scrolling for move", async () => {
@@ -1237,7 +1301,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getAllByTestId(/^video-editor-clip-/)).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
     expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
-    expect(Array.from(ui.track.children).map(e => e.getAttribute("data-audio-id"))).toEqual(["a", "b"]);
+    expect(Array.from(ui.track.querySelectorAll("[data-audio-id]")).map(e => e.getAttribute("data-audio-id"))).toEqual(["a", "b"]);
     mockApiFetch.mockClear();
     ui.unmount();
     const restored = JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body);
@@ -1256,14 +1320,14 @@ describe("VideoEditorModal multi-source preview", () => {
     fireEvent.pointerDown(target, { clientX: 500, pointerId: 1 });
     expect(button).toBeDisabled();
     fireEvent.click(button);
-    expect(ui.track.children).toHaveLength(2);
+    expect(ui.track.querySelectorAll("[data-audio-id]")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
     fireEvent.pointerMove(document, { clientX: mode === "end" ? 450 : 550, pointerId: 1 });
     expect(button).toBeDisabled();
     fireEvent.click(button);
     fireEvent.pointerUp(document, { pointerId: 1 });
     expect(button).toBeEnabled();
-    expect(ui.track.children).toHaveLength(2);
+    expect(ui.track.querySelectorAll("[data-audio-id]")).toHaveLength(2);
     expect(ui.bar).toHaveAttribute(mode === "end" ? "data-source-end" : mode === "start" ? "data-source-start" : "data-timeline-start", mode === "end" ? "5" : mode === "start" ? "3" : "5");
     fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
     expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
@@ -1281,9 +1345,9 @@ describe("VideoEditorModal multi-source preview", () => {
     fireEvent.click(oldButton);
     expect(screen.queryByRole("button", { name: "Ton aus" })).not.toBeInTheDocument();
     fireEvent.click(oldToggle);
-    expect(ui.track.children).toHaveLength(1);
+    expect(ui.track.querySelectorAll("[data-audio-id]")).toHaveLength(1);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" })); });
-    expect(ui.track.children).toHaveLength(2);
+    expect(ui.track.querySelectorAll("[data-audio-id]")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
   });
 
@@ -1291,7 +1355,7 @@ describe("VideoEditorModal multi-source preview", () => {
     const ui = await mountAudioPreview([{ id: "only", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0 }]);
     fireEvent.click(screen.getByTestId("video-editor-audio-clip-1"));
     fireEvent.click(screen.getByRole("button", { name: "Ton löschen" }));
-    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(0);
+    expect(screen.queryByTestId("video-editor-audio-track")).toBeNull();
     for (const action of ["Video einfügen"]) {
       fireEvent.click(screen.getByRole("button", { name: action }));
       expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
@@ -1316,7 +1380,7 @@ describe("VideoEditorModal multi-source preview", () => {
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: payload };
     render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-clip-clip-1");
-    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(0);
+    expect(screen.queryByTestId("video-editor-audio-track")).toBeNull();
     const audio = screen.getByTestId("video-editor-audio-preview") as HTMLAudioElement;
     const play = vi.spyOn(audio, "play");
     fireEvent.play(document.querySelector("video")!);
@@ -1413,7 +1477,7 @@ describe("VideoEditorModal multi-source preview", () => {
       fireEvent.click(screen.getByRole("button", { name: action }));
       expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
     }
-    expect(ui.track.children).toHaveLength(2);
+    expect(ui.track.querySelectorAll("[data-audio-id]")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Ton an" }));
     fireEvent.click(screen.getByRole("button", { name: "Teilen" }));
     expect(screen.getAllByTestId(/^video-editor-clip-/)).toHaveLength(3);
@@ -1431,7 +1495,7 @@ describe("VideoEditorModal multi-source preview", () => {
     fireEvent.play(ui.video);
     expect(play).not.toHaveBeenCalled();
     expect(ui.video.muted).toBe(true);
-    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1);
+    expect(screen.getByTestId("video-editor-audio-track").querySelectorAll("[data-audio-id]")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Ton an" }));
     expect(play).not.toHaveBeenCalled();
     fireEvent.play(ui.video);
@@ -1514,7 +1578,7 @@ describe("VideoEditorModal multi-source preview", () => {
       fireEvent.click(screen.getByRole("button", { name: action }));
       expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
     }
-    expect(ui.track.children).toHaveLength(2);
+    expect(ui.track.querySelectorAll("[data-audio-id]")).toHaveLength(2);
     fireEvent.pointerDown(slider, { pointerId: 2 });
     fireEvent.change(slider, { target: { value: "100" } });
     fireEvent.pointerUp(document, { pointerId: 2 });
@@ -5092,11 +5156,13 @@ describe("VideoEditorModal multi-source preview", () => {
       clips: [{ id: "saved", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }], audioSegments } };
     render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-clip-saved");
-    const track = screen.getByTestId("video-editor-audio-track");
-    expect(track.children).toHaveLength(empty ? 0 : 1);
+    const track = screen.queryByTestId("video-editor-audio-track");
+    if (empty) expect(track).toBeNull();
     if (!empty) {
-      expect(track.children[0]).toHaveAttribute("data-audio-id", "custom-audio");
-      expect(track.children[0]).toHaveStyle({ left: "20%", width: "50%" });
+      const segments = track!.querySelectorAll("[data-audio-id]");
+      expect(segments).toHaveLength(1);
+      expect(segments[0]).toHaveAttribute("data-audio-id", "custom-audio");
+      expect(segments[0]).toHaveStyle({ left: "20%", width: "50%" });
     }
     fireEvent.click(screen.getByRole("button", { name: "+ Abdeckung" }));
     await waitFor(() => {
@@ -5114,14 +5180,14 @@ describe("VideoEditorModal multi-source preview", () => {
     const user = userEvent.setup();
     await renderWithInsertedVideo();
     expectCoupledAudio();
-    const before = Array.from(screen.getByTestId("video-editor-audio-track").children).map((e) => e.getAttribute("data-audio-id"));
+    const before = Array.from(screen.getByTestId("video-editor-audio-track").querySelectorAll("[data-audio-id]")).map((e) => e.getAttribute("data-audio-id"));
     // Insertion selects the inserted clip.
     await user.click(screen.getByRole("button", { name: "Clip löschen" }));
     expectCoupledAudio();
-    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1);
+    expect(screen.getByTestId("video-editor-audio-track").querySelectorAll("[data-audio-id]")).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
     expectCoupledAudio();
-    expect(Array.from(screen.getByTestId("video-editor-audio-track").children).map((e) => e.getAttribute("data-audio-id"))).toEqual(before);
+    expect(Array.from(screen.getByTestId("video-editor-audio-track").querySelectorAll("[data-audio-id]")).map((e) => e.getAttribute("data-audio-id"))).toEqual(before);
   });
 
   it("includes derived audio in the pending keepalive save and restores it on reload", async () => {
@@ -5191,12 +5257,12 @@ describe("VideoEditorModal multi-source preview", () => {
     await user.click(screen.getByRole("button", { name: "Hier einfügen" }));
     expect(screen.getByText("Eingefügt: Inserted source")).toBeInTheDocument();
     expectCoupledAudio();
-    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(2);
+    expect(screen.getByTestId("video-editor-audio-track").querySelectorAll("[data-audio-id]")).toHaveLength(2);
 
     await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
     expect(screen.queryByText("Eingefügt: Inserted source")).not.toBeInTheDocument();
     expectCoupledAudio();
-    expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(1);
+    expect(screen.getByTestId("video-editor-audio-track").querySelectorAll("[data-audio-id]")).toHaveLength(1);
     expect(screen.getByTestId("video-editor-cover-overlay-cover-a")).toBeInTheDocument();
   });
 
@@ -5409,7 +5475,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getByText("Clip 1")).toHaveStyle({ width: "33.33333%" });
     expect(screen.getByText("Clip 2")).toHaveStyle({ width: "66.66667%" });
     expectCoupledAudio();
-    const audioSegments = screen.getByTestId("video-editor-audio-track").children;
+    const audioSegments = screen.getByTestId("video-editor-audio-track").querySelectorAll("[data-audio-id]");
     expect(audioSegments).toHaveLength(2);
     expect(audioSegments[0]).toHaveAttribute("data-source-video-id", "original");
     expect(audioSegments[1]).toHaveAttribute("data-source-video-id", "original");

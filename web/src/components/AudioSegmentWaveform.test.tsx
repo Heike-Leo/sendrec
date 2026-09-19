@@ -3,6 +3,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
 import { loadAudioWaveformPeaks } from "./editorAudioWaveform";
 import { audioSegmentTimelineDuration, audioGeometryDraft, commitAudioGeometry } from "./editorAudioGeometry";
+import { audioSourceKey, createAudioSourceResolver } from "./editorAudioSources";
+import { apiFetch } from "../api/client";
+
+vi.mock("../api/client", () => ({ apiFetch: vi.fn() }));
 
 vi.mock("./editorAudioWaveform", async importOriginal => ({
   ...await importOriginal<typeof import("./editorAudioWaveform")>(), loadAudioWaveformPeaks: vi.fn(),
@@ -32,7 +36,28 @@ describe("audio segment waveform visualization", () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   const view = (id = "one", start = 1, end = 3, zoom = 1) =>
-    <AudioSegmentWaveform sourceVideoId={id} sourceStart={start} sourceEnd={end} zoom={zoom} cache={cache} loadUrl={loadUrl} />;
+    <AudioSegmentWaveform sourceKey={id} sourceStart={start} sourceEnd={end} zoom={zoom} cache={cache} loadUrl={loadUrl} />;
+
+  it("separates video/asset identities and retains peaks across signed URL refresh and remount", async () => {
+    const asset = { kind: "audioAsset" as const, assetId: "same-id" };
+    const video = { kind: "video" as const, videoId: "same-id", clipId: "c" };
+    vi.mocked(apiFetch).mockResolvedValueOnce({ url: "asset-url-1" }).mockResolvedValueOnce({ url: "asset-url-2" });
+    const resolver = createAudioSourceResolver({ loadVideoUrl: () => "video-url" });
+    const renderSource = (source: typeof asset | typeof video) => <AudioSegmentWaveform sourceKey={audioSourceKey(source)}
+      sourceStart={1} sourceEnd={3} zoom={1} cache={cache} loadUrl={() => resolver.resolve(source)} />;
+    const ui = render(<>{renderSource(video)}{renderSource(asset)}</>);
+    await waitFor(() => expect(screen.getAllByTestId("audio-waveform")).toHaveLength(2));
+    expect([...cache.keys()]).toEqual(["video:same-id", "audioAsset:same-id"]);
+    expect(loadAudioWaveformPeaks).toHaveBeenCalledWith("video-url");
+    expect(loadAudioWaveformPeaks).toHaveBeenCalledWith("asset-url-1");
+    const pending = cache.get("audioAsset:same-id");
+    expect(await resolver.resolve(asset, { refresh: true })).toBe("asset-url-2");
+    ui.unmount();
+    render(renderSource(asset));
+    await screen.findByTestId("audio-waveform");
+    expect(cache.get("audioAsset:same-id")).toBe(pending);
+    expect(loadAudioWaveformPeaks).toHaveBeenCalledTimes(2);
+  });
 
   it("draws precisely the segment source interval with fixed amplitude and no pointer events", async () => {
     render(view());

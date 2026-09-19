@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
 import { PromptDialog } from "./PromptDialog";
 import { formatDuration } from "../utils/format";
 import type { Video } from "../types/video";
 import { EditorAudioPreview, audioTransportKey, validAudioVolume } from "./editorAudioPreview";
 import { EditorMultitrackAudioPreview } from "./editorMultitrackAudioPreview";
-import { createAudioSourceResolver } from "./editorAudioSources";
-import { audioSource, validateAudioSegments } from "./editorAudioGeometry";
+import { audioSourceKey, createAudioSourceResolver } from "./editorAudioSources";
+import { audioSource, groupAudioSegments, validateAudioSegments } from "./editorAudioGeometry";
 import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
 import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorClips, timelineClipPosition, clipSourceToTimelineTime, splitEditorClip, timelineDuration as clipTimelineDuration, type EditorClip, type StoredEditorClip } from "./editorClipTime";
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
@@ -243,7 +243,6 @@ export function VideoEditorModal({
   const cancelAudioResizeRef = useRef<(() => void) | null>(null);
   const [audioVolumeDraft, setAudioVolumeDraft] = useState<{ id: string; value: number } | null>(null);
   const volumeGestureRef = useRef<{ change: (value: number) => void; finish: () => void; cancel: () => void } | null>(null);
-  const audioTrackRef = useRef<HTMLDivElement>(null);
 
   function updateCoupledClips(update: (previous: EditorClip[]) => EditorClip[]) {
     const next = update(clips);
@@ -362,6 +361,9 @@ export function VideoEditorModal({
 
   const audioInputsRef = useRef({ clips, audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview });
   audioInputsRef.current = { clips, audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview };
+  const audioSourceResolver = useMemo(() => createAudioSourceResolver({
+    loadVideoUrl: id => audioInputsRef.current.loadVideoUrl(id),
+  }), [videoId]);
   const multitrackPreview = audioSegments.some(segment => audioTrackId(segment) !== "original" || audioSource(segment).kind === "audioAsset");
   useEffect(() => {
     const audio = audioRef.current;
@@ -376,7 +378,7 @@ export function VideoEditorModal({
       segments: () => audioInputsRef.current.audioSegments,
       clips: () => audioInputsRef.current.clips,
       time: () => audioInputsRef.current.previewTimelineTime(),
-      resolver: createAudioSourceResolver({ loadVideoUrl: id => audioInputsRef.current.loadVideoUrl(id) }),
+      resolver: audioSourceResolver,
       createAudio: () => {
         const element = document.createElement("audio");
         element.preload = "auto";
@@ -415,7 +417,7 @@ export function VideoEditorModal({
       preview.dispose();
       audioPreviewRef.current = null;
     };
-  }, [multitrackPreview, videoId]);
+  }, [multitrackPreview, videoId, audioSourceResolver]);
 
   const audioTransport = JSON.stringify([audioTransportKey(audioSegments), audioSegments.map(segment => effectiveAudioSpeed(segment, clips))]);
   useEffect(() => {
@@ -771,7 +773,7 @@ export function VideoEditorModal({
     if (edge === "move" && (e.target as Element).closest("[data-audio-resize-handle]")) return;
     cancelAudioResizeRef.current?.();
     setSelectedAudioId(segment.id);
-    const track = audioTrackRef.current;
+    const track = e.currentTarget.closest<HTMLElement>("[data-audio-track]");
     const scroller = track?.parentElement;
     const rect = track?.getBoundingClientRect();
     const frozenSpeed = effectiveAudioSpeed(segment, clips);
@@ -3786,10 +3788,13 @@ export function VideoEditorModal({
           />
         </div>
 
-        <div ref={audioTrackRef} data-testid="video-editor-audio-track" role="group" aria-label="Originalton"
+        {groupAudioSegments(audioSegments).map(({ trackId, segments }) => {
+          const label = trackId === "original" ? "Originalton" : "Voice-over";
+          return <div key={trackId} data-audio-track={trackId}
+          data-testid={trackId === "original" ? "video-editor-audio-track" : "video-editor-voiceover-track"} role="group" aria-label={label}
           style={{ position: "relative", height: 36, marginTop: 4, width: `${timelineZoom * 100}%`, minWidth: "100%",
             borderRadius: 8, background: "var(--color-border)", overflow: "hidden", userSelect: "none" }}>
-          {audioSegments.filter(segment => audioTrackId(segment) === "original" && videoAudioSource(segment)).map((segment, index) => {
+          {segments.map((segment, index) => {
             const visual = audioResizeDraft?.id === segment.id ? audioResizeDraft : segment;
             return (
             <div key={segment.id} data-testid={`video-editor-audio-${videoAudioSource(segment)?.clipId ?? segment.id}`}
@@ -3798,7 +3803,7 @@ export function VideoEditorModal({
               data-audio-id={segment.id} data-track-id={audioTrackId(segment)} data-clip-id={videoAudioSource(segment)?.clipId} data-source-video-id={videoAudioSource(segment)?.videoId}
               data-source-start={segment.sourceStart} data-source-end={segment.sourceEnd}
               data-timeline-start={segment.timelineStart}
-              title={`Originalton · Segment ${index + 1}`}
+              title={`${label} · Segment ${index + 1}`}
               style={{ position: "absolute", top: 4, bottom: 4,
                 left: `${timelineDuration > 0 ? visual.timelineStart / timelineDuration * 100 : 0}%`,
                 width: `${timelineDuration > 0 ? audioSegmentTimelineDuration(visual, clips) / timelineDuration * 100 : 0}%`,
@@ -3808,13 +3813,14 @@ export function VideoEditorModal({
                 boxSizing: "border-box", border: "1px solid rgba(255,255,255,0.35)", background: "#334155",
                 color: "#fff", fontSize: 12, padding: "0 12px", display: "flex", alignItems: "center",
                 gap: 6, whiteSpace: "nowrap", overflow: "hidden" }}>
-              <AudioSegmentWaveform sourceVideoId={videoAudioSource(visual)!.videoId} sourceStart={visual.sourceStart}
-                sourceEnd={visual.sourceEnd} zoom={timelineZoom} cache={waveformCacheRef.current} loadUrl={loadVideoUrl} />
+              <AudioSegmentWaveform sourceKey={audioSourceKey(audioSource(visual))} sourceStart={visual.sourceStart}
+                sourceEnd={visual.sourceEnd} zoom={timelineZoom} cache={waveformCacheRef.current}
+                loadUrl={() => audioSourceResolver.resolve(audioSource(visual))} />
               <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
                 strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, position: "relative", background: "#334155" }}>
                 <path d="M2 6h3l4-3v10l-4-3H2ZM12 5a5 5 0 0 1 0 6" />
               </svg>
-              <span style={{ position: "relative", background: "#334155" }}>Originalton · {index + 1}{segment.muted === true ? " · stumm" : ""}</span>
+              <span style={{ position: "relative", background: "#334155" }}>{label} · {index + 1}{segment.muted === true ? " · stumm" : ""}</span>
               {selectedAudioId === segment.id && (["start", "end"] as const).map(edge => (
                 <button key={edge} type="button" data-audio-resize-handle={edge} aria-label={edge === "start" ? "Tonanfang kürzen" : "Tonende kürzen"}
                   disabled={audioSegmentTimelineDuration(segment, clips) < 0.1}
@@ -3826,7 +3832,11 @@ export function VideoEditorModal({
               ))}
             </div>
           ); })}
+          <div data-testid={`audio-playhead-${trackId}`} aria-hidden="true"
+            style={{ position: "absolute", top: 0, bottom: 0, left: `${playheadPct}%`, width: 2,
+              background: "#E6467A", pointerEvents: "none" }} />
         </div>
+        })}
 
         </div>
 

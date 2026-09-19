@@ -5,7 +5,7 @@ import { loadAudioWaveformPeaks, sourceTimeToPeakRange, type AudioWaveformPeaks 
 export type AudioWaveformCache = Map<string, Promise<AudioWaveformPeaks>>;
 
 interface Props {
-  sourceVideoId: string;
+  sourceKey: string;
   sourceStart: number;
   sourceEnd: number;
   zoom: number;
@@ -13,7 +13,7 @@ interface Props {
   loadUrl: (id: string) => string | Promise<string>;
 }
 
-export function AudioSegmentWaveform({ sourceVideoId, sourceStart, sourceEnd, zoom, cache, loadUrl }: Props) {
+export function AudioSegmentWaveform({ sourceKey, sourceStart, sourceEnd, zoom, cache, loadUrl }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const loaderRef = useRef(loadUrl);
   loaderRef.current = loadUrl;
@@ -22,18 +22,18 @@ export function AudioSegmentWaveform({ sourceVideoId, sourceStart, sourceEnd, zo
   useEffect(() => {
     if (!nonempty) return;
     let active = true;
-    let pending = cache.get(sourceVideoId);
+    let pending = cache.get(sourceKey);
     if (!pending) {
-      pending = Promise.resolve().then(() => loaderRef.current(sourceVideoId)).then(url => loadAudioWaveformPeaks(url));
-      cache.set(sourceVideoId, pending);
+      pending = Promise.resolve().then(() => loaderRef.current(sourceKey)).then(url => loadAudioWaveformPeaks(url));
+      cache.set(sourceKey, pending);
     }
     // Retain failures in this session too: ordinary rerenders must not retry forever.
-    pending.then(peaks => { if (active) setResult({ id: sourceVideoId, peaks }); },
+    pending.then(peaks => { if (active) setResult({ id: sourceKey, peaks }); },
       () => { if (active) setResult(null); });
     return () => { active = false; };
-  }, [cache, sourceVideoId, nonempty]);
+  }, [cache, sourceKey, nonempty]);
 
-  const peaks = result?.id === sourceVideoId ? result.peaks : null;
+  const peaks = result?.id === sourceKey ? result.peaks : null;
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !peaks || !nonempty) return;
