@@ -17,7 +17,7 @@ interface Options {
 type PreparedSegment = EditorAudioSegment & { sourceVideoId: string; previewSpeed: number };
 type Track = { segments: PreparedSegment[]; preview: EditorAudioPreview };
 
-// Prepared engine only: the editor's existing single-track path and guards stay intact.
+// Used for multitrack/assets; legacy original audio retains its single-player path.
 // The caller owns the master clock and calls sync/checkDrift from its existing timer.
 export class EditorMultitrackAudioPreview {
   private tracks = new Map<EditorAudioTrackId, Track>();
@@ -102,6 +102,19 @@ export class EditorMultitrackAudioPreview {
   }
 
   play() { this.sync(true, true); }
+  stop() { this.pause(); }
+  updateVolume() { this.sync(this.playing); }
+  setVolumeDraft(draft: { id: string; value: number } | null, apply = true) {
+    for (const track of this.tracks.values()) track.preview.setVolumeDraft(draft, apply);
+  }
+  async refreshUrls() {
+    const sources = new Map(this.options.segments().map(segment => {
+      const source = audioSource(segment);
+      return [audioSourceKey(source), source] as const;
+    }));
+    await Promise.all([...sources.values()].filter(source => source.kind === "audioAsset")
+      .map(source => this.options.resolver.resolve(source, { refresh: true })));
+  }
   pause() {
     this.playing = false;
     this.generation++;

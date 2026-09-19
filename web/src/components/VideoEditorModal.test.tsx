@@ -163,6 +163,7 @@ describe("VideoEditorModal multi-source preview", () => {
       if (path === "/api/videos/original/editor" && options?.method === "PUT") return Promise.resolve(undefined);
       if (path === "/api/videos/original/editor/render") return Promise.resolve(undefined);
       if (path === "/api/videos") return Promise.resolve(libraryVideos);
+      if (path === "/api/audio-assets/asset") return Promise.resolve({ url: "https://media.example/voice.m4a" });
       if (path === "/api/videos/original/download") {
         return Promise.resolve({ downloadUrl: "https://media.example/original.mp4" });
       }
@@ -295,7 +296,7 @@ describe("VideoEditorModal multi-source preview", () => {
     });
   });
 
-  it.each(["asset", "tracks"])("blocks unsupported %s playback without saving partial audio", async kind => {
+  it.each(["asset", "tracks"])("loads supported %s playback without rewriting audio or adding a visible track", async kind => {
     const audio: EditorAudioSegment[] = kind === "asset" ? [{ id: "voice", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" }, geometryLinked: false,
       sourceStart: 0, sourceEnd: 2, timelineStart: 0 }] : [
       { id: "a", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 2, timelineStart: 0 },
@@ -304,10 +305,84 @@ describe("VideoEditorModal multi-source preview", () => {
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1, clips: [
       { id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }], audioSegments: audio } };
     const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
-    await screen.findByText(/wird noch nicht unterstützt/);
-    expect(view.container.querySelector("video")).toBeNull();
+    await screen.findByTestId("video-editor-clip-c");
+    await waitFor(() => expect(view.container.querySelector("video")).not.toBeNull());
+    expect(screen.queryByText(/wird noch nicht unterstützt/)).toBeNull();
+    expect(screen.getAllByTestId("video-editor-audio-track")).toHaveLength(1);
     view.unmount();
     expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(false);
+  });
+
+  it.each(["normal", "mute-original", "mute-voice"])("integrates parallel transport, gaps, gain and cleanup: %s", async mode => {
+    const readiness = vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(4);
+    const audio: EditorAudioSegment[] = [
+      { id: "o", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0, volume: .3, muted: mode === "mute-original" },
+      { id: "v", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" }, sourceStart: 0, sourceEnd: 2, timelineStart: 2, volume: .7, muted: mode === "mute-voice" },
+      { id: "v2", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" }, sourceStart: 2, sourceEnd: 4, timelineStart: 6, volume: .5, muted: mode === "mute-voice" },
+    ];
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1, clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }], audioSegments: audio } };
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-c");
+    const video = view.container.querySelector("video")!;
+    const loaded = () => [...new Set(vi.mocked(HTMLMediaElement.prototype.load).mock.contexts as HTMLMediaElement[])].filter(el => el.tagName === "AUDIO" && el.src);
+    async function seek(time: number) {
+      video.currentTime = time; fireEvent.play(video); fireEvent.seeked(video);
+      await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
+      for (const el of loaded()) fireEvent.loadedMetadata(el);
+      await act(async () => { await Promise.resolve(); });
+    }
+    await seek(3);
+    expect(video.muted).toBe(true);
+    const original = loaded().find(el => el.src.endsWith("original.mp4"));
+    const voice = loaded().find(el => el.src.endsWith("voice.m4a"));
+    if (mode !== "mute-original") { expect(original?.volume).toBe(.3); expect(original?.currentTime).toBe(3); }
+    else expect(original).toBeUndefined();
+    if (mode !== "mute-voice") { expect(voice?.volume).toBe(.7); expect(voice?.currentTime).toBe(1); }
+    else expect(voice).toBeUndefined();
+    vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+    await seek(5);
+    if (voice) expect(vi.mocked(HTMLMediaElement.prototype.play).mock.contexts).not.toContain(voice);
+    await seek(7);
+    if (voice) { expect(voice.currentTime).toBe(3); expect(voice.volume).toBe(.5); }
+    if (mode === "normal") {
+      fireEvent.click(screen.getByTestId("video-editor-audio-c"));
+      fireEvent.click(screen.getByRole("button", { name: "Ton löschen" }));
+      expect(original?.hasAttribute("src")).toBe(false);
+      expect(voice?.hasAttribute("src")).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+      await seek(7);
+      expect(loaded().some(el => el !== original && el.src.endsWith("original.mp4"))).toBe(true);
+    }
+    fireEvent.pause(video);
+    const players = loaded(); view.unmount();
+    for (const el of players) expect(el.hasAttribute("src")).toBe(false);
+    readiness.mockRestore();
+  });
+
+  it("pauses the actual video on asset failure and refreshes its URL on explicit retry", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(4);
+    const originalApi = mockApiFetch.getMockImplementation()!;
+    let forbidden = true;
+    mockApiFetch.mockImplementation((path: string, options?: RequestInit) => path === "/api/audio-assets/asset"
+      ? forbidden ? Promise.reject(new Error("forbidden")) : Promise.resolve({ url: "https://media.example/renewed.m4a" })
+      : originalApi(path, options));
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],
+      audioSegments: [
+        { id: "o", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0 },
+        { id: "v", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" }, sourceStart: 0, sourceEnd: 5, timelineStart: 0 },
+      ] } };
+    const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-c");
+    const video = view.container.querySelector("video")!;
+    fireEvent.play(video);
+    await screen.findByText("Audiovorschau konnte nicht gestartet werden.");
+    expect(vi.mocked(HTMLMediaElement.prototype.pause).mock.contexts).toContain(video);
+    forbidden = false;
+    fireEvent.click(screen.getByRole("button", { name: "Wiedergabe mit Ton starten" }));
+    await waitFor(() => expect(vi.mocked(HTMLMediaElement.prototype.load).mock.contexts.some(el => (el as HTMLMediaElement).src === "https://media.example/renewed.m4a")).toBe(true));
+    expect(mockApiFetch.mock.calls.filter(([path]) => path === "/api/audio-assets/asset").length).toBeGreaterThanOrEqual(2);
+    view.unmount();
   });
 
   it("preserves typed video references and track IDs through save, reload and undo", async () => {

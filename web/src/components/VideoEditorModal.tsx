@@ -4,6 +4,9 @@ import { PromptDialog } from "./PromptDialog";
 import { formatDuration } from "../utils/format";
 import type { Video } from "../types/video";
 import { EditorAudioPreview, audioTransportKey, validAudioVolume } from "./editorAudioPreview";
+import { EditorMultitrackAudioPreview } from "./editorMultitrackAudioPreview";
+import { createAudioSourceResolver } from "./editorAudioSources";
+import { audioSource, validateAudioSegments } from "./editorAudioGeometry";
 import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
 import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorClips, timelineClipPosition, clipSourceToTimelineTime, splitEditorClip, timelineDuration as clipTimelineDuration, type EditorClip, type StoredEditorClip } from "./editorClipTime";
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
@@ -251,7 +254,7 @@ export function VideoEditorModal({
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const audioPreviewRef = useRef<EditorAudioPreview | null>(null);
+  const audioPreviewRef = useRef<EditorAudioPreview | EditorMultitrackAudioPreview | null>(null);
   const previewPlayingRef = useRef(false);
   const videoSwitchPendingRef = useRef(false);
   const videoBufferingRef = useRef(false);
@@ -359,10 +362,30 @@ export function VideoEditorModal({
 
   const audioInputsRef = useRef({ clips, audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview });
   audioInputsRef.current = { clips, audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview };
+  const multitrackPreview = audioSegments.some(segment => audioTrackId(segment) !== "original" || audioSource(segment).kind === "audioAsset");
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    const preview = new EditorAudioPreview(audio, {
+    const canCheckDrift = () => {
+      const video = videoRef.current;
+      return !!video && previewPlayingRef.current && !videoSwitchPendingRef.current &&
+        !sourceTransitionPendingRef.current && !videoBufferingRef.current &&
+        !video.paused && !video.seeking && !video.ended && !video.error && video.readyState >= 3;
+    };
+    const preview = multitrackPreview ? new EditorMultitrackAudioPreview({
+      segments: () => audioInputsRef.current.audioSegments,
+      clips: () => audioInputsRef.current.clips,
+      time: () => audioInputsRef.current.previewTimelineTime(),
+      resolver: createAudioSourceResolver({ loadVideoUrl: id => audioInputsRef.current.loadVideoUrl(id) }),
+      createAudio: () => {
+        const element = document.createElement("audio");
+        element.preload = "auto";
+        return element;
+      },
+      pause: () => { pausePreview(); videoRef.current?.pause(); },
+      error: setAudioPreviewError,
+      canCheckDrift,
+    }) : new EditorAudioPreview(audio, {
       segments: () => previewAudioSegments(audioInputsRef.current.audioSegments),
       speed: segment => {
         const inputs = audioInputsRef.current;
@@ -392,12 +415,12 @@ export function VideoEditorModal({
       preview.dispose();
       audioPreviewRef.current = null;
     };
-  }, []);
+  }, [multitrackPreview, videoId]);
 
   const audioTransport = JSON.stringify([audioTransportKey(audioSegments), audioSegments.map(segment => effectiveAudioSpeed(segment, clips))]);
   useEffect(() => {
     if (!videoSwitchPendingRef.current) audioPreviewRef.current?.sync(previewPlayingRef.current, true);
-  }, [audioTransport, videoUrl]);
+  }, [audioTransport, videoUrl, multitrackPreview, videoId]);
   useEffect(() => { audioPreviewRef.current?.updateVolume(); }, [audioSegments]);
 
   function pausePreview() {
@@ -661,7 +684,15 @@ export function VideoEditorModal({
           }
         }
         const restoredAudio = state.timeline?.audioSegments ?? coupledAudio(restoredClips);
-        try { restoredAudio.forEach(requireSupportedAudioSpeed); previewAudioSegments(restoredAudio); }
+        try {
+          restoredAudio.forEach(segment => {
+            requireSupportedAudioSpeed(segment);
+            if (audioSource(segment).kind === "audioAsset" && readClipSpeed(segment.speed) !== 1) throw new Error("Audio-Assets unterstützen nur Geschwindigkeit 1.");
+          });
+          if (restoredAudio.some(segment => audioTrackId(segment) !== "original" || audioSource(segment).kind === "audioAsset")) {
+            validateAudioSegments(restoredAudio, restoredClips);
+          }
+        }
         catch (err) { pausePreview(); videoRef.current?.pause(); setClipSpeedBlocked(true); throw err; }
         if (restoredAudio.some(segment => !validAudioVolume(segment.volume))) throw new Error("Ungültige Audio-Lautstärke.");
         setAudioSegments(restoredAudio);
@@ -2303,7 +2334,13 @@ export function VideoEditorModal({
         {audioPreviewError && (
           <div role="alert">
             {audioPreviewError}
-            <button type="button" onClick={() => {
+            <button type="button" onClick={async () => {
+              const preview = audioPreviewRef.current;
+              if (preview instanceof EditorMultitrackAudioPreview) {
+                try { await preview.refreshUrls(); }
+                catch { setAudioPreviewError("Audioquelle konnte nicht geladen werden."); return; }
+                if (audioPreviewRef.current !== preview) return;
+              }
               setAudioPreviewError(null);
               previewPlayingRef.current = true;
               audioPreviewRef.current?.sync(true, true);
@@ -3752,7 +3789,7 @@ export function VideoEditorModal({
         <div ref={audioTrackRef} data-testid="video-editor-audio-track" role="group" aria-label="Originalton"
           style={{ position: "relative", height: 36, marginTop: 4, width: `${timelineZoom * 100}%`, minWidth: "100%",
             borderRadius: 8, background: "var(--color-border)", overflow: "hidden", userSelect: "none" }}>
-          {audioSegments.map((segment, index) => {
+          {audioSegments.filter(segment => audioTrackId(segment) === "original" && videoAudioSource(segment)).map((segment, index) => {
             const visual = audioResizeDraft?.id === segment.id ? audioResizeDraft : segment;
             return (
             <div key={segment.id} data-testid={`video-editor-audio-${videoAudioSource(segment)?.clipId ?? segment.id}`}
