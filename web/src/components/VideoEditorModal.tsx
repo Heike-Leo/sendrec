@@ -8,7 +8,7 @@ import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWav
 import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorClips, timelineClipPosition, clipSourceToTimelineTime, splitEditorClip, timelineDuration as clipTimelineDuration, type EditorClip, type StoredEditorClip } from "./editorClipTime";
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
 import { canContinueClipSource, EDITOR_CLIP_SPEEDS, readClipSpeed } from "./editorClipTime";
-import { changeClipSpeed, audioTrackId, audioTrackNeighbours, videoAudioSource, previewAudioSegments, cloneAudioSegment } from "./editorAudioGeometry";
+import { changeClipSpeed, audioTrackId, audioTrackNeighbours, videoAudioSource, previewAudioSegments, cloneAudioSegment, splitLinkedAudioSegments } from "./editorAudioGeometry";
 import { requirePreviewAnnotations, validateTextAnnotation, type EditorAnnotation, type EditorAnnotation as StoredAnnotation } from "./editorAnnotations";
 import { TEXT_FONTS, textTypography, type TextTypography } from "./editorTextTypography";
 import { ARROW_SHAFT_WIDTHS, arrowShaftWidth, arrowPolygonPoints, LINE_STROKE_WIDTHS, lineStrokeWidth, linePreviewStrokeWidth, CIRCLE_STROKE_WIDTHS, circleStrokeWidth, circlePreviewStrokeWidth } from "./editorAnnotations";
@@ -1364,7 +1364,7 @@ export function VideoEditorModal({
   }
 
   function handleSplit() {
-    if (!allowCoupledClipAction()) return;
+    if (volumeGestureRef.current || cancelAudioResizeRef.current) return;
 
     const position =
       timelineTimeToClipPosition(timelinePlayheadTime);
@@ -1384,24 +1384,32 @@ export function VideoEditorModal({
       return;
     }
 
-    rememberEditorState();
-
     const [leftClip, rightClip] = split;
+    let nextAudio: EditorAudioSegment[];
+    try {
+      const item = clipLayout[index];
+      nextAudio = splitLinkedAudioSegments(audioSegments, clip, item.timelineStart, leftClip, rightClip);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Clip konnte nicht geteilt werden.");
+      return;
+    }
+    rememberEditorState();
     nextClipIdRef.current += 2;
 
-    updateCoupledClips((previousClips) => [
+    setClips((previousClips) => [
       ...previousClips.slice(0, index),
       leftClip,
       rightClip,
       ...previousClips.slice(index + 1),
     ]);
+    setAudioSegments(nextAudio);
 
     if (activeClipIdRef.current === clip.id) {
       activeClipIdRef.current = rightClip.id;
     }
 
     setSelectedClipId(null);
-    setError(null);
+    setError(previous => previous === INDEPENDENT_AUDIO_WARNING ? previous : null);
   }
 
   function handleCoverOverlayPointerDown(

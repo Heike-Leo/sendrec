@@ -119,6 +119,30 @@ export function effectiveAudioSpeed(segment: EditorAudioSegment, clips: EditorCl
   }
 }
 
+// A video-only split changes no timeline positions. Preserve independent and
+// legacy audio verbatim; only replace explicitly linked audio of this clip.
+export function splitLinkedAudioSegments(segments: EditorAudioSegment[], clip: EditorClip, timelineStart: number, left: EditorClip, right: EditorClip): EditorAudioSegment[] {
+  const used = new Set(segments.map(segment => segment.id));
+  return segments.flatMap(segment => {
+    const source = videoAudioSource(segment);
+    if (segment.geometryLinked !== true || source?.clipId !== clip.id) return [segment];
+    if (!audioGeometryMatchesClip(segment, clip, timelineStart)) {
+      throw new Error("Die gekoppelte Audiogeometrie stimmt nicht mit dem Videoclip überein.");
+    }
+    let rightId = `audio:${right.id}`;
+    while (used.has(rightId)) rightId = `audio:${rightId}`;
+    used.add(rightId);
+    const withClip = (next: EditorClip) => segment.source?.kind === "video"
+      ? { source: { ...segment.source, clipId: next.id } }
+      : { sourceClipId: next.id };
+    return [
+      { ...segment, ...withClip(left), sourceEnd: left.end },
+      { ...segment, ...withClip(right), id: rightId, sourceStart: right.start,
+        timelineStart: segment.timelineStart + timelineDuration(left.start, left.end, left.speed) },
+    ];
+  });
+}
+
 export function requireSupportedAudioSpeed(segment: EditorAudioSegment): void {
   requireSupportedClipSpeed(segment.speed);
 }

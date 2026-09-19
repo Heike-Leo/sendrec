@@ -506,7 +506,7 @@ describe("VideoEditorModal multi-source preview", () => {
     }
   });
 
-  it.each(["Teilen", "Video einfügen", "Clip löschen"])("blocks %s for independent audio without history or saves", async (action) => {
+  it.each(["Video einfügen", "Clip löschen"])("blocks %s for independent audio without history or saves", async (action) => {
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: {
       version: 1,
       clips: [
@@ -541,6 +541,64 @@ describe("VideoEditorModal multi-source preview", () => {
     view.unmount();
     expect(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT")).toHaveLength(0);
     expect(mockApiFetch.mock.calls.filter(([path]) => path === "/api/videos")).toHaveLength(0);
+  });
+
+  it.each([false, true])("splits with independent audio intact, updating only affected linked audio (linked=%s), and persists/undoes", async linked => {
+    const audio: EditorAudioSegment[] = [
+      { id: "linked", sourceClipId: "two", sourceVideoId: "original", sourceStart: 5, sourceEnd: 10, timelineStart: 5, geometryLinked: true, muted: true, volume: .35, speed: 1 },
+      { id: "independent", sourceClipId: "one", sourceVideoId: "original", sourceStart: 0, sourceEnd: 4, timelineStart: 1, geometryLinked: false, muted: false, volume: .6 },
+    ];
+    const clips = [
+      { id: "one", sourceId: "original", sourceStart: 0, sourceEnd: 5, duration: 5 },
+      { id: "two", sourceId: "original", sourceStart: 5, sourceEnd: 10, duration: 5 },
+    ];
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1, clips, audioSegments: audio } };
+    let view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-one");
+    const track = screen.getByTestId("video-editor-timeline");
+    vi.spyOn(track, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
+    fireEvent.click(track, { clientX: linked ? 750 : 250 });
+    fireEvent.click(screen.getByRole("button", { name: "Video einfügen" }));
+    expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
+    mockApiFetch.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Teilen" }));
+    expect(screen.getAllByTestId(/^video-editor-clip-/)).toHaveLength(3);
+    expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
+    const latest = () => JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
+    await waitFor(() => {
+      expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(true);
+      expect(latest().clips).toHaveLength(3);
+    });
+    const saved = latest();
+    expect(saved.clips.reduce((sum: number, clip: { duration: number }) => sum + clip.duration, 0)).toBe(10);
+    if (!linked) expect(saved.audioSegments).toEqual(audio);
+    else {
+      expect(saved.audioSegments).toHaveLength(3);
+      expect(saved.audioSegments[2]).toEqual(audio[1]);
+      expect(saved.audioSegments[0]).toEqual({ ...audio[0], sourceClipId: saved.clips[1].id, sourceEnd: 7.5 });
+      expect(saved.audioSegments[1]).toEqual({ ...audio[0], id: expect.any(String), sourceClipId: saved.clips[2].id, sourceStart: 7.5, timelineStart: 7.5 });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getAllByTestId(/^video-editor-clip-/)).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "↶ Rückgängig" })).toBeDisabled();
+    await waitFor(() => {
+      expect(latest().clips).toEqual(clips);
+      expect(latest().audioSegments).toEqual(audio);
+    });
+    view.unmount();
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: saved };
+    mockApiFetch.mockClear();
+    view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId(`video-editor-clip-${saved.clips[0].id}`);
+    expect(screen.getAllByTestId(/^video-editor-clip-/)).toHaveLength(3);
+    expect(screen.getByTestId("video-editor-audio-one")).toHaveAttribute("data-timeline-start", "1");
+    // Trigger a save after reload without changing the restored audio.
+    fireEvent.click(screen.getByRole("button", { name: "Pfeil hinzufügen" }));
+    await waitFor(() => {
+      expect(mockApiFetch.mock.calls.some(([, options]) => options?.method === "PUT")).toBe(true);
+      expect(latest().audioSegments).toEqual(saved.audioSegments);
+    });
+    view.unmount();
   });
 
   async function mountAudioTrim(short = false) {
@@ -596,7 +654,7 @@ describe("VideoEditorModal multi-source preview", () => {
     const payload = JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body);
     expect(payload.audioSegments[0]).toEqual(expected);
     expect(payload.audioSegments[1]).toMatchObject({ sourceVideoId: "inserted", sourceStart: 30, sourceEnd: 40, timelineStart: 10 });
-    for (const action of ["Teilen", "Video einfügen", "Clip löschen"]) {
+    for (const action of ["Video einfügen", "Clip löschen"]) {
       if (action === "Clip löschen") fireEvent.click(screen.getByTestId("video-editor-clip-one"));
       fireEvent.click(screen.getByRole("button", { name: action }));
       expect(screen.getByText(/Die Tonspur wurde unabhängig/)).toBeInTheDocument();
@@ -923,7 +981,7 @@ describe("VideoEditorModal multi-source preview", () => {
     await waitFor(() => expect(mockApiFetch.mock.calls.some(([,o]) => o?.method === "PUT")).toBe(true));
     const payload = JSON.parse(mockApiFetch.mock.calls.find(([,o]) => o?.method === "PUT")![1].body);
     expect(payload.audioSegments).toEqual([{ ...moveAudio[0], timelineStart: 4 + dx / 50, geometryLinked: false, speed: 1 }, moveAudio[1]]);
-    for (const action of ["Teilen", "Video einfügen", "Clip löschen"]) {
+    for (const action of ["Video einfügen", "Clip löschen"]) {
       if (action === "Clip löschen") fireEvent.click(screen.getByTestId("video-editor-clip-one"));
       fireEvent.click(screen.getByRole("button", { name: action }));
       expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
@@ -1159,7 +1217,7 @@ describe("VideoEditorModal multi-source preview", () => {
     fireEvent.click(screen.getByTestId("video-editor-audio-clip-1"));
     fireEvent.click(screen.getByRole("button", { name: "Ton löschen" }));
     expect(screen.getByTestId("video-editor-audio-track").children).toHaveLength(0);
-    for (const action of ["Teilen", "Video einfügen"]) {
+    for (const action of ["Video einfügen"]) {
       fireEvent.click(screen.getByRole("button", { name: action }));
       expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
     }
@@ -1276,7 +1334,7 @@ describe("VideoEditorModal multi-source preview", () => {
     const clip = screen.getByTestId("video-editor-clip-one");
     vi.spyOn(clip.parentElement!, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
     await act(async () => { fireEvent.click(clip, { clientX: 100 }); });
-    for (const action of ["Teilen", "Video einfügen", "Clip löschen"]) {
+    for (const action of ["Video einfügen", "Clip löschen"]) {
       fireEvent.click(screen.getByRole("button", { name: action }));
       expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
     }
@@ -1377,7 +1435,7 @@ describe("VideoEditorModal multi-source preview", () => {
     const clip = screen.getByTestId("video-editor-clip-one");
     vi.spyOn(clip.parentElement!, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
     await act(async () => { fireEvent.click(clip, { clientX: 100 }); });
-    for (const action of ["Teilen", "Video einfügen", "Clip löschen"]) {
+    for (const action of ["Video einfügen", "Clip löschen"]) {
       fireEvent.click(screen.getByRole("button", { name: action }));
       expect(screen.getByTestId("video-editor-audio-guard-warning")).toBeInTheDocument();
     }

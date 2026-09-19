@@ -3,11 +3,46 @@ import { audioGeometryMatchesClip, effectiveAudioSpeed, audioSegmentTimelineDura
 import { EditorAudioPreview } from "./editorAudioPreview";
 import { coupledAudio, isAudioStillCoupled } from "./VideoEditorModal";
 import { splitEditorClip } from "./editorClipTime";
-import { changeClipSpeed } from "./editorAudioGeometry";
+import { changeClipSpeed, splitLinkedAudioSegments } from "./editorAudioGeometry";
 import { previewAudioSegments } from "./editorAudioGeometry";
 
 const clip = { id: "c", sourceVideoId: "v", start: 2, end: 12 };
 const segment: EditorAudioSegment = { id: "a", sourceClipId: "c", sourceVideoId: "v", sourceStart: 2, sourceEnd: 12, timelineStart: 0 };
+
+describe("minimal audio update on video split", () => {
+  it.each([.5, 1, 2].flatMap(speed => [false, true].map(typed => ({ speed, typed }))))("preserves source time, speed and properties at $speed (typed=$typed)", ({ speed, typed }) => {
+    const original = { ...clip, speed };
+    const [left, right] = splitEditorClip(original, 6, "left", "right")!;
+    const linked: EditorAudioSegment = { ...segment, geometryLinked: true, muted: true, volume: .3, trackId: "original", speed: .75 };
+    if (typed) { delete linked.sourceClipId; delete linked.sourceVideoId; linked.source = { kind: "video", videoId: "v", clipId: "c" }; }
+    const independent = { ...segment, id: "audio:right", geometryLinked: false, timelineStart: 1, volume: .4 };
+    const legacy = { ...segment, id: "legacy" };
+    const unrelated = { ...segment, id: "other", sourceClipId: "other", geometryLinked: true };
+    const input = [independent, linked, legacy, unrelated];
+    const before = JSON.stringify(input);
+    const result = splitLinkedAudioSegments(input, original, 0, left, right);
+    expect(result).toHaveLength(5);
+    expect(result[0]).toBe(independent);
+    expect(result[3]).toBe(legacy);
+    expect(result[4]).toBe(unrelated);
+    expect(new Set(result.map(s => s.id)).size).toBe(5);
+    expect(result[1].sourceEnd).toBe(6);
+    expect(result[2].sourceStart).toBe(6);
+    expect(result[2].timelineStart).toBe(4 / speed);
+    for (const part of result.slice(1, 3)) {
+      expect(part).toMatchObject({ muted: true, volume: .3, speed: .75, geometryLinked: true, trackId: "original" });
+      expect(effectiveAudioSpeed(part, [left, right])).toBe(speed);
+    }
+    expect(audioSegmentTimelineDuration(result[1], [left, right]) + audioSegmentTimelineDuration(result[2], [left, right])).toBeCloseTo(10 / speed, 12);
+    expect(JSON.stringify(input)).toBe(before);
+    expect(JSON.parse(JSON.stringify(result))).toEqual(result);
+  });
+  it("preserves an explicitly empty track and rejects inconsistent explicit linkage atomically", () => {
+    const [left, right] = splitEditorClip(clip, 6, "left", "right")!;
+    expect(splitLinkedAudioSegments([], clip, 0, left, right)).toEqual([]);
+    expect(() => splitLinkedAudioSegments([{ ...segment, geometryLinked: true, timelineStart: 1 }], clip, 0, left, right)).toThrow(/Audiogeometrie/);
+  });
+});
 
 describe("audio geometry metadata", () => {
   it("changes only the selected clip and relocates explicitly coupled audio, preserving gain", () => {
