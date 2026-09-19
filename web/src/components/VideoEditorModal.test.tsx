@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { VideoEditorModal, isAudioStillCoupled } from "./VideoEditorModal";
 import { EditorAudioPreview } from "./editorAudioPreview";
 import { loadAudioWaveformPeaks } from "./editorAudioWaveform";
 import type { EditorAudioSegment } from "./editorAudioGeometry";
+import { EditorVoiceoverRecorder } from "./editorVoiceoverRecorder";
 
 vi.mock("./editorAudioWaveform", async importOriginal => ({
   ...await importOriginal<typeof import("./editorAudioWaveform")>(), loadAudioWaveformPeaks: vi.fn(),
@@ -5499,5 +5500,147 @@ describe("VideoEditorModal multi-source preview", () => {
     fireEvent.mouseUp(document);
 
     expect(screen.getByText("Anfang: 0:12")).toBeInTheDocument();
+  });
+
+  it("records at the captured playhead, uploads once and inserts one undoable asset segment", async () => {
+    const original: EditorAudioSegment = { id: "original-audio", sourceClipId: "c", sourceVideoId: "original",
+      sourceStart: 0, sourceEnd: 13, timelineStart: 0, volume: 0.4 };
+    const imported: EditorAudioSegment = { id: "imported", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" },
+      sourceStart: 0, sourceEnd: 2, timelineStart: 8, geometryLinked: false, speed: 1, volume: 0.7 };
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 13, duration: 13 }],
+      audioSegments: [original, imported] } };
+    const previousApi = mockApiFetch.getMockImplementation()!;
+    mockApiFetch.mockImplementation((path: string, options?: RequestInit) => {
+      if (path === "/api/audio-assets/" && options?.method === "POST") return Promise.resolve({ id: "new-asset", duration: 4, mimeType: "audio/webm", fileSize: 5 });
+      if (path === "/api/audio-assets/new-asset") return Promise.resolve({ url: "https://media.example/new.webm" });
+      return previousApi(path, options);
+    });
+    vi.mocked(loadAudioWaveformPeaks).mockResolvedValue({ min: new Float32Array([0]), max: new Float32Array([0.5]),
+      sampleRate: 1000, sampleCount: 4000, samplesPerPeak: 4000 });
+    const prepare = vi.spyOn(EditorVoiceoverRecorder.prototype, "prepare").mockResolvedValue();
+    const start = vi.spyOn(EditorVoiceoverRecorder.prototype, "start").mockReturnValue(100);
+    vi.spyOn(EditorVoiceoverRecorder.prototype, "stop").mockResolvedValue({ blob: new Blob(["voice"], { type: "audio/webm" }),
+      mimeType: "audio/webm", byteSize: 5, duration: 3.9, startTimestamp: 100, timelineStart: 2 });
+    const view = render(<VideoEditorModal videoId="original" duration={13} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-audio-imported");
+    const timeline = screen.getByTestId("video-editor-timeline");
+    vi.spyOn(timeline, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1300 } as DOMRect);
+    fireEvent.click(timeline, { clientX: 200 });
+    const recordButton = screen.getByRole("button", { name: "Voice-over aufnehmen" });
+    expect(recordButton).toHaveClass("video-editor-voiceover-button");
+    expect(recordButton).toBeEnabled();
+    expect(within(recordButton).getByTestId("video-editor-tool-icon-microphone")).toBeInTheDocument();
+    fireEvent.click(recordButton);
+    await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith(2));
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Teilen" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Teilen" }));
+    expect(screen.queryByTestId("video-editor-clip-clip-2")).toBeNull();
+    const stopButton = screen.getByRole("button", { name: "Aufnahme stoppen" });
+    expect(stopButton).toHaveClass("video-editor-voiceover-button--recording");
+    expect(within(stopButton).getByTestId("video-editor-tool-icon-stop")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Voice-over aufnehmen" })).toBeNull();
+    fireEvent.click(stopButton);
+    await waitFor(() => expect(screen.getByTestId("video-editor-voiceover-track").querySelectorAll("[data-audio-id]")).toHaveLength(2));
+    const call = mockApiFetch.mock.calls.find(([path, options]) => path === "/api/audio-assets/" && options?.method === "POST");
+    expect(call).toBeDefined();
+    const file = (call![1].body as FormData).get("file") as File;
+    expect(file.type).toBe("audio/webm");
+    expect(await file.text()).toBe("voice");
+    const bars = screen.getByTestId("video-editor-voiceover-track").querySelectorAll<HTMLElement>("[data-audio-id]");
+    expect(bars[1]).toHaveAttribute("data-timeline-start", "2");
+    expect(bars[1]).toHaveAttribute("data-source-start", "0");
+    expect(bars[1]).toHaveAttribute("data-source-end", "4");
+    await waitFor(() => expect(loadAudioWaveformPeaks).toHaveBeenCalledWith("https://media.example/new.webm"));
+    await waitFor(() => {
+      const saves = mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT");
+      const saved = JSON.parse(saves.at(-1)![1].body);
+      expect(saved.audioSegments).toHaveLength(3);
+      expect(saved.audioSegments.slice(0, 2)).toEqual([original, imported]);
+      expect(saved.audioSegments[2]).toMatchObject({ trackId: "voiceover-1", timelineStart: 2,
+        source: { kind: "audioAsset", assetId: "new-asset" }, sourceStart: 0, sourceEnd: 4 });
+    });
+    expect(screen.getByRole("button", { name: "Voice-over aufnehmen" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    expect(screen.getByTestId("video-editor-voiceover-track").querySelectorAll("[data-audio-id]")).toHaveLength(1);
+    expect(screen.getByTestId("video-editor-audio-imported")).toBeInTheDocument();
+    view.unmount();
+    vi.restoreAllMocks();
+  });
+
+  it.each(["upload", "stop"] as const)("leaves audio untouched and releases controls after %s failure", async failure => {
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 13, duration: 13 }],
+      audioSegments: [{ id: "original-audio", sourceClipId: "c", sourceVideoId: "original",
+        sourceStart: 0, sourceEnd: 13, timelineStart: 0 }] } };
+    vi.spyOn(EditorVoiceoverRecorder.prototype, "prepare").mockResolvedValue();
+    vi.spyOn(EditorVoiceoverRecorder.prototype, "start").mockReturnValue(100);
+    vi.spyOn(EditorVoiceoverRecorder.prototype, "stop").mockImplementation(failure === "stop"
+      ? async () => { throw new Error("Recorder fehlgeschlagen"); }
+      : async () => ({ blob: new Blob(["voice"], { type: "audio/webm" }),
+        mimeType: "audio/webm", byteSize: 5, duration: 4, startTimestamp: 100, timelineStart: 0 }));
+    const previousApi = mockApiFetch.getMockImplementation()!;
+    mockApiFetch.mockImplementation((path: string, options?: RequestInit) => path === "/api/audio-assets/" && options?.method === "POST"
+      ? Promise.reject(new Error("Upload fehlgeschlagen")) : previousApi(path, options));
+    const view = render(<VideoEditorModal videoId="original" duration={13} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-audio-c");
+    fireEvent.click(screen.getByRole("button", { name: "Voice-over aufnehmen" }));
+    await screen.findByRole("button", { name: "Aufnahme stoppen" });
+    fireEvent.click(screen.getByRole("button", { name: "Aufnahme stoppen" }));
+    await screen.findByText(failure === "stop" ? "Voice-over-Aufnahme abgebrochen: Recorder fehlgeschlagen" : "Upload fehlgeschlagen");
+    expect(screen.queryByTestId("video-editor-voiceover-track")).toBeNull();
+    expect(screen.getByRole("button", { name: "Voice-over aufnehmen" })).toBeEnabled();
+    expect(screen.getByTestId("video-editor-audio-c")).toBeInTheDocument();
+    if (failure === "stop") expect(mockApiFetch.mock.calls.some(([path]) => path === "/api/audio-assets/")).toBe(false);
+    view.unmount();
+    vi.restoreAllMocks();
+  });
+
+  it("restores editor controls after microphone preparation fails without uploading or editing", async () => {
+    vi.spyOn(EditorVoiceoverRecorder.prototype, "prepare").mockRejectedValue(new Error("Mikrofon verweigert"));
+    const view = render(<VideoEditorModal videoId="original" duration={13} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-audio-track");
+    fireEvent.click(screen.getByRole("button", { name: "Voice-over aufnehmen" }));
+    await screen.findByText("Voice-over-Aufnahme abgebrochen: Mikrofon verweigert");
+    expect(screen.getByRole("button", { name: "Voice-over aufnehmen" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Aufnahme stoppen" })).toBeNull();
+    expect(mockApiFetch.mock.calls.some(([path]) => path === "/api/audio-assets/")).toBe(false);
+    expect(screen.queryByTestId("video-editor-voiceover-track")).toBeNull();
+    view.unmount();
+    vi.restoreAllMocks();
+  });
+
+  it("stops at the end of the full video and releases the session on close", async () => {
+    const onClose = vi.fn();
+    vi.spyOn(EditorVoiceoverRecorder.prototype, "prepare").mockResolvedValue();
+    vi.spyOn(EditorVoiceoverRecorder.prototype, "start").mockReturnValue(100);
+    const stop = vi.spyOn(EditorVoiceoverRecorder.prototype, "stop").mockResolvedValue({ blob: new Blob(["voice"], { type: "audio/webm" }),
+      mimeType: "audio/webm", byteSize: 5, duration: 4, startTimestamp: 100, timelineStart: 0 });
+    const dispose = vi.spyOn(EditorVoiceoverRecorder.prototype, "dispose");
+    const previousApi = mockApiFetch.getMockImplementation()!;
+    mockApiFetch.mockImplementation((path: string, options?: RequestInit) => path === "/api/audio-assets/" && options?.method === "POST"
+      ? Promise.resolve({ id: "end-asset", duration: 4, mimeType: "audio/webm", fileSize: 5 })
+      : path === "/api/audio-assets/end-asset" ? Promise.resolve({ url: "https://media.example/end.webm" }) : previousApi(path, options));
+    const view = render(<VideoEditorModal videoId="original" duration={13} onClose={onClose} />);
+    await screen.findByTestId("video-editor-audio-track");
+    fireEvent.click(screen.getByRole("button", { name: "Voice-over aufnehmen" }));
+    await screen.findByRole("button", { name: "Aufnahme stoppen" });
+    fireEvent.ended(view.container.querySelector("video")!);
+    await waitFor(() => expect(stop).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByTestId("video-editor-voiceover-track").querySelectorAll("[data-audio-id]")).toHaveLength(1));
+    const timeline = screen.getByTestId("video-editor-timeline");
+    vi.spyOn(timeline, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1300 } as DOMRect);
+    fireEvent.click(timeline, { clientX: 500 });
+    expect(screen.getByRole("button", { name: "Voice-over aufnehmen" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Voice-over aufnehmen" }));
+    await screen.findByRole("button", { name: "Aufnahme stoppen" });
+    fireEvent.click(screen.getByRole("button", { name: "Schließen" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(dispose).toHaveBeenCalled();
+    expect(stop).toHaveBeenCalledOnce(); // Closing discards the second take; it does not upload it.
+    expect(mockApiFetch.mock.calls.filter(([path]) => path === "/api/audio-assets/")).toHaveLength(1);
+    view.unmount();
+    vi.restoreAllMocks();
   });
 });

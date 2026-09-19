@@ -5,6 +5,8 @@ import { formatDuration } from "../utils/format";
 import type { Video } from "../types/video";
 import { EditorAudioPreview, audioTransportKey, validAudioVolume } from "./editorAudioPreview";
 import { EditorMultitrackAudioPreview } from "./editorMultitrackAudioPreview";
+import { EditorVoiceoverSession } from "./editorVoiceoverSession";
+import { finishVoiceoverToTimeline } from "./editorVoiceoverTimeline";
 import { audioSourceKey, createAudioSourceResolver } from "./editorAudioSources";
 import { audioSource, groupAudioSegments, validateAudioSegments } from "./editorAudioGeometry";
 import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
@@ -134,12 +136,14 @@ export function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOver
   });
 }
 
-function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" | "circle" | "symbol" | "line" }) {
+function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" | "circle" | "symbol" | "line" | "microphone" | "stop" }) {
   const paths = {
     arrow: <path d="M2 13 13 2M5 2h8v8" />,
     circle: <circle cx="8" cy="8" r="5.5" />,
     symbol: <SymbolShape symbol="star" />,
     line: <path d="M2 12 14 4" />,
+    microphone: <><rect x="6" y="2" width="4" height="8" rx="2" /><path d="M4 7a4 4 0 0 0 8 0M8 11v3M5.5 14h5" /></>,
+    stop: <rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor" stroke="none" />,
     trim: <><circle cx="3.5" cy="4" r="1.5" /><circle cx="3.5" cy="12" r="1.5" /><path d="m4.8 5 7.7 6.5M4.8 11l7.7-6.5" /></>,
     split: <><rect x="1.5" y="3" width="5" height="10" rx="1" /><rect x="9.5" y="3" width="5" height="10" rx="1" /><path d="M8 2.5v11" /></>,
     cover: <rect x="2" y="3" width="12" height="10" rx="1.5" />,
@@ -235,6 +239,12 @@ export function VideoEditorModal({
     },
   ]);
   const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
+  const voiceoverSessionRef = useRef<EditorVoiceoverSession | null>(null);
+  const voiceoverGenerationRef = useRef(0);
+  const voiceoverFinishingRef = useRef(false);
+  const [voiceoverState, setVoiceoverState] = useState<"idle" | "preparing" | "recording" | "stopping">("idle");
+  const voiceoverTimeRef = useRef(timelinePlayheadTime);
+  voiceoverTimeRef.current = timelinePlayheadTime;
   const waveformCacheRef = useRef<AudioWaveformCache>(new Map());
   const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null);
   const [audioResizeDraft, setAudioResizeDraft] = useState<EditorAudioSegment | null>(null);
@@ -436,6 +446,9 @@ export function VideoEditorModal({
   }
 
   function closeEditor() {
+    voiceoverGenerationRef.current++;
+    voiceoverSessionRef.current?.dispose();
+    voiceoverSessionRef.current = null;
     volumeGestureRef.current?.cancel();
     cancelAudioResizeRef.current?.();
     pausePreview();
@@ -743,6 +756,22 @@ export function VideoEditorModal({
   }, []);
 
   useEffect(() => {
+    voiceoverFinishingRef.current = false;
+    setVoiceoverState("idle");
+    return () => {
+      voiceoverGenerationRef.current++;
+      voiceoverSessionRef.current?.dispose();
+      voiceoverSessionRef.current = null;
+    };
+  }, [videoId]);
+
+  useEffect(() => {
+    if (audioPreviewError && voiceoverSessionRef.current?.state === "recording") {
+      voiceoverSessionRef.current.transportFailed(new Error(audioPreviewError));
+    }
+  }, [audioPreviewError]);
+
+  useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape" && !showRenderName) closeEditor();
     }
@@ -753,6 +782,92 @@ export function VideoEditorModal({
 
   const clipLayout = layoutEditorClips(clips);
   const timelineDuration = clipLayout.at(-1)?.timelineEnd ?? 0;
+
+  async function startVoiceover() {
+    if (voiceoverSessionRef.current || voiceoverFinishingRef.current || clipSpeedBlocked ||
+      !videoRef.current || timelinePlayheadTime >= timelineDuration) return;
+    const generation = ++voiceoverGenerationRef.current;
+    const session = new EditorVoiceoverSession({
+      transport: {
+        time: () => voiceoverTimeRef.current,
+        play: async () => {
+          const video = videoRef.current;
+          if (!video) throw new Error("Video-Vorschau ist nicht verfügbar.");
+          await video.play();
+          previewPlayingRef.current = true;
+          audioPreviewRef.current?.sync(true, true);
+        },
+        pause: () => { pausePreview(); videoRef.current?.pause(); },
+      },
+      changed: state => {
+        if (state !== "error" || voiceoverSessionRef.current !== session) return;
+        voiceoverGenerationRef.current++;
+        voiceoverSessionRef.current = null;
+        voiceoverFinishingRef.current = false;
+        setVoiceoverState("idle");
+        setError(session.error?.message ?? "Voice-over-Aufnahme wurde abgebrochen.");
+        session.dispose();
+      },
+    });
+    voiceoverSessionRef.current = session;
+    setVoiceoverState("preparing");
+    setError(null);
+    try {
+      await session.prepare();
+      if (generation !== voiceoverGenerationRef.current) return;
+      await session.start();
+      if (generation === voiceoverGenerationRef.current) setVoiceoverState("recording");
+    } catch (cause) {
+      if (generation === voiceoverGenerationRef.current) {
+        session.dispose();
+        voiceoverSessionRef.current = null;
+        setVoiceoverState("idle");
+        setError(cause instanceof Error ? cause.message : "Voice-over-Aufnahme konnte nicht gestartet werden.");
+      }
+    }
+  }
+
+  async function stopVoiceover() {
+    const session = voiceoverSessionRef.current;
+    if (!session || voiceoverFinishingRef.current || !["recording", "paused"].includes(session.state)) return;
+    voiceoverFinishingRef.current = true;
+    setVoiceoverState("stopping");
+    const generation = voiceoverGenerationRef.current;
+    try {
+      const inputs = audioResizeInputsRef.current;
+      const inserted = await finishVoiceoverToTimeline(session, inputs.clips, inputs.audioSegments, {
+        rememberEditorState: () => {
+          if (generation !== voiceoverGenerationRef.current) throw new Error("Editor wurde geschlossen.");
+          inputs.rememberEditorState();
+        },
+        setAudioSegments: next => {
+          setAudioSegments(next);
+          setSelectedAudioId(next.at(-1)?.id ?? null);
+        },
+      });
+      if (generation === voiceoverGenerationRef.current && inserted) setError(null);
+    } catch (cause) {
+      if (generation === voiceoverGenerationRef.current) {
+        setError(cause instanceof Error ? cause.message : "Voice-over konnte nicht gespeichert werden.");
+      }
+    } finally {
+      session.dispose();
+      if (generation === voiceoverGenerationRef.current) {
+        voiceoverSessionRef.current = null;
+        voiceoverFinishingRef.current = false;
+        setVoiceoverState("idle");
+      }
+    }
+  }
+
+  const voiceoverBusy = voiceoverState !== "idle";
+  function blockDuringVoiceover(event: React.SyntheticEvent) {
+    if (!voiceoverBusy || (event.target as Element).closest("[data-voiceover-control]")) return;
+    if (voiceoverSessionRef.current?.runEditorAction(() => {}) === false || voiceoverFinishingRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
 
   const audioResizeInputsRef = useRef({ clips, audioSegments, timelineZoom, coverOverlays, annotations, editorHistory, rememberEditorState });
   audioResizeInputsRef.current = { clips, audioSegments, timelineZoom, coverOverlays, annotations, editorHistory, rememberEditorState };
@@ -963,6 +1078,7 @@ export function VideoEditorModal({
     const currentIndex = clips.findIndex((clip) => clip.id === activeClipIdRef.current);
     if (currentIndex < 0) return;
     if (currentIndex >= clips.length - 1) {
+      if (voiceoverSessionRef.current?.state === "recording") void stopVoiceover();
       pausePreview();
       videoRef.current?.pause();
       setTimelinePlayheadTime(timelineDuration);
@@ -1056,6 +1172,7 @@ export function VideoEditorModal({
   }
 
   function handleTimelineClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (voiceoverSessionRef.current?.actionsLocked || voiceoverFinishingRef.current) return;
     if (!timelineDuration) return;
 
     const rect = e.currentTarget.getBoundingClientRect();
@@ -1082,6 +1199,7 @@ export function VideoEditorModal({
 
   useEffect(() => {
     function handleTimelineArrowKeys(e: KeyboardEvent) {
+      if (voiceoverSessionRef.current?.actionsLocked || voiceoverFinishingRef.current) return;
       const target = e.target as HTMLElement | null;
 
       if (
@@ -2263,6 +2381,10 @@ export function VideoEditorModal({
       onClick={(e) => {
         if (e.target === e.currentTarget) closeEditor();
       }}
+      onClickCapture={blockDuringVoiceover}
+      onPointerDownCapture={blockDuringVoiceover}
+      onKeyDownCapture={blockDuringVoiceover}
+      onChangeCapture={blockDuringVoiceover}
     >
       <div
         role="dialog"
@@ -2306,6 +2428,7 @@ export function VideoEditorModal({
 
           <button
             type="button"
+            data-voiceover-control
             onClick={closeEditor}
             style={{
               background: "transparent",
@@ -2363,8 +2486,11 @@ export function VideoEditorModal({
           >
             <video
               ref={videoRef}
-              controls
+              controls={!voiceoverBusy}
               muted
+              onError={() => {
+                voiceoverSessionRef.current?.transportFailed(new Error("Video-Vorschau fehlgeschlagen."));
+              }}
               onVolumeChange={(e) => {
                 if (!e.currentTarget.muted) e.currentTarget.muted = true;
                 if (e.currentTarget.volume !== 0) e.currentTarget.volume = 0;
@@ -2387,9 +2513,19 @@ export function VideoEditorModal({
               }}
               onPause={(e) => {
                 if (internalPauseRef.current) { internalPauseRef.current = false; return; }
+                if (voiceoverSessionRef.current?.state === "recording") {
+                  voiceoverSessionRef.current.transportFailed(new Error("Video-Wiedergabe wurde während der Aufnahme unterbrochen."));
+                  return;
+                }
                 if (!e.currentTarget.ended) pausePreview();
               }}
-              onSeeking={() => { applyActiveVideoSpeed(); audioPreviewRef.current?.stop(); }}
+              onSeeking={() => {
+                if (voiceoverSessionRef.current?.state === "recording" && !videoSwitchPendingRef.current && !sourceTransitionPendingRef.current) {
+                  voiceoverSessionRef.current.transportFailed(new Error("Seek während der Voice-over-Aufnahme ist nicht erlaubt."));
+                  return;
+                }
+                applyActiveVideoSpeed(); audioPreviewRef.current?.stop();
+              }}
               onSeeked={() => {
                 applyActiveVideoSpeed();
                 if (!videoSwitchPendingRef.current) audioPreviewRef.current?.sync(previewPlayingRef.current, true);
@@ -2815,6 +2951,21 @@ export function VideoEditorModal({
 
           <button type="button" className="video-editor-tool-button" aria-label="Text hinzufügen" title="Text hinzufügen"
             onClick={() => addAnnotation(undefined, "text")}>Text</button>
+
+          {!voiceoverBusy ? (
+            <button type="button" data-voiceover-control className="video-editor-voiceover-button"
+              aria-label="Voice-over aufnehmen" title="Voice-over aufnehmen"
+              disabled={clipSpeedBlocked || !!audioPreviewError || timelinePlayheadTime >= timelineDuration}
+              onClick={() => void startVoiceover()}>
+              <EditorToolIcon name="microphone" /> Voice-over aufnehmen
+            </button>
+          ) : (
+            <button type="button" data-voiceover-control className="video-editor-voiceover-button video-editor-voiceover-button--recording"
+              aria-label="Aufnahme stoppen" title="Aufnahme stoppen"
+              disabled={voiceoverState !== "recording"} onClick={() => void stopVoiceover()}>
+              <EditorToolIcon name="stop" /> Aufnahme stoppen
+            </button>
+          )}
 
           {selectedClipId && (
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
