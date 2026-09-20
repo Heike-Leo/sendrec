@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { Layout } from "./Layout";
+import { I18nProvider } from "../i18n/I18nContext";
 import { expectNoA11yViolations } from "../test-utils/a11y";
 
 const mockNavigate = vi.fn();
@@ -37,15 +38,18 @@ vi.mock("../hooks/useOrganization", () => ({
 function renderLayout(path = "/") {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <Layout>
-        <div>Page content</div>
-      </Layout>
+      <I18nProvider>
+        <Layout>
+          <div>Page content</div>
+        </Layout>
+      </I18nProvider>
     </MemoryRouter>
   );
 }
 
 describe("Layout", () => {
   beforeEach(() => {
+    localStorage.setItem("99tools-ui-language", "en");
     mockNavigate.mockReset();
     mockSetAccessToken.mockReset();
     mockApiFetch.mockReset();
@@ -74,7 +78,7 @@ describe("Layout", () => {
 
   it("renders navigation links", () => {
     renderLayout();
-    expect(screen.getByRole("link", { name: /SendRec/ })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: /^99toolsRecord/ })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Record" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Library" })).toHaveAttribute("href", "/library");
     expect(screen.getByRole("link", { name: "Playlists" })).toHaveAttribute("href", "/playlists");
@@ -85,7 +89,7 @@ describe("Layout", () => {
 
   it("renders logo image in nav", () => {
     renderLayout();
-    const logo = document.querySelector('img[src="/images/logo.png"]') as HTMLImageElement;
+    const logo = document.querySelector('img[src="/images/logo-99tools.png"]') as HTMLImageElement;
     expect(logo).toBeInTheDocument();
     expect(logo).toHaveAttribute("alt", "");
   });
@@ -140,14 +144,14 @@ describe("Layout", () => {
 
   it("renders hamburger menu button", () => {
     renderLayout();
-    expect(screen.getByRole("button", { name: "Toggle menu" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open/close menu" })).toBeInTheDocument();
   });
 
   it("toggles mobile menu on hamburger click", async () => {
     const user = userEvent.setup();
     renderLayout();
 
-    const hamburger = screen.getByRole("button", { name: "Toggle menu" });
+    const hamburger = screen.getByRole("button", { name: "Open/close menu" });
     const navLinks = screen.getByRole("link", { name: "Record" }).closest(".nav-links");
     expect(navLinks).not.toHaveClass("nav-links--open");
 
@@ -162,7 +166,7 @@ describe("Layout", () => {
     const user = userEvent.setup();
     renderLayout();
 
-    const hamburger = screen.getByRole("button", { name: "Toggle menu" });
+    const hamburger = screen.getByRole("button", { name: "Open/close menu" });
     await user.click(hamburger);
 
     const navLinks = screen.getByRole("link", { name: "Library" }).closest(".nav-links");
@@ -254,7 +258,7 @@ describe("Layout", () => {
     const trigger = screen.getByRole("button", { name: "Switch workspace" });
     expect(trigger).toBeInTheDocument();
     await user.click(trigger);
-    expect(screen.getByText("New Workspace")).toBeInTheDocument();
+    expect(screen.getByText("New workspace")).toBeInTheDocument();
   });
 
   it("renders org switcher with orgs listed", async () => {
@@ -329,7 +333,7 @@ describe("Layout", () => {
       loading: false,
     });
     renderLayout();
-    const orgSettingsLink = screen.getByRole("link", { name: "Workspace Settings" });
+    const orgSettingsLink = screen.getByRole("link", { name: "Workspace settings" });
     expect(orgSettingsLink).toHaveAttribute("href", "/organizations/org-1/settings");
   });
 
@@ -360,7 +364,7 @@ describe("Layout", () => {
     const user = userEvent.setup();
     renderLayout();
     await user.click(screen.getByRole("button", { name: "Switch workspace" }));
-    await user.click(screen.getByText("New Workspace"));
+    await user.click(screen.getByText("New workspace"));
     const input = screen.getByPlaceholderText("Workspace name");
     expect(input).toBeInTheDocument();
     expect(input).toHaveFocus();
@@ -371,7 +375,7 @@ describe("Layout", () => {
     mockCreateOrg.mockResolvedValueOnce({});
     renderLayout();
     await user.click(screen.getByRole("button", { name: "Switch workspace" }));
-    await user.click(screen.getByText("New Workspace"));
+    await user.click(screen.getByText("New workspace"));
     await user.type(screen.getByPlaceholderText("Workspace name"), "My Team");
     await user.keyboard("{Enter}");
     expect(mockCreateOrg).toHaveBeenCalledWith("My Team");
@@ -382,11 +386,11 @@ describe("Layout", () => {
     mockCreateOrg.mockRejectedValueOnce(new Error("limit"));
     renderLayout();
     await user.click(screen.getByRole("button", { name: "Switch workspace" }));
-    await user.click(screen.getByText("New Workspace"));
+    await user.click(screen.getByText("New workspace"));
     await user.type(screen.getByPlaceholderText("Workspace name"), "My Team");
     await user.keyboard("{Enter}");
     await waitFor(() => {
-      expect(screen.getByText("Failed to create workspace. Free plan allows 1 workspace.")).toBeInTheDocument();
+      expect(screen.getByText("Workspace could not be created. The free plan supports 1 workspace.")).toBeInTheDocument();
     });
   });
 
