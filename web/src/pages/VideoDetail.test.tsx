@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { I18nProvider } from "../i18n/I18nContext";
 import { VideoDetail } from "./VideoDetail";
 import { expectNoA11yViolations } from "../test-utils/a11y";
 
@@ -217,6 +218,7 @@ function setupWithTranscript(
 
 function renderVideoDetail(videoId = "v1") {
   return render(
+    <I18nProvider>
     <MemoryRouter
       initialEntries={[`/videos/${videoId}`]}
     >
@@ -224,12 +226,14 @@ function renderVideoDetail(videoId = "v1") {
         <Route path="/videos/:id" element={<VideoDetail />} />
         <Route path="/library" element={<div>Library Page</div>} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
+    </I18nProvider>,
   );
 }
 
 describe("VideoDetail", () => {
   beforeEach(() => {
+    localStorage.setItem("99tools-ui-language", "en");
     mockApiFetch.mockReset();
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -238,6 +242,36 @@ describe("VideoDetail", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    { language: "de", share: "Freigabelink kopieren", analytics: "Analysen ansehen", download: "Herunterladen", embed: "Einbettung kopieren", disabled: "Deaktiviert", ai: "KI", edit: "Video bearbeiten" },
+    { language: "en", share: "Copy share link", analytics: "View analytics", download: "Download", embed: "Copy embed code", disabled: "Disabled", ai: "AI", edit: "Edit video" },
+  ])("localizes the seven visible video detail labels in $language", async ({ language, share, analytics, download, embed, disabled, ai, edit }) => {
+    localStorage.setItem("99tools-ui-language", language);
+    setupDefaultMocks();
+    renderVideoDetail();
+    expect(await screen.findByRole("button", { name: share })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: analytics })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: download })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: embed })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: disabled })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: ai })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: edit })).toBeInTheDocument();
+  });
+
+  it.each([
+    { language: "de", count: 0, unique: 0, label: "Noch keine Aufrufe" },
+    { language: "de", count: 1, unique: 1, label: "1 Aufruf" },
+    { language: "de", count: 3, unique: 2, label: "3 Aufrufe (2 eindeutig)" },
+    { language: "en", count: 0, unique: 0, label: "No views yet" },
+    { language: "en", count: 1, unique: 1, label: "1 view" },
+    { language: "en", count: 3, unique: 2, label: "3 views (2 unique)" },
+  ])("localizes view counts in $language: $label", async ({ language, count, unique, label }) => {
+    localStorage.setItem("99tools-ui-language", language);
+    setupDefaultMocks({ video: makeVideo({ viewCount: count, uniqueViewCount: unique }) });
+    renderVideoDetail();
+    expect(await screen.findByText(label)).toBeInTheDocument();
   });
 
   it("has no accessibility violations", async () => {
@@ -328,7 +362,7 @@ describe("VideoDetail", () => {
       expect(screen.getByText("Video not found")).toBeInTheDocument();
     });
 
-    const backLink = screen.getByRole("link", { name: /Library/ });
+    const backLink = screen.getByRole("link", { name: "Back to library" });
     expect(backLink).toHaveAttribute("href", "/library");
   });
 
@@ -476,7 +510,7 @@ describe("VideoDetail", () => {
     renderVideoDetail("v1");
 
     await waitFor(() => {
-      expect(screen.getByText("Copy embed")).toBeInTheDocument();
+      expect(screen.getByText("Copy embed code")).toBeInTheDocument();
     });
 
     const embedInput = screen.getByLabelText("Embed code") as HTMLInputElement;
@@ -637,7 +671,7 @@ describe("VideoDetail", () => {
 
     // "None" text appears both in CTA value and Folder dropdown option
     // Check that the CTA row has the "None" span
-    const ctaRow = screen.getByText("Call to action").closest(".detail-setting-row");
+    const ctaRow = screen.getByText("Call-to-Action", { selector: ".detail-setting-label" }).closest(".detail-setting-row");
     expect(ctaRow).not.toBeNull();
     const noneSpan = ctaRow!.querySelector(".detail-setting-value span");
     expect(noneSpan).toHaveTextContent("None");
@@ -656,7 +690,7 @@ describe("VideoDetail", () => {
     fireEvent.click(screen.getByText("Add CTA"));
 
     expect(screen.getByLabelText("CTA text")).toBeInTheDocument();
-    expect(screen.getByLabelText("CTA URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("CTA-URL")).toBeInTheDocument();
     expect(screen.getByText("Save")).toBeInTheDocument();
     expect(screen.getByText("Cancel")).toBeInTheDocument();
   });
@@ -1287,7 +1321,7 @@ describe("VideoDetail", () => {
     fireEvent.click(screen.getByText("Delete video"));
 
     const dialog = screen.getByRole("alertdialog");
-    fireEvent.click(within(dialog).getByText("Cancel"));
+    fireEvent.click(within(dialog).getByText("Abbrechen"));
 
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     // Should not have called delete API (only the initial 8 setup calls including integrations)
@@ -1483,7 +1517,7 @@ describe("VideoDetail", () => {
     renderVideoDetail();
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { level: 2, name: "Call to Action" }),
+        screen.getByRole("heading", { level: 2, name: "Call-to-Action" }),
       ).toBeInTheDocument();
     });
   });
@@ -1567,7 +1601,7 @@ describe("VideoDetail", () => {
     });
     renderVideoDetail();
     await waitFor(() => {
-      expect(screen.getByText("Private")).toBeInTheDocument();
+      expect(screen.getByText("Privat")).toBeInTheDocument();
     });
   });
 
@@ -1593,7 +1627,7 @@ describe("VideoDetail", () => {
       expect(screen.getByText("Delete me")).toBeInTheDocument();
     });
     mockApiFetch.mockResolvedValueOnce(undefined);
-    fireEvent.click(screen.getByLabelText("Delete comment"));
+    fireEvent.click(screen.getByLabelText("Kommentar löschen"));
     await waitFor(() => {
       expect(mockApiFetch).toHaveBeenCalledWith(
         "/api/videos/v1/comments/c1",

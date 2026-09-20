@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { apiFetch } from "../../api/client";
+import { useI18n } from "../../i18n/I18nContext";
 import { useOrganization } from "../../hooks/useOrganization";
 import { useUnsavedChanges } from "../../hooks/useUnsavedChanges";
 import { useToast } from "../../hooks/useToast";
@@ -13,7 +14,7 @@ import { ConfirmDialog, ConfirmDialogState } from "../../components/ConfirmDialo
 import type { Video, Folder, Tag } from "../../types/video";
 import type { TranscriptSegment } from "../../types/transcript";
 import { LimitsResponse } from "../../types/limits";
-import { formatDuration, formatDate, expiryLabel } from "../../utils/format";
+import { formatDuration, formatDate } from "../../utils/format";
 import { copyToClipboard } from "../../utils/clipboard";
 import { SharingSection } from "./SharingSection";
 import { TranscriptSection } from "./TranscriptSection";
@@ -46,17 +47,18 @@ interface CommentsResponse {
 }
 
 
-function viewCountLabel(viewCount: number, uniqueViewCount: number): string {
+function viewCountLabel(viewCount: number, uniqueViewCount: number, t: (key: string, vars?: Record<string, string | number>) => string): string {
   if (viewCount === 0) {
-    return "Noch keine Aufrufe";
+    return t("videoDetail.noViews");
   }
   if (viewCount === uniqueViewCount) {
-    return `${viewCount} Aufruf${viewCount !== 1 ? "e" : ""}`;
+    return t(viewCount === 1 ? "videoDetail.oneView" : "videoDetail.views", { count: viewCount });
   }
-  return `${viewCount} Aufrufe (${uniqueViewCount} eindeutig)`;
+  return t("videoDetail.uniqueViews", { count: viewCount, unique: uniqueViewCount });
 }
 
 export function VideoDetail() {
+  const { t } = useI18n();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { selectedOrg } = useOrganization();
@@ -167,11 +169,11 @@ export function VideoDetail() {
         { method: "POST", body: JSON.stringify({ provider }) },
       );
       if (result) {
-        toast.show(`Issue erstellt: ${result.issueKey}`);
+        toast.show(t("videoDetail.issueCreated", { key: result.issueKey }));
         window.open(result.issueUrl, "_blank", "noopener");
       }
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "Issue konnte nicht erstellt werden");
+      toast.show(err instanceof Error ? err.message : t("videoDetail.issueCreateFailed"));
     } finally {
       setCreatingIssue(false);
     }
@@ -195,7 +197,7 @@ export function VideoDetail() {
   async function copyLink() {
     if (!video) return;
     await copyToClipboard(video.shareUrl);
-    toast.show("Link kopiert");
+    toast.show(t("videoDetail.linkCopied"));
   }
 
   async function togglePin() {
@@ -205,7 +207,7 @@ export function VideoDetail() {
     });
     if (resp) {
       setVideo((prev) => (prev ? { ...prev, pinned: resp.pinned } : prev));
-      toast.show(resp.pinned ? "Video angeheftet" : "Video nicht mehr angeheftet");
+      toast.show(t(resp.pinned ? "videoDetail.pinned" : "videoDetail.unpinned"));
     }
   }
 
@@ -220,9 +222,9 @@ export function VideoDetail() {
         prev ? { ...prev, ctaText, ctaUrl } : prev,
       );
       setCtaFormOpen(false);
-      toast.show("CTA gespeichert");
+      toast.show(t("videoDetail.ctaSaved"));
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : "CTA konnte nicht gespeichert werden");
+      toast.show(err instanceof Error ? err.message : t("videoDetail.ctaSaveFailed"));
     }
   }
 
@@ -236,7 +238,7 @@ export function VideoDetail() {
       prev ? { ...prev, ctaText: null, ctaUrl: null } : prev,
     );
     setCtaFormOpen(false);
-    toast.show("CTA entfernt");
+    toast.show(t("videoDetail.ctaRemoved"));
   }
 
   async function saveTitle() {
@@ -276,7 +278,7 @@ export function VideoDetail() {
         ? { ...prev, title: prev.suggestedTitle!, suggestedTitle: null }
         : prev,
     );
-    toast.show("Titel aktualisiert");
+    toast.show(t("videoDetail.titleUpdated"));
   }
 
   async function dismissSuggestedTitle() {
@@ -343,8 +345,8 @@ export function VideoDetail() {
   function deleteVideo() {
     if (!video) return;
     setConfirmDialog({
-      message: "Diese Aufnahme löschen? Dies kann nicht rückgängig gemacht werden.",
-      confirmLabel: "Löschen",
+      message: t("videoDetail.deleteConfirm"),
+      confirmLabel: t("common.delete"),
       danger: true,
       onConfirm: async () => {
         setConfirmDialog(null);
@@ -405,7 +407,7 @@ export function VideoDetail() {
     return (
       <div className="page-container page-container--centered">
         <p style={{ color: "var(--color-text-secondary)", fontSize: 16 }}>
-          Video nicht gefunden
+          {t("videoDetail.notFound")}
         </p>
         <Link
           to="/library"
@@ -416,13 +418,16 @@ export function VideoDetail() {
             marginTop: 8,
           }}
         >
-          Zurück zur Bibliothek
+          {t("videoDetail.backToLibrary")}
         </Link>
       </div>
     );
   }
 
-  const expiry = expiryLabel(video.shareExpiresAt);
+  const expiryDate = video.shareExpiresAt === null ? null : new Date(video.shareExpiresAt);
+  const expiryExpired = expiryDate !== null && expiryDate <= new Date();
+  const expiryDays = expiryDate === null ? 0 : Math.ceil((expiryDate.getTime() - Date.now()) / 86400000);
+  const expiryText = expiryDate === null ? t("videoDetail.neverExpires") : expiryExpired ? t("videoDetail.expired") : expiryDays === 1 ? t("videoDetail.expiresTomorrow") : t("videoDetail.expiresInDays", { count: expiryDays });
 
   return (
     <div className="page-container">
@@ -435,7 +440,7 @@ export function VideoDetail() {
         }}
       >
         <Link to="/library" className="back-link">
-          &larr; Bibliothek
+          &larr; {t("videoDetail.library")}
         </Link>
         <a
           href={`/watch/${video.shareToken}`}
@@ -447,7 +452,7 @@ export function VideoDetail() {
             fontSize: 14,
           }}
         >
-          Als Betrachter ansehen &rarr;
+          {t("videoDetail.viewAsViewer")} &rarr;
         </a>
       </div>
 
@@ -462,7 +467,7 @@ export function VideoDetail() {
                   <line x1="1" y1="1" x2="23" y2="23" />
                 </svg>
                 <p style={{ color: "var(--color-text-secondary)", fontSize: 14, marginTop: 12 }}>
-                  Video konnte nicht geladen werden
+                  {t("videoDetail.videoLoadFailed")}
                 </p>
               </div>
             ) : (
@@ -477,7 +482,7 @@ export function VideoDetail() {
           ) : video.thumbnailUrl ? (
             <img
               src={video.thumbnailUrl}
-              alt="Video-Vorschaubild"
+              alt={t("videoDetail.thumbnailAlt")}
               className="video-detail-thumbnail"
             />
           ) : (
@@ -490,8 +495,8 @@ export function VideoDetail() {
           )}
           {video.status === "processing" && (
             <div className="hero-processing-overlay">
-              <p className="hero-processing-pulse">Video wird verarbeitet...</p>
-              <p className="hero-processing-sub">Das dauert normalerweise ein bis zwei Minuten</p>
+              <p className="hero-processing-pulse">{t("videoDetail.processingVideo")}</p>
+              <p className="hero-processing-sub">{t("videoDetail.processingHint")}</p>
             </div>
           )}
         </div>
@@ -508,7 +513,7 @@ export function VideoDetail() {
                 }}
                 onBlur={() => saveTitle()}
                 autoFocus
-                aria-label="Titel bearbeiten"
+                aria-label={t("videoDetail.editTitle")}
                 style={{
                   color: "var(--color-text)",
                   fontSize: 24,
@@ -542,7 +547,7 @@ export function VideoDetail() {
                       setEditingTitle(true);
                       setEditTitle(video.title);
                     }}
-                    aria-label="Titel bearbeiten"
+                    aria-label={t("videoDetail.editTitle")}
                     style={{
                       background: "none",
                       border: "none",
@@ -565,30 +570,30 @@ export function VideoDetail() {
             <span>&middot;</span>
             <span>{formatDate(video.createdAt)}</span>
             <span>&middot;</span>
-            <span>{viewCountLabel(video.viewCount, video.uniqueViewCount)}</span>
+            <span>{viewCountLabel(video.viewCount, video.uniqueViewCount, t)}</span>
             <span>&middot;</span>
             <span
               style={{
                 color:
                   video.shareExpiresAt === null
                     ? "var(--color-accent)"
-                    : expiry.expired
+                    : expiryExpired
                       ? "var(--color-error)"
                       : undefined,
               }}
             >
-              {expiry.text}
+              {expiryText}
             </span>
             {video.noiseReduction && (
               <>
                 <span>&middot;</span>
-                <span style={{ color: "var(--color-accent)" }}>Rauschen reduziert</span>
+                <span style={{ color: "var(--color-accent)" }}>{t("videoDetail.noiseReduced")}</span>
               </>
             )}
             {video.pinned && (
               <>
                 <span>&middot;</span>
-                <span style={{ color: "var(--color-accent)" }}>Angeheftet</span>
+                <span style={{ color: "var(--color-accent)" }}>{t("videoDetail.pinnedLabel")}</span>
               </>
             )}
           </p>
@@ -596,7 +601,7 @@ export function VideoDetail() {
           {video.status === "processing" && (
             <span className="status-badge status-badge--processing">
               <span className="status-badge-dot" />
-              Verarbeitung
+              {t("videoDetail.processing")}
             </span>
           )}
 
@@ -651,7 +656,7 @@ export function VideoDetail() {
           style={{ opacity: video.status === "processing" ? 0.5 : undefined }}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-          Freigabelink kopieren
+          {t("videoDetail.copyShareLink")}
         </button>
         <button
           className="detail-btn"
@@ -660,19 +665,19 @@ export function VideoDetail() {
           style={{ opacity: video.status === "processing" ? 0.5 : undefined }}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
-          Analysen ansehen
+          {t("videoDetail.viewAnalytics")}
         </button>
         {video.status === "ready" && videoUrl && (
           <a href={videoUrl} download className="detail-btn" style={{ textDecoration: "none" }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Herunterladen
+            {t("videoDetail.download")}
           </a>
         )}
         {!isViewer && (
           <button
             className="detail-btn"
             onClick={togglePin}
-            aria-label={video.pinned ? "Video lösen" : "Video anheften"}
+            aria-label={t(video.pinned ? "videoDetail.unpinVideo" : "videoDetail.pinVideo")}
           >
             <svg viewBox="0 0 24 24" fill={video.pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h-6v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/><line x1="14" y1="6" x2="14" y2="2"/><line x1="10" y1="6" x2="10" y2="2"/></svg>
             {video.pinned ? "Unpin" : "Pin"}
@@ -698,8 +703,8 @@ export function VideoDetail() {
                 <line x1="5" y1="8" x2="11" y2="8" />
               </svg>
               {creatingIssue
-                ? "Wird erstellt..."
-                : `${integrations[0].provider === "github" ? "GitHub" : "Jira"}-Issue erstellen`}
+                ? t("videoDetail.creating")
+                : t("videoDetail.createProviderIssue", { provider: integrations[0].provider === "github" ? "GitHub" : "Jira" })}
             </button>
           ) : (
             <div style={{ position: "relative" }}>
@@ -723,7 +728,7 @@ export function VideoDetail() {
                   <line x1="8" y1="5" x2="8" y2="11" />
                   <line x1="5" y1="8" x2="11" y2="8" />
                 </svg>
-                {creatingIssue ? "Wird erstellt..." : "Issue erstellen"}
+                {creatingIssue ? t("videoDetail.creating") : t("videoDetail.createIssue")}
               </button>
               {issueDropdownOpen && (
                 <div
@@ -757,8 +762,8 @@ export function VideoDetail() {
                       }}
                     >
                       {intg.provider === "github"
-                        ? "GitHub-Issue"
-                        : "Jira-Issue"}
+                        ? t("videoDetail.githubIssue")
+                        : t("videoDetail.jiraIssue")}
                     </button>
                   ))}
                 </div>
@@ -791,11 +796,11 @@ export function VideoDetail() {
 
       {/* Editing */}
       {!isViewer && <div className="video-detail-section">
-        <h2 className="video-detail-section-title">Bearbeitung</h2>
+        <h2 className="video-detail-section-title">{t("videoDetail.editing")}</h2>
 
         {video.suggestedTitle && (
           <div className="detail-setting-row">
-            <span className="detail-setting-label">Vorgeschlagener Titel</span>
+            <span className="detail-setting-label">{t("videoDetail.suggestedTitle")}</span>
             <div className="detail-setting-value">
               <span
                 style={{
@@ -821,35 +826,35 @@ export function VideoDetail() {
         )}
 
         <div className="detail-setting-row">
-          <span className="detail-setting-label">Bearbeiten</span>
+          <span className="detail-setting-label">{t("videoDetail.edit")}</span>
         <button
           onClick={() => setShowVideoEditor(true)}
           className="detail-btn detail-btn--accent"
           disabled={video.status === "processing"}
         >
-          Video bearbeiten
+          {t("editor.title")}
         </button>
       </div>
 
       <div className="detail-setting-row">
-        <span className="detail-setting-label">Trimmen</span>
+        <span className="detail-setting-label">{t("editor.trim")}</span>
           <button
             onClick={() => setShowTrimModal(true)}
             className="detail-btn"
             disabled={video.status === "processing"}
           >
-            Video trimmen
+            {t("videoDetail.trimVideo")}
           </button>
         </div>
 
         {video.status === "ready" && (
           <div className="detail-setting-row">
-            <span className="detail-setting-label">Stille</span>
+            <span className="detail-setting-label">{t("videoDetail.silence")}</span>
             <button
               onClick={() => setShowSilenceModal(true)}
               className="detail-btn"
             >
-              Stille entfernen
+              {t("videoDetail.removeSilence")}
             </button>
           </div>
         )}
@@ -862,7 +867,7 @@ export function VideoDetail() {
               className="detail-btn"
               disabled={video.status === "processing"}
             >
-              Füllwörter entfernen
+              {t("videoDetail.removeFillers")}
             </button>
           </div>
         )}
@@ -873,9 +878,9 @@ export function VideoDetail() {
         <h2 className="video-detail-section-title">Organize</h2>
 
         <div className="detail-setting-row">
-          <span className="detail-setting-label">Ordner</span>
+          <span className="detail-setting-label">{t("videoDetail.folder")}</span>
           <select
-            aria-label="Ordner"
+          aria-label={t("videoDetail.folder")}
             value={video.folderId ?? ""}
             onChange={(e) => moveToFolder(e.target.value || null)}
             style={{
@@ -955,7 +960,7 @@ export function VideoDetail() {
                 type="text"
                 value={playlistSearch}
                 onChange={(e) => setPlaylistSearch(e.target.value)}
-                placeholder="Playlists durchsuchen..."
+                placeholder={t("videoDetail.searchPlaylists")}
                 style={{
                   padding: "4px 8px",
                   fontSize: 13,
@@ -1014,7 +1019,7 @@ export function VideoDetail() {
               }}
               className="detail-btn"
             >
-              {video.ctaText ? "CTA bearbeiten" : "CTA hinzufügen"}
+              {t(video.ctaText ? "videoDetail.editCta" : "videoDetail.addCta")}
             </button>
           </div>
         </div>
@@ -1031,11 +1036,11 @@ export function VideoDetail() {
           >
             <input
               type="text"
-              placeholder="Button-Text (z. B. Demo buchen)"
+              placeholder={t("videoDetail.ctaTextPlaceholder")}
               value={ctaText}
               onChange={(e) => setCtaText(e.target.value)}
               maxLength={100}
-              aria-label="CTA-Text"
+              aria-label={t("videoDetail.ctaText")}
               style={{
                 width: "100%",
                 padding: "8px 10px",
@@ -1071,21 +1076,21 @@ export function VideoDetail() {
                 disabled={!ctaText.trim() || !ctaUrl.trim()}
                 className="detail-btn detail-btn--accent"
               >
-                Speichern
+                {t("common.save")}
               </button>
               {video.ctaText && (
                 <button
                   onClick={clearCTA}
                   className="detail-btn detail-btn--danger"
                 >
-                  Entfernen
+                  {t("videoDetail.remove")}
                 </button>
               )}
               <button
                 onClick={() => setCtaFormOpen(false)}
                 className="detail-btn"
               >
-                Abbrechen
+                {t("common.cancel")}
               </button>
             </div>
           </div>
@@ -1107,7 +1112,7 @@ export function VideoDetail() {
             className="detail-btn detail-btn--danger"
             style={{ padding: "8px 20px" }}
           >
-            Video löschen
+            {t("videoDetail.deleteVideo")}
           </button>
         </div>
       )}
@@ -1155,7 +1160,7 @@ export function VideoDetail() {
               prev ? { ...prev, status: "processing" } : prev,
             );
             setShowFillerModal(false);
-            toast.show("Füllwörter werden entfernt...");
+            toast.show(t("videoDetail.removingFillers"));
           }}
         />
       )}
@@ -1172,7 +1177,7 @@ export function VideoDetail() {
               prev ? { ...prev, status: "processing" } : prev,
             );
             setShowSilenceModal(false);
-            toast.show("Stille Pausen werden entfernt...");
+            toast.show(t("videoDetail.removingSilence"));
           }}
         />
       )}

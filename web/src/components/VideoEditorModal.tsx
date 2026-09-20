@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
+import { useI18n } from "../i18n/I18nContext";
 import { PromptDialog } from "./PromptDialog";
 import { formatDuration } from "../utils/format";
 import type { Video } from "../types/video";
@@ -71,9 +72,9 @@ interface EditorCoverOverlay {
 
 const annotationSymbols = ["check", "cross", "warning", "info", "star", "pointer", "plus", "question"] as const;
 type AnnotationSymbol = typeof annotationSymbols[number];
-const symbolLabels: Record<AnnotationSymbol, string> = {
-  check: "Haken", cross: "Kreuz", warning: "Warnung", info: "Info",
-  star: "Stern", pointer: "Hand", plus: "Plus", question: "Fragezeichen",
+const symbolLabelKeys: Record<AnnotationSymbol, string> = {
+  check: "editor.symbolCheck", cross: "editor.symbolCross", warning: "editor.symbolWarning", info: "editor.symbolInfo",
+  star: "editor.symbolStar", pointer: "editor.symbolPointer", plus: "editor.symbolPlus", question: "editor.symbolQuestion",
 };
 
 function SymbolShape({ symbol }: { symbol: AnnotationSymbol }) {
@@ -124,6 +125,74 @@ const TIMELINE_ZOOM_LEVELS = [1, 2, 5, 10] as const;
 const TIMELINE_TICK_STEPS = [0.1, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
 const OVERLAY_SAVE_DEBOUNCE_MS = 400;
 const INDEPENDENT_AUDIO_WARNING = "Die Tonspur wurde unabhängig vom Video bearbeitet. Änderungen an der Videostruktur würden diese Audiobearbeitung überschreiben.";
+// Preserve guard comparisons and persisted/backend messages; localize editor-owned
+// errors only at display time so an open message responds to language changes.
+const editorErrorKeys: Record<string, string> = {
+  "Video konnte nicht geladen werden.": "editor.videoLoadError",
+  "Quellenwechsel wurde ersetzt.": "editor.sourceSwitchReplaced",
+  "Audio-Assets unterstützen nur Geschwindigkeit 1.": "editor.assetSpeedError",
+  "Ungültige Audio-Lautstärke.": "editor.invalidAudioVolume",
+  "Editorstand konnte nicht geladen werden.": "editor.stateLoadError",
+  "Rendern fehlgeschlagen.": "editor.renderError",
+  "Renderstatus konnte nicht geladen werden.": "editor.renderStatusError",
+  "Voice-over-Aufnahme wurde abgebrochen.": "editor.recordingAborted",
+  "Voice-over-Aufnahme konnte nicht gestartet werden.": "editor.recordingStartError",
+  "Editor wurde geschlossen.": "editor.editorClosed",
+  "Voice-over konnte nicht gespeichert werden.": "editor.voiceoverSaveError",
+  "Editorstand konnte nicht gespeichert werden.": "editor.stateSaveError",
+  "Videobibliothek konnte nicht geladen werden.": "editor.libraryLoadError",
+  "Bitte zuerst ein Video auswählen.": "editor.selectVideo",
+  "Die Geschwindigkeit würde bestehende Overlays oder Annotationen über das Videoende hinausschieben.": "editor.speedOverlayError",
+  "Geschwindigkeit konnte nicht geändert werden.": "editor.speedChangeError",
+  "Zum Teilen muss der Abspielkopf innerhalb eines Clips stehen.": "editor.splitPositionError",
+  "Clip konnte nicht geteilt werden.": "editor.splitError",
+  "Bitte zuerst eine Abdeckung auswählen.": "editor.selectCover",
+  "Es ist keine Abdeckung zum Einfügen kopiert.": "editor.noCopiedCover",
+  "Bitte zuerst einen Clip auswählen.": "editor.selectClip",
+  "Der letzte verbleibende Clip kann nicht gelöscht werden.": "editor.lastClipError",
+  "Der verbleibende Bereich muss mindestens 1 Sekunde lang sein.": "editor.minTrimError",
+  "Trimmen fehlgeschlagen.": "editor.trimError",
+  "Die Timeline muss mindestens eine Sekunde lang sein.": "editor.minTimelineError",
+  "Rendern konnte nicht gestartet werden.": "editor.renderStartError",
+  "Audioquelle konnte nicht geladen werden.": "editor.audioLoadError",
+  "Wiedergabe konnte nicht gestartet werden.": "editor.playbackError",
+  "Video-Vorschau fehlgeschlagen.": "editor.videoPreviewError",
+  "Video-Vorschau ist nicht verfügbar.": "editor.videoUnavailable",
+  "Video-Wiedergabe wurde während der Aufnahme unterbrochen.": "editor.playbackInterrupted",
+  "Seek während der Voice-over-Aufnahme ist nicht erlaubt.": "editor.seekRecordingError",
+  "Ungültige Audiospur: erlaubt sind original und voiceover-1.": "editor.invalidAudioTrack",
+  "Mehrdeutige Audioquelle.": "editor.ambiguousAudioSource",
+  "Ungültige Audioquelle.": "editor.invalidAudioSource",
+  "Audioquelle fehlt.": "editor.missingAudioSource",
+  "Ungültige Audiosegment-ID.": "editor.invalidAudioId",
+  "Ungültige Audiozeiten.": "editor.invalidAudioTimes",
+  "Audiosegmente derselben Spur dürfen sich nicht überlappen.": "editor.overlappingAudio",
+  "Mehrspur-Audiovorschau wird noch nicht unterstützt.": "editor.multitrackUnavailable",
+  "Audio-Asset-Vorschau wird noch nicht unterstützt.": "editor.assetPreviewUnavailable",
+  "Die gekoppelte Audiogeometrie stimmt nicht mit dem Videoclip überein.": "editor.linkedAudioMismatch",
+  "Die Timeline muss mindestens eine Sekunde lang bleiben.": "editor.minTimelineRemain",
+  "Die Geschwindigkeit würde Audiosegmente überlappen lassen oder über das Videoende hinausschieben.": "editor.speedAudioError",
+  "Voice-over-Aufnahme hat keine gültige Timeline-Startposition.": "editor.recordingStartTimeError",
+  "Voice-over-Aufnahme ist leer oder unvollständig.": "editor.recordingEmpty",
+  "Nicht unterstütztes Voice-over-Aufnahmeformat.": "editor.recordingFormatError",
+  "Audio-Asset-Upload lieferte kein gültiges Ergebnis.": "editor.assetUploadError",
+  "Ungültige Timelinezeit.": "editor.invalidTimelineTime",
+  "Unvollständiges Aufnahmeergebnis.": "editor.incompleteRecording",
+  "Mikrofonaufnahme fehlgeschlagen.": "editor.microphoneError",
+  "Aufnahme kann nicht vorbereitet werden.": "editor.prepareError",
+  "Kein unterstütztes Audio-Aufnahmeformat verfügbar.": "editor.noRecordingFormat",
+  "Kein aktiver reiner Mikrofonstream verfügbar.": "editor.noMicrophoneStream",
+  "Mikrofonaufnahme wurde unerwartet beendet.": "editor.recordingEnded",
+  "Keine Audiodaten aufgenommen.": "editor.noAudioData",
+  "Das Mikrofon ist nicht mehr verfügbar.": "editor.microphoneUnavailable",
+  "Das Mikrofon wurde getrennt.": "editor.microphoneDisconnected",
+  "Das Mikrofon liefert kein Audiosignal mehr.": "editor.microphoneMuted",
+  "Aufnahme ist nicht startbereit.": "editor.recordingNotReady",
+  "Ungültige Timeline-Startzeit.": "editor.invalidStartTime",
+  "Aufnahme kann gerade nicht pausiert werden.": "editor.pauseRecordingError",
+  "Aufnahme kann gerade nicht fortgesetzt werden.": "editor.resumeRecordingError",
+  "Voice-over liegt außerhalb der Videotimeline.": "editor.voiceoverOutsideTimeline",
+};
 const VISIBLE_OVERLAY_TRACKS = 4;
 const OVERLAY_TRACK_HEIGHT = 38;
 const OVERLAY_TRACK_GAP = 4;
@@ -185,6 +254,7 @@ export function VideoEditorModal({
   onClose,
   onTrimStarted,
 }: VideoEditorModalProps) {
+  const { language, t } = useI18n();
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -1954,7 +2024,7 @@ export function VideoEditorModal({
   }
 
   const selectedAnnotation = annotations.find((item) => item.id === selectedAnnotationId);
-  const annotationName = (item: EditorAnnotation) => item.type === "text" ? "Text" : item.type === "line" ? "Linie" : item.type === "symbol" ? "Symbol" : item.type === "circle" ? "Kreis" : "Pfeil";
+  const annotationName = (item: EditorAnnotation) => t(item.type === "text" ? "editor.text" : item.type === "line" ? "editor.line" : item.type === "symbol" ? "editor.symbol" : item.type === "circle" ? "editor.circle" : "editor.arrow");
 
   function addAnnotation(source?: EditorAnnotation, type: EditorAnnotation["type"] = "arrow", symbol?: AnnotationSymbol) {
     if (timelineDuration <= 0) return;
@@ -2274,9 +2344,7 @@ export function VideoEditorModal({
       return;
     }
 
-    const confirmed = window.confirm(
-      "Das aktuelle Video wird durch die getrimmte Version ersetzt. Möchtest du fortfahren?"
-    );
+    const confirmed = window.confirm(t("editor.trimConfirm"));
 
     if (!confirmed) return;
 
@@ -2411,7 +2479,7 @@ export function VideoEditorModal({
               color: "var(--color-text)",
             }}
           >
-            Video bearbeiten
+            {t("editor.title")}
           </h2>
 
           <button
@@ -2427,7 +2495,7 @@ export function VideoEditorModal({
               cursor: "pointer",
             }}
           >
-            Schließen
+            {t("editor.close")}
           </button>
         </header>
 
@@ -2440,7 +2508,7 @@ export function VideoEditorModal({
               marginBottom: 16,
             }}
           >
-            {error}
+            {t(editorErrorKeys[error] ?? error)}
           </div>
         )}
 
@@ -2448,7 +2516,7 @@ export function VideoEditorModal({
         <audio ref={audioRef} preload="auto" hidden data-testid="video-editor-audio-preview" />
         {audioPreviewError && (
           <div role="alert">
-            {audioPreviewError}
+            {t(editorErrorKeys[audioPreviewError] ?? audioPreviewError)}
             <button type="button" onClick={async () => {
               const preview = audioPreviewRef.current;
               if (preview instanceof EditorMultitrackAudioPreview) {
@@ -2463,7 +2531,7 @@ export function VideoEditorModal({
                 pausePreview();
                 setAudioPreviewError("Wiedergabe konnte nicht gestartet werden.");
               });
-            }}>Wiedergabe mit Ton starten</button>
+            }}>{t("editor.playWithAudio")}</button>
           </div>
         )}
         {videoUrl && (
@@ -2620,7 +2688,7 @@ export function VideoEditorModal({
                         transform: `translate(-50%, -100%) rotate(${item.rotation}deg)`, transformOrigin: "bottom center",
                       } : { right: 5, top: Math.max(-14, -frameRect.height * item.y / 100), height: 18 }),
                       width: 1, background: "#FC2667", pointerEvents: "none" }} />
-                    <button type="button" aria-label={`${annotationName(item)} drehen`} title={`${annotationName(item)} drehen`}
+                    <button type="button" aria-label={t("editor.rotateItem", { item: annotationName(item) })} title={t("editor.rotateItem", { item: annotationName(item) })}
                       data-testid={`video-editor-${item.type}-rotate-${item.id}`}
                       onPointerDown={(e) => handleAnnotationRotation(e, item)}
                       onClick={(e) => e.stopPropagation()}
@@ -2842,45 +2910,45 @@ export function VideoEditorModal({
               border: "1px solid #F7C2D2", borderLeft: "3px solid #E6467A",
               background: "#FFF7FA", color: "#0F172A",
               fontSize: 13, lineHeight: 1.4 }}>
-            {error}
+            {t("editor.independentAudioWarning")}
           </div>
         )}
 
         <div
           className="video-editor-studio-toolbar"
         >
-          <div className="video-editor-toolbar-group" role="group" aria-label="Clip bearbeiten" data-testid="video-editor-toolbar-clip">
+          <div className="video-editor-toolbar-group" role="group" aria-label={t("editor.clipTools")} data-testid="video-editor-toolbar-clip">
           <span className="video-editor-tool">
             <button
               type="button"
               className="video-editor-tool-button"
-              aria-label="Trimmen"
+              aria-label={t("editor.trim")}
               aria-describedby="video-editor-tooltip-trim"
               style={{ cursor: "default" }}
             >
               <EditorToolIcon name="trim" />
             </button>
             <span id="video-editor-tooltip-trim" role="tooltip" className="video-editor-tool-tooltip">
-              Trimmen
+              {t("editor.trim")}
             </span>
           </span>
 
           <span className="video-editor-tool">
             <button type="button" onClick={handleSplit} className="video-editor-tool-button"
-              aria-label="Teilen" aria-describedby="video-editor-tooltip-split">
+              aria-label={t("editor.split")} aria-describedby="video-editor-tooltip-split">
               <EditorToolIcon name="split" />
             </button>
-            <span id="video-editor-tooltip-split" role="tooltip" className="video-editor-tool-tooltip">Teilen</span>
+            <span id="video-editor-tooltip-split" role="tooltip" className="video-editor-tool-tooltip">{t("editor.split")}</span>
           </span>
 
           {selectedClipId && (
             <label className="video-editor-toolbar-speed">
-              Geschwindigkeit
-              <select aria-label="Geschwindigkeit" value={readClipSpeed(clips.find(clip => clip.id === selectedClipId)?.speed)}
+              {t("editor.speed")}
+              <select aria-label={t("editor.speed")} value={readClipSpeed(clips.find(clip => clip.id === selectedClipId)?.speed)}
                 disabled={audioGestureActive || audioVolumeDraft !== null}
                 onChange={event => handleClipSpeed(Number(event.target.value))}
                 style={{ border: "1px solid var(--color-border)", borderRadius: 8, padding: "6px 8px", background: "var(--color-surface)", color: "var(--color-text)" }}>
-                {EDITOR_CLIP_SPEEDS.map(speed => <option key={speed} value={speed}>{String(speed).replace(".", ",")}×</option>)}
+                {EDITOR_CLIP_SPEEDS.map(speed => <option key={speed} value={speed}>{speed.toLocaleString(language)}×</option>)}
               </select>
             </label>
           )}
@@ -2888,48 +2956,48 @@ export function VideoEditorModal({
           {selectedClipId && (
             <button type="button" onClick={handleDeleteSelectedClip} disabled={clips.length <= 1}
               className="video-editor-toolbar-delete">
-              Clip löschen
+              {t("editor.deleteClip")}
             </button>
           )}
 
           <span className="video-editor-tool">
             <button type="button" onClick={handleOpenInsertPicker} className="video-editor-tool-button"
-              aria-label="Video einfügen" aria-describedby="video-editor-tooltip-insert">
+              aria-label={t("editor.insertVideo")} aria-describedby="video-editor-tooltip-insert">
               <EditorToolIcon name="insert" />
             </button>
-            <span id="video-editor-tooltip-insert" role="tooltip" className="video-editor-tool-tooltip">Video einfügen</span>
+            <span id="video-editor-tooltip-insert" role="tooltip" className="video-editor-tool-tooltip">{t("editor.insertVideo")}</span>
           </span>
           </div>
 
-          <div className="video-editor-toolbar-group" role="group" aria-label="Einfügen und markieren" data-testid="video-editor-toolbar-insert">
+          <div className="video-editor-toolbar-group" role="group" aria-label={t("editor.insertTools")} data-testid="video-editor-toolbar-insert">
           <span className="video-editor-tool">
             <button
               type="button"
               onClick={handleAddCoverOverlay}
               className="video-editor-tool-button"
-              aria-label="+ Abdeckung"
+              aria-label={t("editor.addCoverShort")}
               aria-describedby="video-editor-tooltip-cover"
             >
               <EditorToolIcon name="cover" />
             </button>
             <span id="video-editor-tooltip-cover" role="tooltip" className="video-editor-tool-tooltip">
-              Abdeckung hinzufügen
+              {t("editor.addCover")}
             </span>
           </span>
 
           <span className="video-editor-tool">
-            <button type="button" className="video-editor-tool-button" aria-label="Pfeil hinzufügen"
+            <button type="button" className="video-editor-tool-button" aria-label={t("editor.addArrow")}
               aria-describedby="video-editor-tooltip-arrow" onClick={() => addAnnotation()}>
               <EditorToolIcon name="arrow" />
             </button>
-            <span id="video-editor-tooltip-arrow" role="tooltip" className="video-editor-tool-tooltip">Pfeil hinzufügen</span>
+            <span id="video-editor-tooltip-arrow" role="tooltip" className="video-editor-tool-tooltip">{t("editor.addArrow")}</span>
           </span>
           <span className="video-editor-tool">
-            <button type="button" className="video-editor-tool-button" aria-label="Kreis hinzufügen"
+            <button type="button" className="video-editor-tool-button" aria-label={t("editor.addCircle")}
               aria-describedby="video-editor-tooltip-circle" onClick={() => addAnnotation(undefined, "circle")}>
               <EditorToolIcon name="circle" />
             </button>
-            <span id="video-editor-tooltip-circle" role="tooltip" className="video-editor-tool-tooltip">Kreis hinzufügen</span>
+            <span id="video-editor-tooltip-circle" role="tooltip" className="video-editor-tool-tooltip">{t("editor.addCircle")}</span>
           </span>
           <span className="video-editor-tool" onBlur={(e) => {
             if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setShowSymbolPicker(false);
@@ -2938,14 +3006,14 @@ export function VideoEditorModal({
               e.stopPropagation(); setShowSymbolPicker(false); symbolPickerButtonRef.current?.focus();
             }
           }}>
-            <button ref={symbolPickerButtonRef} type="button" className="video-editor-tool-button" aria-label="Symbol hinzufügen"
+            <button ref={symbolPickerButtonRef} type="button" className="video-editor-tool-button" aria-label={t("editor.addSymbol")}
               aria-describedby={showSymbolPicker ? undefined : "video-editor-tooltip-symbol"} aria-haspopup="dialog" aria-expanded={showSymbolPicker}
               onClick={() => setShowSymbolPicker((previous) => !previous)}><EditorToolIcon name="symbol" /></button>
-            {!showSymbolPicker && <span id="video-editor-tooltip-symbol" role="tooltip" className="video-editor-tool-tooltip">Symbol hinzufügen</span>}
-            {showSymbolPicker && <div role="dialog" aria-label="Symbol auswählen"
+            {!showSymbolPicker && <span id="video-editor-tooltip-symbol" role="tooltip" className="video-editor-tool-tooltip">{t("editor.addSymbol")}</span>}
+            {showSymbolPicker && <div role="dialog" aria-label={t("editor.chooseSymbol")}
               style={{ position: "absolute", left: 0, top: "100%", zIndex: 50, display: "grid", gridTemplateColumns: "repeat(4, 32px)", gap: 4, padding: 8, background: "white", border: "1px solid var(--color-border)", borderRadius: 8 }}>
               {annotationSymbols.map((symbol, index) => <button key={symbol} autoFocus={index === 0} type="button"
-                className="video-editor-tool-button" aria-label={symbolLabels[symbol]} title={symbolLabels[symbol]}
+                className="video-editor-tool-button" aria-label={t(symbolLabelKeys[symbol])} title={t(symbolLabelKeys[symbol])}
                 onClick={() => { addAnnotation(undefined, "symbol", symbol); setShowSymbolPicker(false); symbolPickerButtonRef.current?.focus(); }}>
                 <svg aria-hidden="true" width="20" height="20" viewBox="0 0 16 16"><SymbolShape symbol={symbol} /></svg>
               </button>)}
@@ -2953,30 +3021,30 @@ export function VideoEditorModal({
           </span>
 
           <span className="video-editor-tool">
-            <button type="button" className="video-editor-tool-button" aria-label="Linie hinzufügen"
+            <button type="button" className="video-editor-tool-button" aria-label={t("editor.addLine")}
               aria-describedby="video-editor-tooltip-line" onClick={() => addAnnotation(undefined, "line")}>
               <EditorToolIcon name="line" />
             </button>
-            <span id="video-editor-tooltip-line" role="tooltip" className="video-editor-tool-tooltip">Linie hinzufügen</span>
+            <span id="video-editor-tooltip-line" role="tooltip" className="video-editor-tool-tooltip">{t("editor.addLine")}</span>
           </span>
 
-          <button type="button" className="video-editor-tool-button" aria-label="Text hinzufügen" title="Text hinzufügen"
-            onClick={() => addAnnotation(undefined, "text")}>Text</button>
+          <button type="button" className="video-editor-tool-button" aria-label={t("editor.addText")} title={t("editor.addText")}
+            onClick={() => addAnnotation(undefined, "text")}>{t("editor.text")}</button>
           </div>
 
-          <div className="video-editor-toolbar-group video-editor-toolbar-group--audio" role="group" aria-label="Audio" data-testid="video-editor-toolbar-audio">
+          <div className="video-editor-toolbar-group video-editor-toolbar-group--audio" role="group" aria-label={t("editor.audioTools")} data-testid="video-editor-toolbar-audio">
           {!voiceoverBusy ? (
             <button type="button" data-voiceover-control className="video-editor-voiceover-button"
-              aria-label="Voice-over aufnehmen" title="Voice-over aufnehmen"
+              aria-label={t("editor.recordVoiceover")} title={t("editor.recordVoiceover")}
               disabled={clipSpeedBlocked || !!audioPreviewError || timelinePlayheadTime >= timelineDuration}
               onClick={() => void startVoiceover()}>
-              <EditorToolIcon name="microphone" /> Voice-over aufnehmen
+              <EditorToolIcon name="microphone" /> {t("editor.recordVoiceover")}
             </button>
           ) : (
             <button type="button" data-voiceover-control className="video-editor-voiceover-button video-editor-voiceover-button--recording"
-              aria-label="Aufnahme stoppen" title="Aufnahme stoppen"
+              aria-label={t("editor.stopRecording")} title={t("editor.stopRecording")}
               disabled={voiceoverState !== "recording"} onClick={() => void stopVoiceover()}>
-              <EditorToolIcon name="stop" /> Aufnahme stoppen
+              <EditorToolIcon name="stop" /> {t("editor.stopRecording")}
             </button>
           )}
 
@@ -2989,31 +3057,31 @@ export function VideoEditorModal({
                 rememberEditorState();
                 setDuckOriginalAudio(enabled);
               }} />
-            Originalton bei Voice-over absenken
+            {t("editor.duckOriginal")}
           </label>
           </div>
 
-          <div className="video-editor-toolbar-group" role="group" aria-label="Verlauf" data-testid="video-editor-toolbar-history">
+          <div className="video-editor-toolbar-group" role="group" aria-label={t("editor.history")} data-testid="video-editor-toolbar-history">
           <span className="video-editor-tool">
             <button
               type="button"
               onClick={handleUndo}
               disabled={editorHistory.length === 0}
               className="video-editor-tool-button"
-              aria-label="↶ Rückgängig"
+              aria-label={t("editor.undoIcon")}
               aria-describedby="video-editor-tooltip-undo"
             >
               <EditorToolIcon name="undo" />
             </button>
             <span id="video-editor-tooltip-undo" role="tooltip" className="video-editor-tool-tooltip">
-              Rückgängig
+              {t("editor.undo")}
             </span>
           </span>
           </div>
 
         </div>
         <p className="video-editor-toolbar-hint" data-testid="video-editor-toolbar-hint">
-          Abspielkopf setzen und mit „Teilen“ einen neuen Clip erzeugen
+          {t("editor.splitHint")}
         </p>
 
         <div className={`video-editor-cover-actions${selectedAnnotation || selectedCoverOverlay || copiedAnnotation || copiedCoverOverlay ? "" : " video-editor-cover-actions--empty"}`}
@@ -3022,101 +3090,101 @@ export function VideoEditorModal({
         {selectedAnnotation && <>
           <span>{annotationName(selectedAnnotation)}:</span>
           {selectedAnnotation.type === "text" && <>
-            <label>Schrift <select aria-label="Textschriftart" value={textTypography(selectedAnnotation).fontFamily}
+            <label>{t("editor.font")} <select aria-label={t("editor.textFont")} value={textTypography(selectedAnnotation).fontFamily}
               onChange={event => updateTextTypography({ fontFamily: event.target.value })}>
               {TEXT_FONTS.map(font => <option key={font.id} value={font.id}>{font.label}</option>)}
             </select></label>
-            <button type="button" className="video-editor-tool-button" aria-label="Text fett" title="Text fett"
+            <button type="button" className="video-editor-tool-button" aria-label={t("editor.textBold")} title={t("editor.textBold")}
               aria-pressed={selectedAnnotation.bold ?? false} onClick={() => updateTextTypography({ bold: !selectedAnnotation.bold })}><b>B</b></button>
-            <button type="button" className="video-editor-tool-button" aria-label="Text kursiv" title="Text kursiv"
+            <button type="button" className="video-editor-tool-button" aria-label={t("editor.textItalic")} title={t("editor.textItalic")}
               aria-pressed={selectedAnnotation.italic ?? false} onClick={() => updateTextTypography({ italic: !selectedAnnotation.italic })}><i>I</i></button>
-            <label>Text <textarea aria-label="Textinhalt" rows={2} style={{ resize: "none" }}
+            <label>{t("editor.text")} <textarea aria-label={t("editor.textContent")} rows={2} style={{ resize: "none" }}
               value={textAnnotationDraft?.id === selectedAnnotation.id ? textAnnotationDraft.text : selectedAnnotation.text}
               onFocus={() => { textAnnotationEditRef.current = null; }}
               onBlur={() => { textAnnotationEditRef.current = null; setTextAnnotationDraft(null); }}
               onChange={event => updateTextProperty("text", event.target.value)} /></label>
-            <label>Größe <input aria-label="Textgröße" type="number" min={TEXT_LAYOUT.minFontSize} max={TEXT_LAYOUT.maxFontSize}
+            <label>{t("editor.size")} <input aria-label={t("editor.textSize")} type="number" min={TEXT_LAYOUT.minFontSize} max={TEXT_LAYOUT.maxFontSize}
               value={selectedAnnotation.fontSize}
               onFocus={() => { textAnnotationEditRef.current = null; }} onBlur={() => { textAnnotationEditRef.current = null; }}
               onChange={event => updateTextProperty("fontSize", Number(event.target.value))} style={{ width: 70 }} /></label>
           </>}
-          {selectedAnnotation.type === "arrow" && <label>Stärke <select aria-label="Pfeilstärke" value={arrowShaftWidth(selectedAnnotation.shaftWidth)}
+          {selectedAnnotation.type === "arrow" && <label>{t("editor.stroke")} <select aria-label={t("editor.arrowStroke")} value={arrowShaftWidth(selectedAnnotation.shaftWidth)}
             onChange={e => updateAnnotation({ shaftWidth: Number(e.target.value) })}>
-            {ARROW_SHAFT_WIDTHS.map(value => <option key={value} value={value}>{value === 12 ? "12 (Standard)" : value}</option>)}
+            {ARROW_SHAFT_WIDTHS.map(value => <option key={value} value={value}>{value === 12 ? t("editor.defaultValue", { value }) : value}</option>)}
           </select></label>}
-          {selectedAnnotation.type === "circle" && <label>Stärke <select aria-label="Kreisstärke" value={circleStrokeWidth(selectedAnnotation.strokeWidth)}
+          {selectedAnnotation.type === "circle" && <label>{t("editor.stroke")} <select aria-label={t("editor.circleStroke")} value={circleStrokeWidth(selectedAnnotation.strokeWidth)}
             onChange={e => updateAnnotation({ strokeWidth: Number(e.target.value) })}>
             {CIRCLE_STROKE_WIDTHS.map(value => <option key={value} value={value}>{value}</option>)}
           </select></label>}
-          {selectedAnnotation.type === "line" && <label>Stärke <select aria-label="Linienstärke" value={lineStrokeWidth(selectedAnnotation.strokeWidth)}
+          {selectedAnnotation.type === "line" && <label>{t("editor.stroke")} <select aria-label={t("editor.lineStroke")} value={lineStrokeWidth(selectedAnnotation.strokeWidth)}
             onChange={e => updateAnnotation({ strokeWidth: Number(e.target.value) })}>
-            {LINE_STROKE_WIDTHS.map(value => <option key={value} value={value}>{value === 3 ? "3 (Standard)" : value}</option>)}
+            {LINE_STROKE_WIDTHS.map(value => <option key={value} value={value}>{value === 3 ? t("editor.defaultValue", { value }) : value}</option>)}
           </select></label>}
-          <label>Farbe <input type="color" aria-label={`${selectedAnnotation.type === "line" ? "Linien" : annotationName(selectedAnnotation)}farbe`} value={selectedAnnotation.type === "text" ? selectedAnnotation.color || TEXT_LAYOUT.color : selectedAnnotation.color ?? "#FC2667"}
+          <label>{t("editor.color")} <input type="color" aria-label={selectedAnnotation.type === "line" ? t("editor.lineColor") : t("editor.itemColor", { item: annotationName(selectedAnnotation) })} value={selectedAnnotation.type === "text" ? selectedAnnotation.color || TEXT_LAYOUT.color : selectedAnnotation.color ?? "#FC2667"}
             onChange={(e) => updateAnnotation({ color: e.target.value })}
             style={{ width: 32, height: 28, padding: 2, cursor: "pointer" }} /></label>
           {selectedAnnotation.type !== "circle" && selectedAnnotation.type !== "text" && <>
-          <label>Richtung <select aria-label={`${selectedAnnotation.type === "line" ? "Linien" : annotationName(selectedAnnotation)}richtung`} value={selectedAnnotation.rotation}
+          <label>{t("editor.direction")} <select aria-label={selectedAnnotation.type === "line" ? t("editor.lineDirection") : t("editor.itemDirection", { item: annotationName(selectedAnnotation) })} value={selectedAnnotation.rotation}
             onChange={(e) => updateAnnotation({ rotation: Number(e.target.value) })}>
             {selectedAnnotation.rotation % 45 !== 0 && <option value={selectedAnnotation.rotation}>{selectedAnnotation.rotation}°</option>}
-            {["Rechts", "Rechts unten", "Unten", "Links unten", "Links", "Links oben", "Oben", "Rechts oben"].map((label, index) =>
-              <option key={label} value={index * 45}>{label}</option>)}
+            {["editor.right", "editor.downRight", "editor.down", "editor.downLeft", "editor.left", "editor.upLeft", "editor.up", "editor.upRight"].map((key, index) =>
+              <option key={key} value={index * 45}>{t(key)}</option>)}
           </select></label>
           </>}
-          <label>Start <input aria-label={`${annotationName(selectedAnnotation)} Start`} type="number" min={0} max={selectedAnnotation.end - 0.1} step={0.1}
+          <label>{t("editor.start")} <input aria-label={t("editor.itemStart", { item: annotationName(selectedAnnotation) })} type="number" min={0} max={selectedAnnotation.end - 0.1} step={0.1}
             value={selectedAnnotation.start} onChange={(e) => {
               const value = Number(e.target.value);
               if (Number.isFinite(value)) updateAnnotation({ start: Math.max(0, Math.min(value, selectedAnnotation.end - 0.1)) });
             }} style={{ width: 70 }} /></label>
-          <label>Ende <input aria-label={`${annotationName(selectedAnnotation)} Ende`} type="number" min={selectedAnnotation.start + 0.1} max={timelineDuration} step={0.1}
+          <label>{t("editor.end")} <input aria-label={t("editor.itemEnd", { item: annotationName(selectedAnnotation) })} type="number" min={selectedAnnotation.start + 0.1} max={timelineDuration} step={0.1}
             value={selectedAnnotation.end} onChange={(e) => {
               const value = Number(e.target.value);
               if (Number.isFinite(value)) updateAnnotation({ end: Math.min(timelineDuration, Math.max(value, selectedAnnotation.start + 0.1)) });
             }} style={{ width: 70 }} /></label>
-          <button type="button" className="video-editor-tool-button" aria-label={`${annotationName(selectedAnnotation)} kopieren`} title={`${annotationName(selectedAnnotation)} kopieren`}
+          <button type="button" className="video-editor-tool-button" aria-label={t("editor.copyItem", { item: annotationName(selectedAnnotation) })} title={t("editor.copyItem", { item: annotationName(selectedAnnotation) })}
             onClick={() => setCopiedAnnotation({ ...selectedAnnotation })}><EditorToolIcon name="copy" /></button>
-          <button type="button" className="video-editor-tool-button" aria-label={`${annotationName(selectedAnnotation)} löschen`} title={`${annotationName(selectedAnnotation)} löschen`} onClick={() => {
+          <button type="button" className="video-editor-tool-button" aria-label={t("editor.deleteItem", { item: annotationName(selectedAnnotation) })} title={t("editor.deleteItem", { item: annotationName(selectedAnnotation) })} onClick={() => {
             rememberEditorState();
             setAnnotations((previous) => previous.filter((item) => item.id !== selectedAnnotation.id));
             setSelectedAnnotationId(null);
           }}><EditorToolIcon name="delete" /></button>
         </>}
-        {copiedAnnotation && <button type="button" className="video-editor-tool-button" aria-label={`${annotationName(copiedAnnotation)} einfügen`} title={`${annotationName(copiedAnnotation)} einfügen`}
+        {copiedAnnotation && <button type="button" className="video-editor-tool-button" aria-label={t("editor.pasteItem", { item: annotationName(copiedAnnotation) })} title={t("editor.pasteItem", { item: annotationName(copiedAnnotation) })}
           onClick={() => addAnnotation(copiedAnnotation)}><EditorToolIcon name="paste" /></button>}
         {selectedCoverOverlay && (
           <>
-          <strong className="video-editor-cover-actions-label">Abdeckung:</strong>
+          <strong className="video-editor-cover-actions-label">{t("editor.cover")}:</strong>
 
           <label className="video-editor-cover-time-label">
-            Typ{" "}
+            {t("editor.type")}{" "}
             <select
-              aria-label="Abdeckungstyp"
+              aria-label={t("editor.coverType")}
               value={selectedCoverOverlay.mode ?? "cover"}
               onChange={(e) => handleCoverOverlayModeChange(e.target.value as "cover" | "blur")}
               className="video-editor-cover-time-input"
             >
-              <option value="cover">Abdecken</option>
-              <option value="blur">Blur</option>
+              <option value="cover">{t("editor.coverMode")}</option>
+              <option value="blur">{t("editor.blurMode")}</option>
             </select>
           </label>
 
           {(selectedCoverOverlay.mode ?? "cover") === "cover" && (
             <>
               <label className="video-editor-cover-time-label">
-                Farbe{" "}
+                {t("editor.color")}{" "}
                 <input
                   type="color"
-                  aria-label="Cover-Farbe"
+                  aria-label={t("editor.coverColor")}
                   value={selectedCoverOverlay.color ?? "#000000"}
                   onChange={(e) => handleCoverOverlayColorChange(e.target.value)}
                   style={{ width: 32, height: 28, padding: 2 }}
                 />
               </label>
               <label className="video-editor-cover-time-label">
-                Deckkraft{" "}
+                {t("editor.opacity")}{" "}
                 <input
                   type="range"
-                  aria-label="Cover-Deckkraft"
+                  aria-label={t("editor.coverOpacity")}
                   min={10}
                   max={100}
                   step={1}
@@ -3139,10 +3207,10 @@ export function VideoEditorModal({
                 </span>
               </label>
               <label className="video-editor-cover-time-label">
-                Text{" "}
+                {t("editor.text")}{" "}
                 <input
                   type="text"
-                  aria-label="Cover-Text"
+                  aria-label={t("editor.coverText")}
                   maxLength={120}
                   value={selectedCoverOverlay.text ?? ""}
                   onFocus={() => { textEditOverlayRef.current = null; }}
@@ -3156,7 +3224,7 @@ export function VideoEditorModal({
           )}
 
           <label className="video-editor-cover-time-label">
-            Start{" "}
+            {t("editor.start")}{" "}
             <input
               type="number"
               min={0}
@@ -3186,7 +3254,7 @@ export function VideoEditorModal({
           </label>
 
           <label className="video-editor-cover-time-label">
-            Ende{" "}
+            {t("editor.end")}{" "}
             <input
               type="number"
               min={selectedCoverOverlay.start + 0.1}
@@ -3220,13 +3288,13 @@ export function VideoEditorModal({
               type="button"
               onClick={handleCopyCoverOverlay}
               className="video-editor-tool-button"
-              aria-label="Abdeckung kopieren"
+              aria-label={t("editor.coverCopy")}
               aria-describedby="video-editor-tooltip-copy-cover"
             >
               <EditorToolIcon name="copy" />
             </button>
             <span id="video-editor-tooltip-copy-cover" role="tooltip" className="video-editor-tool-tooltip">
-              Abdeckung kopieren
+              {t("editor.coverCopy")}
             </span>
           </span>
 
@@ -3239,13 +3307,13 @@ export function VideoEditorModal({
               type="button"
               onClick={handlePasteCoverOverlay}
               className="video-editor-tool-button"
-              aria-label="Abdeckung einfügen"
+              aria-label={t("editor.coverPaste")}
               aria-describedby="video-editor-tooltip-paste-cover"
             >
               <EditorToolIcon name="paste" />
             </button>
             <span id="video-editor-tooltip-paste-cover" role="tooltip" className="video-editor-tool-tooltip">
-              Abdeckung einfügen
+              {t("editor.coverPaste")}
             </span>
           </span>
         )}
@@ -3256,13 +3324,13 @@ export function VideoEditorModal({
               type="button"
               onClick={handleDeleteSelectedCoverOverlay}
               className="video-editor-tool-button video-editor-tool-button--destructive"
-              aria-label="Abdeckung löschen"
+              aria-label={t("editor.coverDelete")}
               aria-describedby="video-editor-tooltip-delete-cover"
             >
               <EditorToolIcon name="delete" />
             </button>
             <span id="video-editor-tooltip-delete-cover" role="tooltip" className="video-editor-tool-tooltip">
-              Abdeckung löschen
+              {t("editor.coverDelete")}
             </span>
           </span>
         )}
@@ -3287,7 +3355,7 @@ export function VideoEditorModal({
               }}
             >
               <strong style={{ color: "var(--color-text)" }}>
-                Video aus Bibliothek auswählen
+                {t("editor.libraryChoose")}
               </strong>
 
               <button
@@ -3308,11 +3376,11 @@ export function VideoEditorModal({
 
             {loadingLibrary ? (
               <div style={{ color: "var(--color-text-secondary)" }}>
-                Bibliothek wird geladen...
+                {t("editor.libraryLoading")}
               </div>
             ) : libraryVideos.length === 0 ? (
               <div style={{ color: "var(--color-text-secondary)" }}>
-                Keine weiteren fertigen Videos gefunden.
+                {t("editor.libraryEmpty")}
               </div>
             ) : (
               <div
@@ -3350,7 +3418,7 @@ export function VideoEditorModal({
                         marginBottom: 4,
                       }}
                     >
-                      {video.title || "Unbenanntes Video"}
+                      {video.title || t("editor.untitledVideo")}
                     </div>
 
                     <div
@@ -3384,9 +3452,9 @@ export function VideoEditorModal({
             }}
           >
             <span>
-              Zum Einfügen ausgewählt:{" "}
+              {t("editor.selectedForInsert")}{" "}
               <strong>
-                {selectedInsertVideo.title || "Unbenanntes Video"}
+                {selectedInsertVideo.title || t("editor.untitledVideo")}
               </strong>{" "}
               ({formatDuration(selectedInsertVideo.duration)})
             </span>
@@ -3405,7 +3473,7 @@ export function VideoEditorModal({
                 whiteSpace: "nowrap",
               }}
             >
-              Hier einfügen
+              {t("editor.insertHere")}
             </button>
           </div>
         )}
@@ -3417,7 +3485,7 @@ export function VideoEditorModal({
               type="button"
               onClick={() => setTimelineZoom(1)}
               className="video-editor-tool-button"
-              aria-label="Ansicht einpassen"
+              aria-label={t("editor.fit")}
               aria-describedby="video-editor-tooltip-fit"
             >
               <EditorToolIcon name="fit" />
@@ -3427,7 +3495,7 @@ export function VideoEditorModal({
               role="tooltip"
               className="video-editor-tool-tooltip video-editor-tool-tooltip--left-edge"
             >
-              Ansicht einpassen
+              {t("editor.fit")}
             </span>
           </span>
 
@@ -3442,13 +3510,13 @@ export function VideoEditorModal({
               }}
               disabled={timelineZoom <= 1}
               className="video-editor-tool-button"
-              aria-label="Verkleinern"
+              aria-label={t("editor.zoomOut")}
               aria-describedby="video-editor-tooltip-zoom-out"
             >
               <EditorToolIcon name="minus" />
             </button>
             <span id="video-editor-tooltip-zoom-out" role="tooltip" className="video-editor-tool-tooltip">
-              Verkleinern
+              {t("editor.zoomOut")}
             </span>
           </span>
 
@@ -3463,7 +3531,7 @@ export function VideoEditorModal({
             onChange={(e) =>
               setTimelineZoom(TIMELINE_ZOOM_LEVELS[Number(e.currentTarget.value)])
             }
-            aria-label="Timeline-Zoom"
+            aria-label={t("editor.timelineZoom")}
             className="video-editor-zoom-slider"
           />
 
@@ -3482,13 +3550,13 @@ export function VideoEditorModal({
                 timelineZoom >= TIMELINE_ZOOM_LEVELS[TIMELINE_ZOOM_LEVELS.length - 1]
               }
               className="video-editor-tool-button"
-              aria-label="Vergrößern"
+              aria-label={t("editor.zoomIn")}
               aria-describedby="video-editor-tooltip-zoom-in"
             >
               <EditorToolIcon name="plus" />
             </button>
             <span id="video-editor-tooltip-zoom-in" role="tooltip" className="video-editor-tool-tooltip">
-              Vergrößern
+              {t("editor.zoomIn")}
             </span>
           </span>
 
@@ -3596,7 +3664,7 @@ export function VideoEditorModal({
                   color: "var(--color-text-secondary)",
                 }}
               >
-                Abdeckungen
+                {t("editor.covers")}
               </span>
             </div>
           )}
@@ -3656,7 +3724,7 @@ export function VideoEditorModal({
                     cursor: "pointer",
                   }}
                 >
-                  Abdeckung {index + 1}
+                  {t("editor.coverNumber", { number: index + 1 })}
 
                   <div
                     onPointerDown={(e) =>
@@ -3673,7 +3741,7 @@ export function VideoEditorModal({
                       cursor: "ew-resize",
                       touchAction: "none",
                     }}
-                    title="Start der Abdeckung ziehen"
+                    title={t("editor.coverStartDrag")}
                   />
 
                   <div
@@ -3691,7 +3759,7 @@ export function VideoEditorModal({
                       cursor: "ew-resize",
                       touchAction: "none",
                     }}
-                    title="Ende der Abdeckung ziehen"
+                    title={t("editor.coverEndDrag")}
                   />
                 </div>
               </div>
@@ -3706,16 +3774,16 @@ export function VideoEditorModal({
             {annotations.map((item, index) => <div key={item.id} data-testid={`video-editor-${item.type}-track-${item.id}`}
               className="video-editor-timeline-overlay-row"
               style={{ height: 38, position: "relative" }}>
-              <button type="button" aria-label={`${annotationName(item)} ${annotations.slice(0, index + 1).filter((a) => a.type === item.type).length}`} aria-pressed={selectedAnnotationId === item.id}
+              <button type="button" aria-label={t("editor.annotationNumber", { item: annotationName(item), number: annotations.slice(0, index + 1).filter((a) => a.type === item.type).length })} aria-pressed={selectedAnnotationId === item.id}
                 onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, "move")}
                 onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
                 style={{ position: "absolute", left: `${item.start / timelineDuration * 100}%`, width: `${(item.end - item.start) / timelineDuration * 100}%`,
                   top: 3, bottom: 3, overflow: "hidden", whiteSpace: "nowrap", background: selectedAnnotationId === item.id ? "#FBE3EC" : "#F5EDF1", color: "#881337", cursor: "grab", touchAction: "none",
                   border: selectedAnnotationId === item.id ? "2px solid #FC2667" : "1px solid #F9A8C0", borderRadius: 5 }}>
-                {annotationName(item)} {annotations.slice(0, index + 1).filter((a) => a.type === item.type).length}
+                {t("editor.annotationNumber", { item: annotationName(item), number: annotations.slice(0, index + 1).filter((a) => a.type === item.type).length })}
                 {(["start", "end"] as const).map((edge) => <span key={edge}
                   data-testid={`video-editor-${item.type}-${edge}-${item.id}`}
-                  title={`${edge === "start" ? "Start" : "Ende"} ${item.type === "text" ? "des Texts" : item.type === "line" ? "der Linie" : item.type === "symbol" ? "des Symbols" : item.type === "circle" ? "des Kreises" : "des Pfeils"} ziehen`}
+                  title={t(edge === "start" ? "editor.dragItemStart" : "editor.dragItemEnd", { item: t(item.type === "text" ? "editor.ofText" : item.type === "line" ? "editor.ofLine" : item.type === "symbol" ? "editor.ofSymbol" : item.type === "circle" ? "editor.ofCircle" : "editor.ofArrow") })}
                   onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, edge)}
                   onClick={(e) => e.stopPropagation()}
                   style={{ position: "absolute", top: 0, bottom: 0, width: 8,
@@ -3788,10 +3856,10 @@ export function VideoEditorModal({
                 }}
               >
                 {clip.sourceVideoId === videoId
-                  ? `Clip ${index + 1}`
+                  ? t("editor.clipNumber", { number: index + 1 })
                   : clip.sourceTitle
-                    ? `Eingefügt: ${clip.sourceTitle}`
-                    : "Eingefügtes Video"}
+                    ? t("editor.insertedTitle", { title: clip.sourceTitle === "Unbenanntes Video" ? t("editor.untitledVideo") : clip.sourceTitle })
+                    : t("editor.insertedVideo")}
               </div>
             );
           })}
@@ -3823,7 +3891,7 @@ export function VideoEditorModal({
           <div
             onMouseDown={handleTrimPointerDown("start")}
             onTouchStart={handleTrimPointerDown("start")}
-            title="Trim-Anfang"
+            title={t("editor.trimStart")}
             className="video-editor-timeline-trim-handle"
             style={{
               position: "absolute",
@@ -3844,7 +3912,7 @@ export function VideoEditorModal({
           <div
             onMouseDown={handleTrimPointerDown("end")}
             onTouchStart={handleTrimPointerDown("end")}
-            title="Trim-Ende"
+            title={t("editor.trimEnd")}
             className="video-editor-timeline-trim-handle"
             style={{
               position: "absolute",
@@ -3894,7 +3962,7 @@ export function VideoEditorModal({
         </div>
 
         {groupAudioSegments(audioSegments).map(({ trackId, segments }) => {
-          const label = trackId === "original" ? "Originalton" : "Voice-over";
+          const label = trackId === "original" ? t("editor.originalAudio") : t("editor.voiceover");
           return <div key={trackId} data-audio-track={trackId}
           data-testid={trackId === "original" ? "video-editor-audio-track" : "video-editor-voiceover-track"} role="group" aria-label={label}
           className="video-editor-timeline-audio-track"
@@ -3910,7 +3978,7 @@ export function VideoEditorModal({
               data-audio-id={segment.id} data-track-id={audioTrackId(segment)} data-clip-id={videoAudioSource(segment)?.clipId} data-source-video-id={videoAudioSource(segment)?.videoId}
               data-source-start={segment.sourceStart} data-source-end={segment.sourceEnd}
               data-timeline-start={segment.timelineStart}
-              title={`${label} · Segment ${index + 1}`}
+              title={t("editor.audioSegment", { track: label, number: index + 1 })}
               style={{ position: "absolute", top: 4, bottom: 4,
                 left: `${timelineDuration > 0 ? visual.timelineStart / timelineDuration * 100 : 0}%`,
                 width: `${timelineDuration > 0 ? audioSegmentTimelineDuration(visual, clips) / timelineDuration * 100 : 0}%`,
@@ -3927,9 +3995,9 @@ export function VideoEditorModal({
                 strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, position: "relative", background: "#34465e" }}>
                 <path d="M2 6h3l4-3v10l-4-3H2ZM12 5a5 5 0 0 1 0 6" />
               </svg>
-              <span className="video-editor-timeline-audio-label" style={{ position: "relative", background: "#34465e" }}>{label} · {index + 1}{segment.muted === true ? " · stumm" : ""}</span>
+              <span className="video-editor-timeline-audio-label" style={{ position: "relative", background: "#34465e" }}>{t("editor.audioNumber", { track: label, number: index + 1 })}{segment.muted === true ? t("editor.mutedSuffix") : ""}</span>
               {selectedAudioId === segment.id && (["start", "end"] as const).map(edge => (
-                <button key={edge} type="button" data-audio-resize-handle={edge} aria-label={edge === "start" ? "Tonanfang kürzen" : "Tonende kürzen"}
+                <button key={edge} type="button" data-audio-resize-handle={edge} aria-label={t(edge === "start" ? "editor.audioTrimStart" : "editor.audioTrimEnd")}
                   disabled={audioSegmentTimelineDuration(segment, clips) < 0.1}
                   onPointerDown={e => handleAudioResize(e, segment, edge)}
                   onClick={e => { e.preventDefault(); e.stopPropagation(); }}
@@ -3952,7 +4020,7 @@ export function VideoEditorModal({
             <button type="button" className="video-editor-tool-button" onClick={handleToggleAudioMute}
               disabled={audioGestureActive || audioVolumeDraft !== null}
               style={{ width: "auto", padding: "0 8px" }}>
-              {audioSegments.find(segment => segment.id === selectedAudioId)?.muted === true ? "Ton an" : "Ton aus"}
+              {t(audioSegments.find(segment => segment.id === selectedAudioId)?.muted === true ? "editor.unmute" : "editor.mute")}
             </button>
           )}
           {audioSegments.some(segment => segment.id === selectedAudioId) && (
@@ -3960,13 +4028,13 @@ export function VideoEditorModal({
               disabled={audioGestureActive || audioVolumeDraft !== null}
               style={{ width: "auto", gap: 6, padding: "0 8px" }}>
               <EditorToolIcon name="delete" />
-              Ton löschen
+              {t("editor.deleteAudio")}
             </button>
           )}
           {audioSegments.some(segment => segment.id === selectedAudioId) && (
             <label className="video-editor-cover-time-label">
-              Lautstärke{" "}
-              <input type="range" aria-label="Audio-Lautstärke" min={0} max={100} step={1}
+              {t("editor.volume")}{" "}
+              <input type="range" aria-label={t("editor.audioVolume")} min={0} max={100} step={1}
                 className="video-editor-opacity-slider" style={{ width: 88 }}
                 disabled={audioGestureActive}
                 value={Math.round((audioVolumeDraft?.value ?? audioSegments.find(segment => segment.id === selectedAudioId)?.volume ?? 1) * 100)}
@@ -3994,11 +4062,11 @@ export function VideoEditorModal({
         </section>
 
         <div className="video-editor-timeline-selection-summary">
-          <span>Anfang: {formatDuration(trimStart)}</span>
+          <span>{t("editor.beginning")} {formatDuration(trimStart)}</span>
           <span>
-            Auswahl: {formatDuration(Math.max(0, trimEnd - trimStart))}
+            {t("editor.selection")} {formatDuration(Math.max(0, trimEnd - trimStart))}
           </span>
-          <span>Ende: {formatDuration(trimEnd)}</span>
+          <span>{t("editor.ending")} {formatDuration(trimEnd)}</span>
         </div>
 
         <div
@@ -4023,7 +4091,7 @@ export function VideoEditorModal({
               cursor: trimming ? "default" : "pointer",
             }}
           >
-            Zurücksetzen
+            {t("editor.reset")}
           </button>
 
           <button
@@ -4050,7 +4118,7 @@ export function VideoEditorModal({
                   : 1,
             }}
           >
-            {trimming ? "Wird getrimmt..." : "Trimmen anwenden"}
+            {t(trimming ? "editor.trimming" : "editor.applyTrim")}
           </button>
 
           <button
@@ -4068,15 +4136,15 @@ export function VideoEditorModal({
               opacity: rendering ? 0.6 : 1,
             }}
           >
-            {rendering ? "Video wird gerendert..." : "Als neues Video rendern"}
+            {t(rendering ? "editor.rendering" : "editor.renderNew")}
           </button>
         </div>
-        {showRenderName && <PromptDialog title="Name für das neue Video"
-          initialValue={`${videoTitle} – bearbeitet`} submitLabel="Rendern" cancelLabel="Abbrechen"
+        {showRenderName && <PromptDialog title={t("editor.renderName")}
+          initialValue={`${videoTitle} – ${t("editor.editedSuffix")}`} submitLabel={t("editor.render")} cancelLabel={t("common.cancel")}
           onCancel={() => setShowRenderName(false)} onSubmit={handleRenderTimeline} />}
         {renderStatus === "ready" && renderedVideoId && (
           <div style={{ marginTop: 12, textAlign: "center", color: "var(--color-text)" }}>
-            Render abgeschlossen. <a href={`/videos/${renderedVideoId}`}>Bearbeitetes Video öffnen</a>
+            {t("editor.renderComplete")} <a href={`/videos/${renderedVideoId}`}>{t("editor.openEdited")}</a>
           </div>
         )}
         </>}

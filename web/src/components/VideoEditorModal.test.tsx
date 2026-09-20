@@ -1,11 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as renderWithTestingLibrary, screen, waitFor, within, type RenderOptions } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { I18nProvider, useI18n } from "../i18n/I18nContext";
 import userEvent from "@testing-library/user-event";
 import { VideoEditorModal, isAudioStillCoupled, serializeTimeline } from "./VideoEditorModal";
 import { EditorAudioPreview } from "./editorAudioPreview";
 import { loadAudioWaveformPeaks } from "./editorAudioWaveform";
 import type { EditorAudioSegment } from "./editorAudioGeometry";
 import { EditorVoiceoverRecorder } from "./editorVoiceoverRecorder";
+
+function render(ui: ReactElement, options?: RenderOptions) {
+  return renderWithTestingLibrary(<I18nProvider>{ui}</I18nProvider>, options);
+}
+
+beforeEach(() => {
+  localStorage.setItem("99tools-ui-language", "de");
+});
 
 vi.mock("./editorAudioWaveform", async importOriginal => ({
   ...await importOriginal<typeof import("./editorAudioWaveform")>(), loadAudioWaveformPeaks: vi.fn(),
@@ -157,6 +167,56 @@ vi.mock("../api/client", () => ({
 }));
 
 describe("VideoEditorModal multi-source preview", () => {
+  it.each([
+    { language: "de", title: "Video bearbeiten", split: "Teilen", voiceover: "Voice-over aufnehmen", duck: "Originalton bei Voice-over absenken", audio: "Originalton", render: "Als neues Video rendern", circle: "Kreis", thickness: "Kreisstärke", zoom: "Vergrößern" },
+    { language: "en", title: "Edit video", split: "Split", voiceover: "Record voice-over", duck: "Lower original audio during voice-over", audio: "Original audio", render: "Render as new video", circle: "Circle", thickness: "Circle thickness", zoom: "Zoom in" },
+  ] as const)("renders editor controls and dynamic track labels in $language", async ({ language, title, split, voiceover, duck, audio, render: renderLabel, circle, thickness, zoom }) => {
+    localStorage.setItem("99tools-ui-language", language);
+    editorState = { renderStatus: "none", renderError: null, renderedVideoId: null, timeline: { version: 1,
+      clips: [{ id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],
+      audioSegments: [
+        { id: "audio-1", sourceClipId: "clip-1", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0 },
+        { id: "voice-1", source: { kind: "audioAsset", assetId: "asset" }, trackId: "voiceover-1", geometryLinked: false, speed: 1, sourceStart: 0, sourceEnd: 2, timelineStart: 2 },
+      ],
+      annotations: [{ id: "circle-1", type: "circle", x: 25, y: 25, width: 20, height: 20, start: 0, end: 5, rotation: 0 }] } };
+    render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-audio-track");
+    expect(screen.getByRole("dialog", { name: title })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: split })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: voiceover })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: duck })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: audio })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Voice-over" })).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`^${audio} · 1$`))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: renderLabel })).toBeInTheDocument();
+    expect(screen.getByText("Clip 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: zoom })).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Clip 1"));
+    expect(screen.getByRole("option", { name: language === "de" ? "0,75×" : "0.75×" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: `${circle} 1` }));
+    expect(screen.getByLabelText(thickness)).toBeInTheDocument();
+    if (language === "en") expect(screen.queryByText("Video bearbeiten")).toBeNull();
+  });
+
+  it("updates the open editor immediately when the application language changes", async () => {
+    function EditorWithLanguageControl() {
+      const { setLanguage } = useI18n();
+      return <><button onClick={() => setLanguage("en")}>Switch to English</button>
+        <button onClick={() => setLanguage("de")}>Switch to German</button>
+        <VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} /></>;
+    }
+    render(<EditorWithLanguageControl />);
+    await screen.findByTestId("video-editor-timeline");
+    expect(screen.getByRole("dialog", { name: "Video bearbeiten" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Switch to English" }));
+    expect(screen.getByRole("dialog", { name: "Edit video" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Record voice-over" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Render as new video" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Split" }));
+    expect(screen.getByText("Position the playhead within a clip to split it.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Switch to German" }));
+    expect(screen.getByText("Zum Teilen muss der Abspielkopf innerhalb eines Clips stehen.")).toBeInTheDocument();
+  });
   it.each([undefined, false, true])("preserves duckOriginalAudio=%s through save, undo, reload and render metadata", async value => {
     const audio: EditorAudioSegment[] = [{ id: "original-audio", sourceClipId: "c", sourceVideoId: "original",
       sourceStart: 0, sourceEnd: 10, timelineStart: 0, geometryLinked: true }];

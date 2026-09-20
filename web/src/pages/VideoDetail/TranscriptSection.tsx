@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { apiFetch } from "../../api/client";
+import { useI18n } from "../../i18n/I18nContext";
 import { useToast } from "../../hooks/useToast";
 import { Toast } from "../../components/Toast";
 import { DocumentModal } from "../../components/DocumentModal";
@@ -32,6 +33,7 @@ export function TranscriptSection({
   onTranscriptClear,
   onTranscriptSegmentsUpdate,
 }: TranscriptSectionProps) {
+  const { t } = useI18n();
   const toast = useToast();
   const [showDocumentModal, setShowDocumentModal] = useState(false);
   const [documentContent, setDocumentContent] = useState<string | null>(null);
@@ -53,7 +55,7 @@ export function TranscriptSection({
       prev ? { ...prev, transcriptStatus: "pending" } : prev,
     );
     onTranscriptClear();
-    toast.show("Transkription eingereiht");
+    toast.show(t("videoDetail.transcriptionQueued"));
   }
 
   async function uploadTranscript(file: File) {
@@ -75,11 +77,11 @@ export function TranscriptSection({
         prev ? { ...prev, transcriptStatus: "ready" } : prev,
       );
       onTranscriptSegmentsUpdate(data?.segments ?? []);
-      toast.show("Transkript hochgeladen");
+      toast.show(t("videoDetail.transcriptUploaded"));
     } catch (err) {
       if (currentVideoId.current !== uploadVideoId) return;
       toast.show(
-        err instanceof Error ? err.message : "Transkript konnte nicht hochgeladen werden",
+        err instanceof Error ? err.message : t("videoDetail.transcriptUploadFailed"),
       );
     } finally {
       if (currentVideoId.current === uploadVideoId) {
@@ -101,7 +103,7 @@ export function TranscriptSection({
     onVideoUpdate((prev) =>
       prev ? { ...prev, summaryStatus: "pending" } : prev,
     );
-    toast.show("Zusammenfassung eingereiht");
+    toast.show(t("videoDetail.summaryQueued"));
   }
 
   async function viewDocument() {
@@ -121,24 +123,24 @@ export function TranscriptSection({
     onVideoUpdate((prev) =>
       prev ? { ...prev, documentStatus: "pending" } : prev,
     );
-    toast.show("Dokumenterstellung eingereiht");
+    toast.show(t("videoDetail.documentQueued"));
   }
 
   return (
     <>
       <div className="video-detail-section">
-        <h2 className="video-detail-section-title">KI</h2>
+        <h2 className="video-detail-section-title">{t("videoDetail.ai")}</h2>
 
         <div className="detail-setting-row">
-          <span className="detail-setting-label">Transkript</span>
+          <span className="detail-setting-label">{t("videoDetail.transcript")}</span>
           <div className="detail-setting-value">
             <span>
-              {video.transcriptStatus === "none" && "Noch nicht gestartet"}
-              {video.transcriptStatus === "pending" && "Ausstehend..."}
-              {video.transcriptStatus === "processing" && "Wird transkribiert..."}
-              {video.transcriptStatus === "ready" && "Fertig"}
-              {video.transcriptStatus === "no_audio" && "Kein Audio"}
-              {video.transcriptStatus === "failed" && "Fehlgeschlagen"}
+              {video.transcriptStatus === "none" && t("videoDetail.notStarted")}
+              {video.transcriptStatus === "pending" && t("videoDetail.pending")}
+              {video.transcriptStatus === "processing" && t("videoDetail.transcribing")}
+              {video.transcriptStatus === "ready" && t("videoDetail.ready")}
+              {video.transcriptStatus === "no_audio" && t("videoDetail.noAudio")}
+              {video.transcriptStatus === "failed" && t("videoDetail.failed")}
             </span>
             {!isViewer &&
               (video.transcriptStatus === "none" ||
@@ -148,7 +150,7 @@ export function TranscriptSection({
                 <>
                   {limits?.transcriptionEnabled && (
                     <select
-                      aria-label="Transkriptionssprache"
+                      aria-label={t("videoDetail.transcriptionLanguage")}
                       value={retranscribeLanguage}
                       onChange={(e) =>
                         onRetranscribeLanguageChange(e.target.value)
@@ -164,10 +166,10 @@ export function TranscriptSection({
                   )}
                   <button onClick={retranscribe} className="detail-btn">
                     {video.transcriptStatus === "none"
-                      ? "Transcribe"
-                      : video.transcriptStatus === "ready"
-                        ? "Transkript neu erstellen"
-                        : "Transkription erneut versuchen"}
+                        ? t("videoDetail.transcribe")
+                        : video.transcriptStatus === "ready"
+                        ? t("videoDetail.redoTranscript")
+                        : t("videoDetail.retryTranscript")}
                   </button>
                   <button
                     onClick={() => uploadInputRef.current?.click()}
@@ -177,7 +179,7 @@ export function TranscriptSection({
                       opacity: uploadingTranscript ? 0.5 : undefined,
                     }}
                   >
-                    {uploadingTranscript ? "Wird hochgeladen..." : "Transkript hochladen"}
+                    {uploadingTranscript ? t("videoDetail.uploading") : t("videoDetail.uploadTranscript")}
                   </button>
                   <input
                     ref={uploadInputRef}
@@ -216,15 +218,15 @@ export function TranscriptSection({
 
         {!isViewer && limits?.aiEnabled && (
           <div className="detail-setting-row">
-            <span className="detail-setting-label">Zusammenfassung</span>
+            <span className="detail-setting-label">{t("videoDetail.summary")}</span>
             <div className="detail-setting-value">
               <span>
-                {video.summaryStatus === "none" && "Noch nicht gestartet"}
-                {video.summaryStatus === "pending" && "Ausstehend..."}
-                {video.summaryStatus === "processing" && "Zusammenfassung wird erstellt..."}
-                {video.summaryStatus === "ready" && "Fertig"}
-                {video.summaryStatus === "too_short" && "Transkript zu kurz"}
-                {video.summaryStatus === "failed" && "Fehlgeschlagen"}
+                {video.summaryStatus === "none" && t("videoDetail.notStarted")}
+                {video.summaryStatus === "pending" && t("videoDetail.pending")}
+                {video.summaryStatus === "processing" && t("videoDetail.summarizing")}
+                {video.summaryStatus === "ready" && t("videoDetail.ready")}
+                {video.summaryStatus === "too_short" && t("videoDetail.transcriptTooShort")}
+                {video.summaryStatus === "failed" && t("videoDetail.failed")}
               </span>
               <button
                 onClick={summarize}
@@ -244,8 +246,8 @@ export function TranscriptSection({
                 }}
               >
                 {video.summaryStatus === "ready"
-                  ? "Re-summarize"
-                  : "Summarize"}
+                  ? t("videoDetail.resummarize")
+                  : t("videoDetail.summarize")}
               </button>
             </div>
           </div>
@@ -253,16 +255,16 @@ export function TranscriptSection({
 
         {!isViewer && limits?.aiEnabled && (
           <div className="detail-setting-row">
-            <span className="detail-setting-label">Dokument</span>
+            <span className="detail-setting-label">{t("videoDetail.document")}</span>
             <div className="detail-setting-value">
               <span>
-                {video.documentStatus === "none" && "Noch nicht erstellt"}
-                {video.documentStatus === "pending" && "Ausstehend..."}
-                {video.documentStatus === "processing" && "Wird erstellt..."}
-                {video.documentStatus === "ready" && "Fertig"}
+                {video.documentStatus === "none" && t("videoDetail.notCreated")}
+                {video.documentStatus === "pending" && t("videoDetail.pending")}
+                {video.documentStatus === "processing" && t("videoDetail.creating")}
+                {video.documentStatus === "ready" && t("videoDetail.ready")}
                 {video.documentStatus === "too_short" &&
-                  "Transkript zu kurz"}
-                {video.documentStatus === "failed" && "Fehlgeschlagen"}
+                  t("videoDetail.transcriptTooShort")}
+                {video.documentStatus === "failed" && t("videoDetail.failed")}
               </span>
               {video.documentStatus === "ready" ? (
                 <>
@@ -270,10 +272,10 @@ export function TranscriptSection({
                     onClick={viewDocument}
                     className="detail-btn detail-btn--accent"
                   >
-                    Ansehen
+                    {t("videoDetail.view")}
                   </button>
                   <button onClick={generateDocument} className="detail-btn">
-                    Neu erstellen
+                    {t("videoDetail.regenerate")}
                   </button>
                 </>
               ) : (
@@ -294,7 +296,7 @@ export function TranscriptSection({
                         : undefined,
                   }}
                 >
-                  Generate
+                  {t("videoDetail.generate")}
                 </button>
               )}
             </div>

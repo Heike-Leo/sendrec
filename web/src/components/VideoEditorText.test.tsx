@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as renderWithTestingLibrary, screen, waitFor } from "@testing-library/react";
+import { I18nProvider } from "../i18n/I18nContext";
 import userEvent from "@testing-library/user-event";
 import { VideoEditorModal } from "./VideoEditorModal";
 import type { EditorAnnotation, TextAnnotation } from "./editorAnnotations";
@@ -25,7 +26,7 @@ function drag(target: HTMLElement, dx: number, dy = 0) {
   fireEvent.pointerUp(document);
 }
 async function open(sourceWidth = 1920, sourceHeight = 1080) {
-  const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+  const view = renderWithTestingLibrary(<I18nProvider><VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} /></I18nProvider>);
   await screen.findByTestId("video-editor-preview");
   const video = view.container.querySelector("video")!;
   Object.defineProperty(video, "videoWidth", { configurable: true, value: sourceWidth });
@@ -36,6 +37,7 @@ async function open(sourceWidth = 1920, sourceHeight = 1080) {
   return { ...view, video, bounds };
 }
 beforeEach(() => {
+  localStorage.setItem("99tools-ui-language", "de");
   callbacks.clear();
   vi.stubGlobal("PointerEvent", MouseEvent);
   vi.stubGlobal("ResizeObserver", class {

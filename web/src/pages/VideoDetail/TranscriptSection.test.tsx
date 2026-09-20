@@ -1,10 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render as renderWithTestingLibrary, screen, waitFor } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { I18nProvider } from "../../i18n/I18nContext";
 import userEvent from "@testing-library/user-event";
 import { TranscriptSection } from "./TranscriptSection";
 import type { Video } from "../../types/video";
 
 const mockApiFetch = vi.fn();
+
+function render(ui: ReactElement) {
+  return renderWithTestingLibrary(ui, { wrapper: I18nProvider });
+}
+
+beforeEach(() => {
+  localStorage.setItem("99tools-ui-language", "en");
+});
 
 vi.mock("../../api/client", () => ({
   apiFetch: (...args: unknown[]) => mockApiFetch(...args),
@@ -60,6 +70,13 @@ describe("TranscriptSection upload", () => {
     expect(
       screen.getByRole("button", { name: /upload transcript/i })
     ).toBeInTheDocument();
+  });
+
+  it("keeps the German upload and status labels in the German locale", () => {
+    localStorage.setItem("99tools-ui-language", "de");
+    renderSection({ transcriptStatus: "none" });
+    expect(screen.getAllByText("Noch nicht gestartet")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Transkript hochladen" })).toBeInTheDocument();
   });
 
   it("renders the speaker name alongside the segment text", () => {
