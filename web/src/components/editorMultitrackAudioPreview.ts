@@ -2,6 +2,7 @@ import { EditorAudioPreview, validAudioVolume } from "./editorAudioPreview";
 import { audioSource, effectiveAudioSpeed, groupAudioSegments, validateAudioSegments, type EditorAudioSegment, type EditorAudioSource, type EditorAudioTrackId } from "./editorAudioGeometry";
 import { audioSourceKey, createAudioSourceResolver } from "./editorAudioSources";
 import { readClipSpeed, type EditorClip } from "./editorClipTime";
+import { originalAudioDuckingGain } from "./editorAudioDucking";
 
 interface Options {
   segments: () => EditorAudioSegment[];
@@ -12,6 +13,7 @@ interface Options {
   pause: () => void;
   error: (message: string | null) => void;
   canCheckDrift?: () => boolean;
+  duckOriginalAudio?: () => boolean;
 }
 
 type PreparedSegment = EditorAudioSegment & { sourceVideoId: string; previewSpeed: number };
@@ -87,6 +89,9 @@ export class EditorMultitrackAudioPreview {
               return this.options.resolver.resolve(source);
             },
             speed: segment => entry.segments.find(item => item.id === segment.id)?.previewSpeed,
+            volumeGain: group.trackId === "original" ? time => this.options.duckOriginalAudio?.() === true
+              ? originalAudioDuckingGain(this.options.segments(), this.options.clips?.() ?? [], time)
+              : 1 : undefined,
             error: this.fail,
             canCheckDrift: this.options.canCheckDrift,
           });

@@ -29,6 +29,8 @@ interface PreviewOptions {
   canCheckDrift?: () => boolean;
   // Effective segment rate supplied by the editor; never multiply by video playbackRate.
   speed?: (segment: AudioSegment) => number | undefined;
+  // Playback-only multiplier; persisted segment volume and its draft stay intact.
+  volumeGain?: (timelineTime: number) => number;
 }
 
 type PlaybackSegment = AudioSegment & { speed: number };
@@ -74,7 +76,10 @@ export class EditorAudioPreview {
     if (!active || active.muted === true) return;
     const value = this.volumeDraft?.id === active.id ? this.volumeDraft.value : active.volume;
     if (!validAudioVolume(value)) return;
-    if (this.audio.volume !== (value ?? 1)) this.audio.volume = value ?? 1;
+    const gain = this.options.volumeGain?.(time) ?? 1;
+    if (!validAudioVolume(gain)) return;
+    const effectiveVolume = (value ?? 1) * gain;
+    if (this.audio.volume !== effectiveVolume) this.audio.volume = effectiveVolume;
   }
 
   constructor(private audio: HTMLAudioElement, private options: PreviewOptions) {
@@ -185,6 +190,7 @@ export class EditorAudioPreview {
   };
 
   stop() {
+    if (this.options.volumeGain) this.updateVolume();
     this.resetDriftConfirmation();
     this.playing = false;
     this.generation++;
@@ -306,8 +312,8 @@ export class EditorAudioPreview {
   }
 
   dispose() {
-    this.stop();
     this.disposed = true;
+    this.stop();
     this.visibilityResyncPending = false;
     this.lastDriftCheck = -Infinity;
     this.correctionUntil = -Infinity;

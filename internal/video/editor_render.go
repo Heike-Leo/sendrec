@@ -83,11 +83,12 @@ type editorAudioSegment struct {
 }
 
 type editTimeline struct {
-	AudioSegments *[]editorAudioSegment `json:"audioSegments,omitempty"`
-	Version       int                   `json:"version"`
-	Clips         []editClip            `json:"clips"`
-	Overlays      []editorCoverOverlay  `json:"overlays,omitempty"`
-	Annotations   []editorAnnotation    `json:"annotations,omitempty"`
+	DuckOriginalAudio *bool                 `json:"duckOriginalAudio,omitempty"`
+	AudioSegments     *[]editorAudioSegment `json:"audioSegments,omitempty"`
+	Version           int                   `json:"version"`
+	Clips             []editClip            `json:"clips"`
+	Overlays          []editorCoverOverlay  `json:"overlays,omitempty"`
+	Annotations       []editorAnnotation    `json:"annotations,omitempty"`
 }
 
 type editorStateResponse struct {
@@ -748,7 +749,9 @@ func (h *Handler) renderTimelineAsync(ctx context.Context, job renderJob) {
 		fail(err)
 		return
 	}
-	cmd := exec.CommandContext(ctx, "ffmpeg", buildAnnotatedTimelineRenderArgs(inputs, job.Timeline.Clips, indexes, job.Sources, output, job.Timeline.Overlays, job.Timeline.Annotations, job.Timeline.AudioSegments)...)
+	args := buildAnnotatedTimelineRenderArgs(inputs, job.Timeline.Clips, indexes, job.Sources, output, job.Timeline.Overlays, job.Timeline.Annotations, job.Timeline.AudioSegments)
+	args = applyTimelineDucking(args, job.Timeline)
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	cmd.Dir = tmpDir
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		fail(fmt.Errorf("ffmpeg render: %w: %s", err, string(combined)))

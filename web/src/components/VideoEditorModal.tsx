@@ -91,6 +91,7 @@ function SymbolShape({ symbol }: { symbol: AnnotationSymbol }) {
 }
 
 interface EditorHistoryEntry {
+  duckOriginalAudio: boolean;
   clips: EditorClip[];
   audioSegments: EditorAudioSegment[];
   coverOverlays: EditorCoverOverlay[];
@@ -99,6 +100,7 @@ interface EditorHistoryEntry {
 
 interface StoredEditorState {
   timeline: {
+    duckOriginalAudio?: boolean;
     version: number;
     clips: StoredEditorClip[];
     overlays?: EditorCoverOverlay[];
@@ -126,13 +128,14 @@ const VISIBLE_OVERLAY_TRACKS = 4;
 const OVERLAY_TRACK_HEIGHT = 38;
 const OVERLAY_TRACK_GAP = 4;
 
-export function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], annotations: StoredAnnotation[] = [], audioSegments?: EditorAudioSegment[]) {
+export function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOverlay[], annotations: StoredAnnotation[] = [], audioSegments?: EditorAudioSegment[], duckOriginalAudio?: boolean) {
   return JSON.stringify({
     version: 1,
     clips: clips.map(clipToStored),
     overlays,
     annotations,
     audioSegments,
+    duckOriginalAudio: duckOriginalAudio || undefined,
   });
 }
 
@@ -239,6 +242,7 @@ export function VideoEditorModal({
     },
   ]);
   const [audioSegments, setAudioSegments] = useState<EditorAudioSegment[]>([]);
+  const [duckOriginalAudio, setDuckOriginalAudio] = useState(false);
   const voiceoverSessionRef = useRef<EditorVoiceoverSession | null>(null);
   const voiceoverGenerationRef = useRef(0);
   const voiceoverFinishingRef = useRef(false);
@@ -369,8 +373,8 @@ export function VideoEditorModal({
     audioPreviewRef.current?.sync(true);
   }
 
-  const audioInputsRef = useRef({ clips, audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview });
-  audioInputsRef.current = { clips, audioSegments, previewTimelineTime, loadVideoUrl, tickAudioPreview };
+  const audioInputsRef = useRef({ clips, audioSegments, duckOriginalAudio, previewTimelineTime, loadVideoUrl, tickAudioPreview });
+  audioInputsRef.current = { clips, audioSegments, duckOriginalAudio, previewTimelineTime, loadVideoUrl, tickAudioPreview };
   const audioSourceResolver = useMemo(() => createAudioSourceResolver({
     loadVideoUrl: id => audioInputsRef.current.loadVideoUrl(id),
   }), [videoId]);
@@ -385,6 +389,7 @@ export function VideoEditorModal({
         !video.paused && !video.seeking && !video.ended && !video.error && video.readyState >= 3;
     };
     const preview = multitrackPreview ? new EditorMultitrackAudioPreview({
+      duckOriginalAudio: () => audioInputsRef.current.duckOriginalAudio,
       segments: () => audioInputsRef.current.audioSegments,
       clips: () => audioInputsRef.current.clips,
       time: () => audioInputsRef.current.previewTimelineTime(),
@@ -433,7 +438,7 @@ export function VideoEditorModal({
   useEffect(() => {
     if (!videoSwitchPendingRef.current) audioPreviewRef.current?.sync(previewPlayingRef.current, true);
   }, [audioTransport, videoUrl, multitrackPreview, videoId]);
-  useEffect(() => { audioPreviewRef.current?.updateVolume(); }, [audioSegments]);
+  useEffect(() => { audioPreviewRef.current?.updateVolume(); }, [audioSegments, duckOriginalAudio]);
 
   function pausePreview() {
     previewPlayingRef.current = false;
@@ -627,6 +632,7 @@ export function VideoEditorModal({
     setCoverOverlays([]);
     setAnnotations([]);
     setAudioSegments([]);
+    setDuckOriginalAudio(false);
     setCopiedAnnotation(null);
     setSelectedCoverOverlayId(null);
     setTimelinePlayheadTime(0);
@@ -711,7 +717,9 @@ export function VideoEditorModal({
         catch (err) { pausePreview(); videoRef.current?.pause(); setClipSpeedBlocked(true); throw err; }
         if (restoredAudio.some(segment => !validAudioVolume(segment.volume))) throw new Error("Ungültige Audio-Lautstärke.");
         setAudioSegments(restoredAudio);
-        const restoredPayload = serializeTimeline(restoredClips, restoredOverlays, restoredAnnotations, restoredAudio);
+        const restoredDucking = state.timeline?.duckOriginalAudio === true;
+        setDuckOriginalAudio(restoredDucking);
+        const restoredPayload = serializeTimeline(restoredClips, restoredOverlays, restoredAnnotations, restoredAudio, restoredDucking);
         latestTimelinePayloadRef.current = restoredPayload;
         lastSavedTimelinePayloadRef.current = restoredPayload;
         editorStateLoadedRef.current = true;
@@ -989,7 +997,7 @@ export function VideoEditorModal({
   }
 
   useEffect(() => {
-    const payload = serializeTimeline(clips, coverOverlays, annotations, audioSegments);
+    const payload = serializeTimeline(clips, coverOverlays, annotations, audioSegments, duckOriginalAudio);
     latestTimelinePayloadRef.current = payload;
 
     if (!editorStateLoadedRef.current) return;
@@ -1015,7 +1023,7 @@ export function VideoEditorModal({
         setError(err instanceof Error ? err.message : "Editorstand konnte nicht gespeichert werden.");
       });
     }, OVERLAY_SAVE_DEBOUNCE_MS);
-  }, [clips, coverOverlays, annotations, audioSegments, videoId]);
+  }, [clips, coverOverlays, annotations, audioSegments, duckOriginalAudio, videoId]);
 
   useEffect(() => () => {
     cancelAnnotationDragRef.current?.();
@@ -1406,6 +1414,7 @@ export function VideoEditorModal({
       {
         clips: clips.map((clip) => ({ ...clip })),
         audioSegments: audioSegments.map(cloneAudioSegment),
+        duckOriginalAudio,
         coverOverlays: coverOverlays.map((overlay) => ({ ...overlay })),
         annotations: annotations.map((annotation) => ({ ...annotation })),
       },
@@ -1495,6 +1504,7 @@ export function VideoEditorModal({
 
     setClips(previousState.clips);
     setAudioSegments(previousState.audioSegments);
+    setDuckOriginalAudio(previousState.duckOriginalAudio);
     setCoverOverlays(previousState.coverOverlays);
     setAnnotations(previousState.annotations);
     setEditorHistory((history) => history.slice(0, -1));
@@ -2322,6 +2332,9 @@ export function VideoEditorModal({
           })),
           annotations,
           audioSegments,
+          // Render requests also persist the timeline; retain this metadata.
+          // Audio rendering does not consume it until ducking is implemented.
+          duckOriginalAudio: duckOriginalAudio || undefined,
         }),
       });
     } catch (err) {
@@ -2966,6 +2979,18 @@ export function VideoEditorModal({
               <EditorToolIcon name="stop" /> Aufnahme stoppen
             </button>
           )}
+
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+            <input type="checkbox" checked={duckOriginalAudio}
+              disabled={voiceoverBusy || audioGestureActive || audioVolumeDraft !== null}
+              onChange={event => {
+                const enabled = event.target.checked;
+                if (enabled === duckOriginalAudio) return;
+                rememberEditorState();
+                setDuckOriginalAudio(enabled);
+              }} />
+            Originalton bei Voice-over absenken
+          </label>
 
           {selectedClipId && (
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>

@@ -11,6 +11,7 @@ const voice: EditorAudioSegment = { id: "v", trackId: "voiceover-1", source: { k
 
 describe("multitrack preview engine (not yet enabled in editor)", () => {
   let time: number;
+  let ducking: boolean | undefined;
   let segments: EditorAudioSegment[];
   let clips: EditorClip[];
   let preview: EditorMultitrackAudioPreview;
@@ -22,6 +23,7 @@ describe("multitrack preview engine (not yet enabled in editor)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     time = 0;
+    ducking = undefined;
     segments = [{ ...original }];
     clips = [];
     elements = new Map();
@@ -46,6 +48,7 @@ describe("multitrack preview engine (not yet enabled in editor)", () => {
       return audio;
     });
     preview = new EditorMultitrackAudioPreview({ segments: () => segments, clips: () => clips, time: () => time,
+      duckOriginalAudio: () => ducking === true,
       resolver: createAudioSourceResolver({ loadVideoUrl }), createAudio, pause, error,
       canCheckDrift: () => true });
   });
@@ -57,6 +60,97 @@ describe("multitrack preview engine (not yet enabled in editor)", () => {
     await Promise.resolve();
   }
   const audio = (track: EditorAudioTrackId = "original") => elements.get(track)!;
+
+  it.each([undefined, false, true])("applies preview ducking only when enabled: %s", async enabled => {
+    ducking = enabled;
+    segments = [{ ...original, volume: .8 }, { ...voice, timelineStart: 2, sourceEnd: 4, volume: .7 }];
+    const stored = JSON.stringify(segments);
+    time = 1; preview.play(); await ready();
+    expect(audio().volume).toBe(.8);
+    time = 3; preview.seek(); await ready();
+    expect(audio().volume).toBeCloseTo(enabled === true ? .2 : .8);
+    expect(audio("voiceover-1").volume).toBe(.7);
+    time = 7; preview.seek(); await ready();
+    expect(audio().volume).toBe(.8);
+    expect(JSON.stringify(segments)).toBe(stored);
+  });
+
+  it("updates fade gains on sync without reloading, seeking or restarting original", async () => {
+    ducking = true;
+    segments = [{ ...original, volume: .8 }, { ...voice, timelineStart: 2, sourceEnd: 4 }];
+    time = 1; preview.play(); await ready();
+    const calls = { load: vi.mocked(audio().load).mock.calls.length, play: vi.mocked(audio().play).mock.calls.length };
+    const sourceTime = audio().currentTime;
+    for (const [at, expected] of [[2, .8], [2.1, .5], [2.2, .2], [5.8, .2], [5.9, .5], [6, .8]]) {
+      time = at; preview.sync(true); await ready();
+      expect(audio().volume).toBeCloseTo(expected);
+      expect(audio().load).toHaveBeenCalledTimes(calls.load);
+      expect(audio().play).toHaveBeenCalledTimes(calls.play);
+      expect(audio().currentTime).toBe(sourceTime);
+    }
+  });
+
+  it("uses the current master time on pause, paused seek and resume", async () => {
+    ducking = true;
+    segments = [{ ...original, volume: .8 }, { ...voice, timelineStart: 2, sourceEnd: 4 }];
+    time = 1; preview.play(); await ready();
+    time = 3; preview.pause();
+    expect(audio().volume).toBeCloseTo(.2);
+    expect(audio().paused).toBe(true);
+    time = 7; preview.seek(); await ready();
+    expect(audio().volume).toBe(.8);
+    expect(audio().paused).toBe(true);
+    time = 3; preview.play(); await ready();
+    expect(audio().volume).toBeCloseTo(.2);
+    expect(audio().paused).toBe(false);
+  });
+
+  it("keeps muted original silent while voice-over retains its volume", async () => {
+    ducking = true;
+    segments = [{ ...original, muted: true, volume: .8 }, { ...voice, volume: .7 }];
+    time = 3; preview.play(); await ready();
+    expect(audio().play).not.toHaveBeenCalled();
+    expect(audio().paused).toBe(true);
+    expect(audio("voiceover-1").volume).toBe(.7);
+    expect(audio("voiceover-1").paused).toBe(false);
+  });
+
+  it("recomputes gain after voice-over mute, move, trim and undo-shaped restoration", async () => {
+    ducking = true;
+    const voiceover = { ...voice, timelineStart: 2, sourceEnd: 4 };
+    const base = { ...original, volume: .8 };
+    segments = [base, voiceover]; time = 3; preview.play(); await ready();
+    expect(audio().volume).toBeCloseTo(.2);
+    for (const changed of [{ ...voiceover, muted: true }, { ...voiceover, timelineStart: 5 },
+      { ...voiceover, sourceStart: 3.5 }]) {
+      segments = [base, changed]; preview.sync(true, true); await ready();
+      expect(audio().volume).toBe(.8);
+    }
+    segments = [base, voiceover]; preview.sync(true, true); await ready();
+    expect(audio().volume).toBeCloseTo(.2);
+  });
+
+  it("multiplies the live original volume draft and restores it when ducking is disabled", async () => {
+    ducking = true; segments = [{ ...original, volume: .8 }, voice];
+    time = 3; preview.play(); await ready();
+    preview.setVolumeDraft({ id: original.id, value: .4 });
+    expect(audio().volume).toBeCloseTo(.1);
+    expect(segments[0].volume).toBe(.8);
+    ducking = false; preview.updateVolume();
+    expect(audio().volume).toBe(.4);
+    preview.setVolumeDraft(null);
+    expect(audio().volume).toBe(.8);
+  });
+
+  it("uses speed-adjusted voice-over geometry exactly once", async () => {
+    ducking = true;
+    segments = [{ ...original, volume: .8 }, { ...original, id: "voice-video", trackId: "voiceover-1", speed: 2, timelineStart: 2, sourceStart: 0, sourceEnd: 4 }];
+    time = 3; preview.play(); await ready();
+    expect(audio().volume).toBeCloseTo(.2);
+    expect(audio("voiceover-1").playbackRate).toBe(2);
+    time = 4; preview.seek(); await ready();
+    expect(audio().volume).toBe(.8);
+  });
 
   it("creates only the legacy original player and reuses it across sync/pause/seek", async () => {
     preview.play(); await ready();

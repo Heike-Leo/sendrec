@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { VideoEditorModal, isAudioStillCoupled } from "./VideoEditorModal";
+import { VideoEditorModal, isAudioStillCoupled, serializeTimeline } from "./VideoEditorModal";
 import { EditorAudioPreview } from "./editorAudioPreview";
 import { loadAudioWaveformPeaks } from "./editorAudioWaveform";
 import type { EditorAudioSegment } from "./editorAudioGeometry";
@@ -12,6 +12,21 @@ vi.mock("./editorAudioWaveform", async importOriginal => ({
 }));
 
 const mockApiFetch = vi.fn();
+
+describe("timeline ducking serialization", () => {
+  it.each([undefined, false, true])("serializes duckOriginalAudio=%s without changing legacy fields", value => {
+    const clips = [{ id: "c", sourceVideoId: "original", start: 0, end: 10 }];
+    const legacy = serializeTimeline(clips, [], [], []);
+    const serialized = serializeTimeline(clips, [], [], [], value);
+    const restored = JSON.parse(serialized);
+    expect(restored.duckOriginalAudio ?? false).toBe(value === true);
+    if (value !== true) expect(serialized).toBe(legacy);
+    else {
+      delete restored.duckOriginalAudio;
+      expect(restored).toEqual(JSON.parse(legacy));
+    }
+  });
+});
 
 describe("audio coupling guard", () => {
   const clips = [
@@ -78,6 +93,7 @@ const emptyEditorState = {
 let libraryVideos: unknown[];
 let editorState: typeof emptyEditorState | {
   timeline: {
+    duckOriginalAudio?: boolean;
     version: number;
       clips: Array<{
         id: string;
@@ -114,6 +130,45 @@ vi.mock("../api/client", () => ({
 }));
 
 describe("VideoEditorModal multi-source preview", () => {
+  it.each([undefined, false, true])("preserves duckOriginalAudio=%s through save, undo, reload and render metadata", async value => {
+    const audio: EditorAudioSegment[] = [{ id: "original-audio", sourceClipId: "c", sourceVideoId: "original",
+      sourceStart: 0, sourceEnd: 10, timelineStart: 0, geometryLinked: true }];
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }],
+      audioSegments: audio, ...(value === undefined ? {} : { duckOriginalAudio: value }) } };
+    let view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-c");
+    expect(screen.getByRole("checkbox", { name: "Originalton bei Voice-over absenken" })).toHaveProperty("checked", value === true);
+    const latestSave = () => JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
+    fireEvent.change(selectSpeedClip(), { target: { value: "2" } });
+    await waitFor(() => {
+      expect(latestSave().clips[0].speed).toBe(2);
+      expect(latestSave().duckOriginalAudio ?? false).toBe(value === true);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    await waitFor(() => {
+      expect(latestSave().clips[0].speed ?? 1).toBe(1);
+      expect(latestSave().duckOriginalAudio ?? false).toBe(value === true);
+      expect(latestSave().audioSegments).toEqual(audio);
+    });
+    editorState = { ...editorState, timeline: latestSave() };
+    view.unmount();
+    view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-c");
+    expect(screen.getByRole("checkbox", { name: "Originalton bei Voice-over absenken" })).toHaveProperty("checked", value === true);
+    fireEvent.click(screen.getByRole("button", { name: "Als neues Video rendern" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rendern" }));
+    await waitFor(() => {
+      const call = mockApiFetch.mock.calls.find(([path]) => path.endsWith("/editor/render"));
+      expect(call).toBeDefined();
+      const payload = JSON.parse(call![1].body);
+      expect(payload.duckOriginalAudio ?? false).toBe(value === true);
+      expect(payload.audioSegments).toEqual(audio);
+      if (value !== true) expect(payload).not.toHaveProperty("duckOriginalAudio");
+    });
+    view.unmount();
+  });
+
   it.each([false, true])("asks for a render name and submits via Enter (custom=%s)", async custom => {
     const user = userEvent.setup();
     render(<VideoEditorModal videoId="original" videoTitle="Meine Aufnahme" duration={120} onClose={vi.fn()} />);
@@ -378,14 +433,78 @@ describe("VideoEditorModal multi-source preview", () => {
     if (action !== "delete") expect(screen.getByTestId("video-editor-audio-v")).toHaveAttribute("data-timeline-start", String(changed.timelineStart));
   });
 
-  it.each(["normal", "mute-original", "mute-voice"])("integrates parallel transport, gaps, gain and cleanup: %s", async mode => {
+  it("toggles preview ducking immediately with one undo per change and saves the checkbox state", async () => {
+    const readiness = vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(4);
+    const audio: EditorAudioSegment[] = [
+      { id: "o", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0, volume: .8 },
+      { id: "v", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" }, sourceStart: 0, sourceEnd: 4, timelineStart: 2, volume: .7 },
+    ];
+    editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1,
+      clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }], audioSegments: audio } };
+    let view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-c");
+    const checkbox = () => screen.getByRole("checkbox", { name: "Originalton bei Voice-over absenken" });
+    const undo = () => screen.getByRole("button", { name: "↶ Rückgängig" });
+    const latestSave = () => JSON.parse(mockApiFetch.mock.calls.filter(([, options]) => options?.method === "PUT").at(-1)![1].body);
+    expect(checkbox()).not.toBeChecked();
+    expect(undo()).toBeDisabled();
+    const video = view.container.querySelector("video")!;
+    video.currentTime = 3; fireEvent.play(video); fireEvent.seeked(video);
+    await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
+    const players = [...new Set(vi.mocked(HTMLMediaElement.prototype.load).mock.contexts as HTMLMediaElement[])].filter(el => el.tagName === "AUDIO" && el.src);
+    for (const el of players) fireEvent.loadedMetadata(el);
+    await act(async () => { await Promise.resolve(); });
+    const original = players.find(el => el.src.endsWith("original.mp4"))!;
+    const voice = players.find(el => el.src.endsWith("voice.m4a"))!;
+    expect(original.volume).toBe(.8);
+    const loads = vi.mocked(HTMLMediaElement.prototype.load).mock.calls.length;
+    const plays = vi.mocked(HTMLMediaElement.prototype.play).mock.calls.length;
+    fireEvent.click(checkbox());
+    expect(checkbox()).toBeChecked();
+    expect(original.volume).toBeCloseTo(.2);
+    expect(voice.volume).toBe(.7);
+    await waitFor(() => expect(latestSave().duckOriginalAudio).toBe(true));
+    fireEvent.click(checkbox());
+    expect(checkbox()).not.toBeChecked();
+    expect(original.volume).toBe(.8);
+    await waitFor(() => expect(latestSave().duckOriginalAudio ?? false).toBe(false));
+    expect(vi.mocked(HTMLMediaElement.prototype.load)).toHaveBeenCalledTimes(loads);
+    expect(vi.mocked(HTMLMediaElement.prototype.play)).toHaveBeenCalledTimes(plays);
+    fireEvent.click(undo());
+    expect(checkbox()).toBeChecked();
+    expect(original.volume).toBeCloseTo(.2);
+    fireEvent.click(undo());
+    expect(checkbox()).not.toBeChecked();
+    expect(original.volume).toBe(.8);
+    expect(undo()).toBeDisabled();
+    fireEvent.click(checkbox());
+    await waitFor(() => expect(latestSave().duckOriginalAudio).toBe(true));
+    expect(latestSave().audioSegments).toEqual(audio);
+    editorState = { ...editorState, timeline: latestSave() };
+    view.unmount();
+    view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-c");
+    expect(checkbox()).toBeChecked();
+    fireEvent.click(checkbox());
+    await waitFor(() => expect(latestSave().duckOriginalAudio ?? false).toBe(false));
+    editorState = { ...editorState, timeline: latestSave() };
+    view.unmount();
+    view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-clip-c");
+    expect(checkbox()).not.toBeChecked();
+    view.unmount();
+    readiness.mockRestore();
+  });
+
+  it.each(["normal", "mute-original", "mute-voice", "ducking", "ducking-muted-voice", "ducking-false"])("integrates parallel transport, gaps, gain and cleanup: %s", async mode => {
     const readiness = vi.spyOn(HTMLMediaElement.prototype, "readyState", "get").mockReturnValue(4);
     const audio: EditorAudioSegment[] = [
       { id: "o", sourceClipId: "c", sourceVideoId: "original", sourceStart: 0, sourceEnd: 10, timelineStart: 0, volume: .3, muted: mode === "mute-original" },
-      { id: "v", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" }, sourceStart: 0, sourceEnd: 2, timelineStart: 2, volume: .7, muted: mode === "mute-voice" },
-      { id: "v2", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" }, sourceStart: 2, sourceEnd: 4, timelineStart: 6, volume: .5, muted: mode === "mute-voice" },
+      { id: "v", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" }, sourceStart: 0, sourceEnd: 2, timelineStart: 2, volume: .7, muted: mode === "mute-voice" || mode === "ducking-muted-voice" },
+      { id: "v2", trackId: "voiceover-1", source: { kind: "audioAsset", assetId: "asset" }, sourceStart: 2, sourceEnd: 4, timelineStart: 6, volume: .5, muted: mode === "mute-voice" || mode === "ducking-muted-voice" },
     ];
     editorState = { ...emptyEditorState, renderStatus: "none", timeline: { version: 1, clips: [{ id: "c", sourceId: "original", sourceStart: 0, sourceEnd: 10, duration: 10 }], audioSegments: audio } };
+    if (mode.startsWith("ducking")) editorState.timeline.duckOriginalAudio = mode !== "ducking-false";
     const view = render(<VideoEditorModal videoId="original" duration={10} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-clip-c");
     const video = view.container.querySelector("video")!;
@@ -400,14 +519,16 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(video.muted).toBe(true);
     const original = loaded().find(el => el.src.endsWith("original.mp4"));
     const voice = loaded().find(el => el.src.endsWith("voice.m4a"));
-    if (mode !== "mute-original") { expect(original?.volume).toBe(.3); expect(original?.currentTime).toBe(3); }
+    if (mode !== "mute-original") { expect(original?.volume).toBeCloseTo(mode === "ducking" ? .075 : .3); expect(original?.currentTime).toBe(3); }
     else expect(original).toBeUndefined();
-    if (mode !== "mute-voice") { expect(voice?.volume).toBe(.7); expect(voice?.currentTime).toBe(1); }
+    if (mode !== "mute-voice" && mode !== "ducking-muted-voice") { expect(voice?.volume).toBe(.7); expect(voice?.currentTime).toBe(1); }
     else expect(voice).toBeUndefined();
     vi.mocked(HTMLMediaElement.prototype.play).mockClear();
     await seek(5);
+    if (original) expect(original.volume).toBe(.3);
     if (voice) expect(vi.mocked(HTMLMediaElement.prototype.play).mock.contexts).not.toContain(voice);
     await seek(7);
+    if (original) expect(original.volume).toBeCloseTo(mode === "ducking" ? .075 : .3);
     if (voice) { expect(voice.currentTime).toBe(3); expect(voice.volume).toBe(.5); }
     if (mode === "normal") {
       fireEvent.click(screen.getByTestId("video-editor-audio-c"));

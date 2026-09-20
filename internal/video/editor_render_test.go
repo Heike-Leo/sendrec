@@ -22,6 +22,59 @@ func validTimeline(clips ...editClip) editTimeline {
 	return editTimeline{Version: 1, Clips: clips}
 }
 
+func TestTimelineDuckingSaveReload(t *testing.T) {
+	for _, field := range []string{"", `,"duckOriginalAudio":false`, `,"duckOriginalAudio":true`} {
+		t.Run(field, func(t *testing.T) {
+			body := `{"version":1,"clips":[{"id":"c","sourceId":"video-main","sourceStart":0,"sourceEnd":10,"duration":10}],"audioSegments":[]` + field + `}`
+			var timeline editTimeline
+			if err := json.Unmarshal([]byte(body), &timeline); err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(timeline)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(encoded), `"duckOriginalAudio"`) != (field != "") {
+				t.Fatalf("optional setting changed: %s", encoded)
+			}
+			mock, err := pgxmock.NewPool()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer mock.Close()
+			handler := NewHandler(mock, &mockStorage{}, testBaseURL, 0, 0, 0, 0, testJWTSecret, true)
+			mock.ExpectExec(`UPDATE videos SET edit_timeline = \$1, updated_at = now\(\)`).
+				WithArgs(json.RawMessage(encoded), "video-main", testUserID).WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+			mock.ExpectQuery(`SELECT COALESCE\(edit_timeline`).WithArgs("video-main", testUserID).
+				WillReturnRows(pgxmock.NewRows([]string{"edit_timeline", "edit_render_status", "edit_render_error", "edit_render_video_id"}).AddRow(encoded, "none", nil, nil))
+			router := chi.NewRouter()
+			router.With(newAuthMiddleware()).Put("/api/videos/{id}/editor", handler.SaveEditorTimeline)
+			router.With(newAuthMiddleware()).Get("/api/videos/{id}/editor", handler.GetEditorState)
+			saved := httptest.NewRecorder()
+			router.ServeHTTP(saved, authenticatedRequest(t, http.MethodPut, "/api/videos/video-main/editor", []byte(body)))
+			if saved.Code != http.StatusNoContent {
+				t.Fatalf("save: %d %s", saved.Code, saved.Body.String())
+			}
+			loaded := httptest.NewRecorder()
+			router.ServeHTTP(loaded, authenticatedRequest(t, http.MethodGet, "/api/videos/video-main/editor", nil))
+			if loaded.Code != http.StatusOK {
+				t.Fatalf("load: %d %s", loaded.Code, loaded.Body.String())
+			}
+			var response editorStateResponse
+			if err := json.Unmarshal(loaded.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			ducking := response.Timeline.DuckOriginalAudio
+			if (ducking != nil && *ducking) != strings.Contains(field, "true") || (ducking == nil) != (field == "") {
+				t.Fatalf("setting changed: %s", loaded.Body.String())
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 type audioJSONArgument struct{ expected string }
 
 func (a audioJSONArgument) Match(value any) bool {
