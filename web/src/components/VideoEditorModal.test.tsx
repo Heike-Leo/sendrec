@@ -283,6 +283,26 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(document.body.style.overflow).toBe(previousOverflow);
   });
 
+  it("keeps ruler, playhead, tracks, zoom and selection controls in the studio timeline", async () => {
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    const studio = screen.getByTestId("video-editor-studio-timeline");
+    const videoTrack = await screen.findByTestId("video-editor-timeline");
+    expect(studio).toContainElement(videoTrack);
+    expect(videoTrack).toHaveClass("video-editor-timeline-video-track");
+    expect(studio).toContainElement(screen.getByTestId("video-editor-timeline-ruler"));
+    expect(screen.getByTestId("video-editor-timeline-ruler")).toHaveClass("video-editor-timeline-ruler");
+    expect(videoTrack).toContainElement(screen.getByTestId("video-editor-playhead"));
+    expect(studio).toContainElement(screen.getByTestId("video-editor-overlay-track"));
+    expect(studio).toContainElement(screen.getByRole("slider", { name: "Timeline-Zoom" }));
+    expect(screen.getByText(/^Anfang:/)).toBeInTheDocument();
+    expect(screen.getByText(/^Auswahl:/)).toBeInTheDocument();
+    expect(screen.getByText(/^Ende:/)).toBeInTheDocument();
+    const clip = screen.getAllByTestId(/^video-editor-clip-/)[0];
+    expect(clip).toHaveClass("video-editor-timeline-clip");
+    await act(async () => { fireEvent.click(clip); });
+    expect(clip.style.outline).toMatch(/3px solid #fc2667/i);
+  });
+
   it("groups every existing studio tool without hiding controls at narrow widths", async () => {
     render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
     await screen.findByTestId("video-editor-timeline");
@@ -463,6 +483,8 @@ describe("VideoEditorModal multi-source preview", () => {
     await waitFor(() => expect(screen.getAllByTestId("audio-waveform")).toHaveLength(3));
     const rows = [...view.container.querySelectorAll<HTMLElement>("[data-audio-track]")];
     expect(rows.map(row => row.getAttribute("aria-label"))).toEqual(["Originalton", "Voice-over"]);
+    rows.forEach(row => expect(row).toHaveClass("video-editor-timeline-audio-track"));
+    expect(rows.flatMap(row => [...row.querySelectorAll("[data-audio-id]")]).every(segment => segment.classList.contains("video-editor-timeline-audio-segment"))).toBe(true);
     const bar = screen.getByTestId("video-editor-audio-v");
     expect(bar.parentElement).toBe(rows[1]);
     expect(parseFloat(bar.style.left)).toBeCloseTo(2 / 13 * 100);

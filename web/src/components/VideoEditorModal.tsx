@@ -3411,14 +3411,7 @@ export function VideoEditorModal({
         )}
 
         <section className="video-editor-studio-timeline" data-testid="video-editor-studio-timeline">
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            marginBottom: 12,
-          }}
-        >
+        <div className="video-editor-timeline-controls">
           <span className="video-editor-tool">
             <button
               type="button"
@@ -3499,25 +3492,12 @@ export function VideoEditorModal({
             </span>
           </span>
 
-          <span
-            style={{
-              fontSize: 12,
-              color: "var(--color-text-secondary)",
-            }}
-          >
+          <span className="video-editor-timeline-zoom-value">
             {timelineZoom === 1 ? "1.0" : timelineZoom}×
           </span>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontSize: 13,
-            color: "var(--color-text-secondary)",
-            marginBottom: 8,
-          }}
-        >
+        <div className="video-editor-timeline-time-range">
           <span>{formatDuration(timelineCurrentTime)}</span>
           <span>{formatDuration(timelineDuration)}</span>
         </div>
@@ -3532,14 +3512,13 @@ export function VideoEditorModal({
         >
         <div
           data-testid="video-editor-timeline-ruler"
+          className="video-editor-timeline-ruler"
           data-tick-step={timelineTickStep}
           style={{
             position: "relative",
             height: 28,
             width: `${timelineZoom * 100}%`,
             minWidth: "100%",
-            borderBottom: "1px solid var(--color-border)",
-            marginBottom: 4,
           }}
         >
           {Array.from(
@@ -3559,22 +3538,14 @@ export function VideoEditorModal({
                     pointerEvents: "none",
                   }}
                 >
-                  <div
-                    style={{
-                      width: 1,
-                      height: 8,
-                      background: "var(--color-text-secondary)",
-                      opacity: 0.6,
-                    }}
-                  />
+                  <div className="video-editor-timeline-tick" />
                   <span
+                    className="video-editor-timeline-tick-label"
                     style={{
                       position: "absolute",
                       top: 9,
                       left: index === 0 ? 0 : "50%",
                       transform: index === 0 ? "none" : "translateX(-50%)",
-                      fontSize: 10,
-                      color: "var(--color-text-secondary)",
                       whiteSpace: "nowrap",
                     }}
                   >
@@ -3609,12 +3580,10 @@ export function VideoEditorModal({
         >
           {coverOverlays.length === 0 && (
             <div
+              className="video-editor-timeline-overlay-row"
               style={{
                 position: "relative",
                 height: 38,
-                border: "1px solid var(--color-border)",
-                borderRadius: 8,
-                background: "#F8FAFC",
                 overflow: "hidden",
               }}
             >
@@ -3648,14 +3617,12 @@ export function VideoEditorModal({
             return (
               <div
                 key={overlay.id}
+                className="video-editor-timeline-overlay-row"
                 data-testid={`video-editor-overlay-row-${overlay.id}`}
                 data-selected={selected ? "true" : "false"}
                 style={{
                   position: "relative",
                   height: 38,
-                  border: "1px solid var(--color-border)",
-                  borderRadius: 8,
-                  background: "#F8FAFC",
                   overflow: "hidden",
                 }}
               >
@@ -3675,9 +3642,11 @@ export function VideoEditorModal({
                     width: `${width}%`,
                     minWidth: 4,
                     borderRadius: 5,
-                    background: selected ? "#FC2667" : "#F7C2D2",
-                    border: "1px solid #FC2667",
-                    color: selected ? "#FFFFFF" : "#0F172A",
+                    background: selected ? "#FBE3EC" : "#F5EDF1",
+                    border: selected ? "1px solid #FC2667" : "1px solid #E4A2B9",
+                    outline: selected ? "2px solid #FC2667" : "none",
+                    outlineOffset: "-2px",
+                    color: selected ? "#881337" : "#6E2943",
                     fontSize: 11,
                     fontWeight: 600,
                     padding: "5px 7px",
@@ -3735,12 +3704,13 @@ export function VideoEditorModal({
             onClick={() => setSelectedCoverOverlayId(null)}
             style={{ width: `${timelineZoom * 100}%`, minWidth: "100%", marginBottom: 4, display: "flex", flexDirection: "column", gap: 4 }}>
             {annotations.map((item, index) => <div key={item.id} data-testid={`video-editor-${item.type}-track-${item.id}`}
-              style={{ height: 38, position: "relative", background: "#F8FAFC", border: "1px solid var(--color-border)", borderRadius: 8 }}>
+              className="video-editor-timeline-overlay-row"
+              style={{ height: 38, position: "relative" }}>
               <button type="button" aria-label={`${annotationName(item)} ${annotations.slice(0, index + 1).filter((a) => a.type === item.type).length}`} aria-pressed={selectedAnnotationId === item.id}
                 onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, "move")}
                 onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
                 style={{ position: "absolute", left: `${item.start / timelineDuration * 100}%`, width: `${(item.end - item.start) / timelineDuration * 100}%`,
-                  top: 3, bottom: 3, overflow: "hidden", whiteSpace: "nowrap", background: "#FCE7EF", color: "#881337", cursor: "grab", touchAction: "none",
+                  top: 3, bottom: 3, overflow: "hidden", whiteSpace: "nowrap", background: selectedAnnotationId === item.id ? "#FBE3EC" : "#F5EDF1", color: "#881337", cursor: "grab", touchAction: "none",
                   border: selectedAnnotationId === item.id ? "2px solid #FC2667" : "1px solid #F9A8C0", borderRadius: 5 }}>
                 {annotationName(item)} {annotations.slice(0, index + 1).filter((a) => a.type === item.type).length}
                 {(["start", "end"] as const).map((edge) => <span key={edge}
@@ -3757,6 +3727,7 @@ export function VideoEditorModal({
           <div
             ref={timelineRef}
             data-testid="video-editor-timeline"
+            className="video-editor-timeline-video-track"
             data-zoom={timelineZoom}
             onClick={(e) => {
               setSelectedCoverOverlayId(null);
@@ -3768,7 +3739,6 @@ export function VideoEditorModal({
               width: `${timelineZoom * 100}%`,
               minWidth: "100%",
               borderRadius: 8,
-              background: "var(--color-border)",
               cursor: "pointer",
               overflow: "hidden",
               userSelect: "none",
@@ -3790,17 +3760,18 @@ export function VideoEditorModal({
               <div
                 key={clip.id}
                 data-testid={`video-editor-clip-${clip.id}`}
+                className="video-editor-timeline-clip"
                 style={{
                   position: "absolute",
                   top: 10,
                   bottom: 10,
                   left: `${left}%`,
                   width: `${width}%`,
-                  background: "#1E293B",
-                  border: "1px solid rgba(255,255,255,0.35)",
+                  background: selectedClipId === clip.id ? "#253b59" : "#34465e",
+                  border: "1px solid rgba(255,255,255,0.5)",
                   outline:
                     selectedClipId === clip.id
-                      ? "3px solid #E6467A"
+                      ? "3px solid #FC2667"
                       : "none",
                   outlineOffset: "-3px",
                   boxSizing: "border-box",
@@ -3853,6 +3824,7 @@ export function VideoEditorModal({
             onMouseDown={handleTrimPointerDown("start")}
             onTouchStart={handleTrimPointerDown("start")}
             title="Trim-Anfang"
+            className="video-editor-timeline-trim-handle"
             style={{
               position: "absolute",
               top: 4,
@@ -3873,6 +3845,7 @@ export function VideoEditorModal({
             onMouseDown={handleTrimPointerDown("end")}
             onTouchStart={handleTrimPointerDown("end")}
             title="Trim-Ende"
+            className="video-editor-timeline-trim-handle"
             style={{
               position: "absolute",
               top: 4,
@@ -3890,6 +3863,8 @@ export function VideoEditorModal({
           />
 
           <div
+            data-testid="video-editor-playhead"
+            className="video-editor-timeline-playhead"
             style={{
               position: "absolute",
               top: 0,
@@ -3903,6 +3878,7 @@ export function VideoEditorModal({
           />
 
           <div
+            className="video-editor-timeline-playhead-marker"
             style={{
               position: "absolute",
               top: 0,
@@ -3921,12 +3897,14 @@ export function VideoEditorModal({
           const label = trackId === "original" ? "Originalton" : "Voice-over";
           return <div key={trackId} data-audio-track={trackId}
           data-testid={trackId === "original" ? "video-editor-audio-track" : "video-editor-voiceover-track"} role="group" aria-label={label}
+          className="video-editor-timeline-audio-track"
           style={{ position: "relative", height: 36, marginTop: 4, width: `${timelineZoom * 100}%`, minWidth: "100%",
-            borderRadius: 8, background: "var(--color-border)", overflow: "hidden", userSelect: "none" }}>
+            borderRadius: 8, overflow: "hidden", userSelect: "none" }}>
           {segments.map((segment, index) => {
             const visual = audioResizeDraft?.id === segment.id ? audioResizeDraft : segment;
             return (
             <div key={segment.id} data-testid={`video-editor-audio-${videoAudioSource(segment)?.clipId ?? segment.id}`}
+              className="video-editor-timeline-audio-segment"
               onPointerDown={e => handleAudioResize(e, segment, "move")}
               onClick={e => { e.stopPropagation(); setSelectedAudioId(segment.id); }}
               data-audio-id={segment.id} data-track-id={audioTrackId(segment)} data-clip-id={videoAudioSource(segment)?.clipId} data-source-video-id={videoAudioSource(segment)?.videoId}
@@ -3937,19 +3915,19 @@ export function VideoEditorModal({
                 left: `${timelineDuration > 0 ? visual.timelineStart / timelineDuration * 100 : 0}%`,
                 width: `${timelineDuration > 0 ? audioSegmentTimelineDuration(visual, clips) / timelineDuration * 100 : 0}%`,
                 cursor: movingAudioId === segment.id ? "grabbing" : "grab", touchAction: "none",
-                outline: selectedAudioId === segment.id ? "1px solid #FC2667" : undefined,
+                outline: selectedAudioId === segment.id ? "2px solid #FC2667" : undefined,
                 outlineOffset: -1,
-                boxSizing: "border-box", border: "1px solid rgba(255,255,255,0.35)", background: "#334155",
+                boxSizing: "border-box", border: "1px solid rgba(255,255,255,0.45)", background: "#34465e",
                 color: "#fff", fontSize: 12, padding: "0 12px", display: "flex", alignItems: "center",
                 gap: 6, whiteSpace: "nowrap", overflow: "hidden" }}>
               <AudioSegmentWaveform sourceKey={audioSourceKey(audioSource(visual))} sourceStart={visual.sourceStart}
                 sourceEnd={visual.sourceEnd} zoom={timelineZoom} cache={waveformCacheRef.current}
                 loadUrl={() => audioSourceResolver.resolve(audioSource(visual))} />
               <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
-                strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, position: "relative", background: "#334155" }}>
+                strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, position: "relative", background: "#34465e" }}>
                 <path d="M2 6h3l4-3v10l-4-3H2ZM12 5a5 5 0 0 1 0 6" />
               </svg>
-              <span style={{ position: "relative", background: "#334155" }}>{label} · {index + 1}{segment.muted === true ? " · stumm" : ""}</span>
+              <span className="video-editor-timeline-audio-label" style={{ position: "relative", background: "#34465e" }}>{label} · {index + 1}{segment.muted === true ? " · stumm" : ""}</span>
               {selectedAudioId === segment.id && (["start", "end"] as const).map(edge => (
                 <button key={edge} type="button" data-audio-resize-handle={edge} aria-label={edge === "start" ? "Tonanfang kürzen" : "Tonende kürzen"}
                   disabled={audioSegmentTimelineDuration(segment, clips) < 0.1}
@@ -3957,7 +3935,7 @@ export function VideoEditorModal({
                   onClick={e => { e.preventDefault(); e.stopPropagation(); }}
                   style={{ position: "absolute", top: 0, bottom: 0, [edge === "start" ? "left" : "right"]: 0,
                     width: "min(8px, 40%)", padding: 0, border: 0, borderRadius: 2,
-                    background: "rgba(255,255,255,0.5)", cursor: "ew-resize", touchAction: "none" }} />
+                    background: "rgba(255,255,255,0.78)", cursor: "ew-resize", touchAction: "none" }} />
               ))}
             </div>
           ); })}
@@ -4015,16 +3993,7 @@ export function VideoEditorModal({
         </div>
         </section>
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 16,
-            marginTop: 10,
-            fontSize: 12,
-            color: "var(--color-text-secondary)",
-          }}
-        >
+        <div className="video-editor-timeline-selection-summary">
           <span>Anfang: {formatDuration(trimStart)}</span>
           <span>
             Auswahl: {formatDuration(Math.max(0, trimEnd - trimStart))}

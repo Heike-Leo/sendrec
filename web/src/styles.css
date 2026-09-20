@@ -4801,9 +4801,122 @@ textarea.form-input {
 
 .video-editor-studio-timeline {
   padding: 12px;
-  border: 1px solid var(--color-border);
+  border: 1px solid #dbe3ed;
   border-radius: 10px;
-  background: var(--color-surface);
+  background: #f8fafc;
+}
+
+.video-editor-timeline-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.video-editor-timeline-zoom-value {
+  color: #475569;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.video-editor-timeline-time-range {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  color: #475569;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.video-editor-timeline-ruler {
+  margin-bottom: 4px;
+  border-bottom: 1px solid #cbd5e1;
+  background: #eef2f7;
+  border-radius: 5px 5px 0 0;
+}
+
+.video-editor-timeline-tick {
+  width: 1px;
+  height: 8px;
+  background: #94a3b8;
+}
+
+.video-editor-timeline-tick-label {
+  color: #475569;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.video-editor-timeline-overlay-row {
+  border: 1px solid #dbe3ed;
+  border-radius: 8px;
+  background: #f1f5f9;
+}
+
+.video-editor-timeline-video-track {
+  background: #e2e8f0;
+}
+
+.video-editor-timeline-clip {
+  border-radius: 5px;
+  text-overflow: ellipsis;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.video-editor-timeline-clip:hover {
+  filter: brightness(1.08);
+}
+
+.video-editor-timeline-trim-handle {
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.12);
+}
+
+.video-editor-timeline-trim-handle:hover {
+  background: #fff1f5 !important;
+}
+
+.video-editor-timeline-playhead,
+.video-editor-timeline-playhead-marker {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75);
+}
+
+.video-editor-timeline-audio-track {
+  background: #dce6f0;
+}
+
+.video-editor-timeline-audio-segment {
+  border-radius: 5px;
+}
+
+.video-editor-timeline-audio-segment:hover {
+  filter: brightness(1.08);
+}
+
+.video-editor-timeline-audio-segment canvas[data-testid="audio-waveform"] {
+  filter: saturate(1.2) brightness(1.13);
+}
+
+.video-editor-timeline-audio-label {
+  font-weight: 600;
+}
+
+.video-editor-timeline-audio-segment [data-audio-resize-handle]:hover {
+  background: #fff !important;
+}
+
+.video-editor-timeline-selection-summary {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 8px;
+  padding: 0 4px;
+  color: #475569;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 900px) {
