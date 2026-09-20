@@ -260,6 +260,29 @@ describe("VideoEditorModal multi-source preview", () => {
     });
   });
 
+  it("keeps the studio shell, preview, tools, timeline and final actions reachable", async () => {
+    const onClose = vi.fn();
+    const previousOverflow = document.body.style.overflow;
+    const view = render(<VideoEditorModal videoId="original" duration={120} onClose={onClose} />);
+    const dialog = screen.getByRole("dialog", { name: "Video bearbeiten" });
+    expect(dialog).toHaveClass("video-editor-studio-shell");
+    expect(dialog.querySelector(".video-editor-studio-topbar")).toContainElement(screen.getByRole("button", { name: "Schließen" }));
+    expect(dialog.querySelector(".video-editor-studio-body")).toBeInTheDocument();
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(await screen.findByTestId("video-editor-preview")).toBeInTheDocument();
+    expect(screen.getByTestId("video-editor-studio-stage")).toContainElement(screen.getByTestId("video-editor-preview"));
+    expect(dialog.querySelector(".video-editor-studio-toolbar")).toContainElement(screen.getByRole("button", { name: "Teilen" }));
+    expect(screen.getByTestId("video-editor-cover-actions")).toHaveAttribute("data-empty", "true");
+    expect(screen.getByTestId("video-editor-cover-actions")).toHaveClass("video-editor-cover-actions--empty");
+    expect(screen.getByTestId("video-editor-studio-timeline")).toContainElement(screen.getByTestId("video-editor-timeline"));
+    expect(screen.getByRole("button", { name: "Trimmen anwenden" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Als neues Video rendern" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Schließen" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    view.unmount();
+    expect(document.body.style.overflow).toBe(previousOverflow);
+  });
+
   it.each(["unknown"])("blocks stored %s annotations without arrow fallback or saving", async type => {
     const original = mockApiFetch.getMockImplementation()!;
     mockApiFetch.mockImplementation((path: string, options?: RequestInit) => {
@@ -4990,7 +5013,10 @@ describe("VideoEditorModal multi-source preview", () => {
     render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
 
     const actionsSlot = screen.getByTestId("video-editor-cover-actions");
+    expect(actionsSlot).toHaveAttribute("data-empty", "true");
     await user.click(await screen.findByText("Abdeckung 5"));
+    expect(actionsSlot).toHaveAttribute("data-empty", "false");
+    expect(actionsSlot).not.toHaveClass("video-editor-cover-actions--empty");
     expect(screen.getByTestId("video-editor-overlay-row-cover-5")).toHaveAttribute(
       "data-selected",
       "true",
@@ -4998,6 +5024,7 @@ describe("VideoEditorModal multi-source preview", () => {
 
     await user.click(screen.getByTestId("video-editor-timeline"));
     expect(screen.getByTestId("video-editor-cover-actions")).toBe(actionsSlot);
+    expect(actionsSlot).toHaveAttribute("data-empty", "true");
     for (const row of screen.getAllByTestId(/video-editor-overlay-row-/)) {
       expect(row).toHaveAttribute("data-selected", "false");
     }
@@ -5005,6 +5032,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.queryByRole("button", { name: "Abdeckung löschen" })).not.toBeInTheDocument();
 
     await user.click(screen.getByText("Abdeckung 3"));
+    expect(actionsSlot).toHaveAttribute("data-empty", "false");
     expect(screen.getByTestId("video-editor-overlay-row-cover-3")).toHaveAttribute(
       "data-selected",
       "true",

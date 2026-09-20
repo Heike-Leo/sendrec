@@ -185,6 +185,12 @@ export function VideoEditorModal({
   onClose,
   onTrimStarted,
 }: VideoEditorModalProps) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, []);
+
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [timelinePlayheadTime, setTimelinePlayheadTime] = useState(0);
@@ -2381,16 +2387,7 @@ export function VideoEditorModal({
 
   return (
     <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "var(--color-overlay)",
-        zIndex: 1000,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-      }}
+      className="video-editor-studio-backdrop"
       onClick={(e) => {
         if (e.target === e.currentTarget) closeEditor();
       }}
@@ -2403,31 +2400,9 @@ export function VideoEditorModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="video-editor-title"
-        style={{
-        width: "calc(100vw - 32px)",
-        height: "calc(100vh - 32px)",
-        minWidth: 720,
-        minHeight: 520,
-        maxWidth: "calc(100vw - 32px)",
-        maxHeight: "calc(100vh - 32px)",
-        resize: "both",
-        boxSizing: "border-box",
-        position: "relative",
-          overflowY: "auto",
-          background: "var(--color-surface)",
-          border: "1px solid var(--color-border)",
-          borderRadius: 12,
-          padding: 20,
-        }}
+        className="video-editor-studio-shell"
       >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 16,
-          }}
-        >
+        <header className="video-editor-studio-topbar">
           <h2
             id="video-editor-title"
             style={{
@@ -2454,7 +2429,9 @@ export function VideoEditorModal({
           >
             Schließen
           </button>
-        </div>
+        </header>
+
+        <main className="video-editor-studio-body">
 
         {error && error !== INDEPENDENT_AUDIO_WARNING && (
           <div
@@ -2490,12 +2467,14 @@ export function VideoEditorModal({
           </div>
         )}
         {videoUrl && (
+          <div className="video-editor-studio-stage" data-testid="video-editor-studio-stage">
           <div
             ref={previewContainerRef}
             data-testid="video-editor-preview"
+            className="video-editor-studio-preview"
             // Text and arrows use the full canonical canvas. Projects without
             // either retain their existing intrinsic-source preview layout.
-            style={{ position: "relative", width: hasCanonicalAnnotations ? "min(100%, 85.3333333333vh, 995.5555555556px)" : "100%", marginInline: "auto", marginBottom: 16 }}
+            style={{ position: "relative", width: hasCanonicalAnnotations ? "min(100%, 83.5555555556dvh, 1350px)" : "100%", marginInline: "auto" }}
           >
             <video
               ref={videoRef}
@@ -2581,7 +2560,7 @@ export function VideoEditorModal({
               style={{
                 width: "100%",
                 ...(hasCanonicalAnnotations ? { aspectRatio: "16 / 9" } : {}),
-                maxHeight: "min(48vh, 560px)",
+                maxHeight: "min(47dvh, 760px)",
                 display: "block",
                 objectFit: "contain",
                 background: "#000",
@@ -2854,6 +2833,7 @@ export function VideoEditorModal({
               })}
             </div>}
           </div>
+          </div>
         )}
 
         {error === INDEPENDENT_AUDIO_WARNING && (
@@ -2867,11 +2847,11 @@ export function VideoEditorModal({
         )}
 
         <div
+          className="video-editor-studio-toolbar"
           style={{
             display: "flex",
             alignItems: "center",
             gap: 8,
-            marginBottom: 12,
           }}
         >
           <span className="video-editor-tool">
@@ -3066,7 +3046,9 @@ export function VideoEditorModal({
           </span>
         </div>
 
-        <div className="video-editor-cover-actions" data-testid="video-editor-cover-actions">
+        <div className={`video-editor-cover-actions${selectedAnnotation || selectedCoverOverlay || copiedAnnotation || copiedCoverOverlay ? "" : " video-editor-cover-actions--empty"}`}
+          data-testid="video-editor-cover-actions"
+          data-empty={selectedAnnotation || selectedCoverOverlay || copiedAnnotation || copiedCoverOverlay ? "false" : "true"}>
         {selectedAnnotation && <>
           <span>{annotationName(selectedAnnotation)}:</span>
           {selectedAnnotation.type === "text" && <>
@@ -3458,6 +3440,7 @@ export function VideoEditorModal({
           </div>
         )}
 
+        <section className="video-editor-studio-timeline" data-testid="video-editor-studio-timeline">
         <div
           style={{
             display: "flex",
@@ -4060,6 +4043,7 @@ export function VideoEditorModal({
             </label>
           )}
         </div>
+        </section>
 
         <div
           style={{
@@ -4157,6 +4141,7 @@ export function VideoEditorModal({
           </div>
         )}
         </>}
+        </main>
       </div>
     </div>
   );

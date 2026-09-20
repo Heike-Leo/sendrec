@@ -4659,6 +4659,89 @@ textarea.form-input {
   z-index: 2;
 }
 
+.video-editor-studio-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: #e9eef4;
+}
+
+.video-editor-studio-shell {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: #f1f5f9;
+  color: var(--color-text);
+}
+
+.video-editor-studio-topbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+  padding: 6px clamp(16px, 2vw, 28px);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.video-editor-studio-body {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px clamp(16px, 2vw, 28px) 24px;
+}
+
+.video-editor-studio-stage {
+  display: grid;
+  place-items: center;
+  min-height: min(30dvh, 280px);
+  margin-bottom: 6px;
+  padding: 10px;
+  border: 1px solid #253247;
+  border-radius: 10px;
+  background: #172336;
+}
+
+.video-editor-studio-preview {
+  max-width: 1280px;
+}
+
+.video-editor-studio-toolbar {
+  min-height: 44px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+.video-editor-studio-timeline {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+@media (max-width: 900px) {
+  .video-editor-studio-body {
+    padding: 10px 12px 20px;
+  }
+
+  .video-editor-studio-stage {
+    padding: 8px;
+  }
+
+}
+
 .video-editor-tool {
   position: relative;
   display: inline-flex;
@@ -4789,6 +4872,15 @@ textarea.form-input {
   padding: 8px 10px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
+}
+
+.video-editor-cover-actions--empty {
+  min-height: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
 }
 
 .video-editor-cover-actions-label {
