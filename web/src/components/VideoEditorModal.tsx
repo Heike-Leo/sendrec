@@ -2848,12 +2848,8 @@ export function VideoEditorModal({
 
         <div
           className="video-editor-studio-toolbar"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
         >
+          <div className="video-editor-toolbar-group" role="group" aria-label="Clip bearbeiten" data-testid="video-editor-toolbar-clip">
           <span className="video-editor-tool">
             <button
               type="button"
@@ -2870,20 +2866,42 @@ export function VideoEditorModal({
           </span>
 
           <span className="video-editor-tool">
-            <button
-              type="button"
-              onClick={handleSplit}
-              className="video-editor-tool-button"
-              aria-label="Teilen"
-              aria-describedby="video-editor-tooltip-split"
-            >
+            <button type="button" onClick={handleSplit} className="video-editor-tool-button"
+              aria-label="Teilen" aria-describedby="video-editor-tooltip-split">
               <EditorToolIcon name="split" />
             </button>
-            <span id="video-editor-tooltip-split" role="tooltip" className="video-editor-tool-tooltip">
-              Teilen
-            </span>
+            <span id="video-editor-tooltip-split" role="tooltip" className="video-editor-tool-tooltip">Teilen</span>
           </span>
 
+          {selectedClipId && (
+            <label className="video-editor-toolbar-speed">
+              Geschwindigkeit
+              <select aria-label="Geschwindigkeit" value={readClipSpeed(clips.find(clip => clip.id === selectedClipId)?.speed)}
+                disabled={audioGestureActive || audioVolumeDraft !== null}
+                onChange={event => handleClipSpeed(Number(event.target.value))}
+                style={{ border: "1px solid var(--color-border)", borderRadius: 8, padding: "6px 8px", background: "var(--color-surface)", color: "var(--color-text)" }}>
+                {EDITOR_CLIP_SPEEDS.map(speed => <option key={speed} value={speed}>{String(speed).replace(".", ",")}×</option>)}
+              </select>
+            </label>
+          )}
+
+          {selectedClipId && (
+            <button type="button" onClick={handleDeleteSelectedClip} disabled={clips.length <= 1}
+              className="video-editor-toolbar-delete">
+              Clip löschen
+            </button>
+          )}
+
+          <span className="video-editor-tool">
+            <button type="button" onClick={handleOpenInsertPicker} className="video-editor-tool-button"
+              aria-label="Video einfügen" aria-describedby="video-editor-tooltip-insert">
+              <EditorToolIcon name="insert" />
+            </button>
+            <span id="video-editor-tooltip-insert" role="tooltip" className="video-editor-tool-tooltip">Video einfügen</span>
+          </span>
+          </div>
+
+          <div className="video-editor-toolbar-group" role="group" aria-label="Einfügen und markieren" data-testid="video-editor-toolbar-insert">
           <span className="video-editor-tool">
             <button
               type="button"
@@ -2944,7 +2962,9 @@ export function VideoEditorModal({
 
           <button type="button" className="video-editor-tool-button" aria-label="Text hinzufügen" title="Text hinzufügen"
             onClick={() => addAnnotation(undefined, "text")}>Text</button>
+          </div>
 
+          <div className="video-editor-toolbar-group video-editor-toolbar-group--audio" role="group" aria-label="Audio" data-testid="video-editor-toolbar-audio">
           {!voiceoverBusy ? (
             <button type="button" data-voiceover-control className="video-editor-voiceover-button"
               aria-label="Voice-over aufnehmen" title="Voice-over aufnehmen"
@@ -2960,7 +2980,7 @@ export function VideoEditorModal({
             </button>
           )}
 
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+          <label className="video-editor-toolbar-ducking">
             <input type="checkbox" checked={duckOriginalAudio}
               disabled={voiceoverBusy || audioGestureActive || audioVolumeDraft !== null}
               onChange={event => {
@@ -2971,55 +2991,9 @@ export function VideoEditorModal({
               }} />
             Originalton bei Voice-over absenken
           </label>
+          </div>
 
-          {selectedClipId && (
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
-              Geschwindigkeit
-              <select aria-label="Geschwindigkeit" value={readClipSpeed(clips.find(clip => clip.id === selectedClipId)?.speed)}
-                disabled={audioGestureActive || audioVolumeDraft !== null}
-                onChange={event => handleClipSpeed(Number(event.target.value))}
-                style={{ border: "1px solid var(--color-border)", borderRadius: 8, padding: "6px 8px", background: "var(--color-surface)", color: "var(--color-text)" }}>
-                {EDITOR_CLIP_SPEEDS.map(speed => <option key={speed} value={speed}>{String(speed).replace(".", ",")}×</option>)}
-              </select>
-            </label>
-          )}
-
-          {selectedClipId && (
-            <button
-              type="button"
-              onClick={handleDeleteSelectedClip}
-              disabled={clips.length <= 1}
-              style={{
-                border: "1px solid #B42318",
-                borderRadius: 8,
-                padding: "8px 14px",
-                background: "#FFFFFF",
-                color: "#B42318",
-                fontWeight: 600,
-                cursor:
-                  clips.length <= 1 ? "default" : "pointer",
-                opacity: clips.length <= 1 ? 0.5 : 1,
-              }}
-            >
-              Clip löschen
-            </button>
-          )}
-
-          <span className="video-editor-tool">
-            <button
-              type="button"
-              onClick={handleOpenInsertPicker}
-              className="video-editor-tool-button"
-              aria-label="Video einfügen"
-              aria-describedby="video-editor-tooltip-insert"
-            >
-              <EditorToolIcon name="insert" />
-            </button>
-            <span id="video-editor-tooltip-insert" role="tooltip" className="video-editor-tool-tooltip">
-              Video einfügen
-            </span>
-          </span>
-
+          <div className="video-editor-toolbar-group" role="group" aria-label="Verlauf" data-testid="video-editor-toolbar-history">
           <span className="video-editor-tool">
             <button
               type="button"
@@ -3035,16 +3009,12 @@ export function VideoEditorModal({
               Rückgängig
             </span>
           </span>
+          </div>
 
-          <span
-            style={{
-              fontSize: 13,
-              color: "var(--color-text-secondary)",
-            }}
-          >
-            Abspielkopf setzen und mit „Teilen“ einen neuen Clip erzeugen
-          </span>
         </div>
+        <p className="video-editor-toolbar-hint" data-testid="video-editor-toolbar-hint">
+          Abspielkopf setzen und mit „Teilen“ einen neuen Clip erzeugen
+        </p>
 
         <div className={`video-editor-cover-actions${selectedAnnotation || selectedCoverOverlay || copiedAnnotation || copiedCoverOverlay ? "" : " video-editor-cover-actions--empty"}`}
           data-testid="video-editor-cover-actions"

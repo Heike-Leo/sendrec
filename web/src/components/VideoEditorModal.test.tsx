@@ -283,6 +283,35 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(document.body.style.overflow).toBe(previousOverflow);
   });
 
+  it("groups every existing studio tool without hiding controls at narrow widths", async () => {
+    render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
+    await screen.findByTestId("video-editor-timeline");
+    const toolbar = document.querySelector(".video-editor-studio-toolbar")!;
+    expect(toolbar).toHaveClass("video-editor-studio-toolbar");
+    const clip = screen.getByRole("group", { name: "Clip bearbeiten" });
+    const insert = screen.getByRole("group", { name: "Einfügen und markieren" });
+    const audio = screen.getByRole("group", { name: "Audio" });
+    const history = screen.getByRole("group", { name: "Verlauf" });
+    expect([...toolbar.querySelectorAll("[data-testid^='video-editor-toolbar-']")]).toEqual([clip, insert, audio, history]);
+    const hint = screen.getByTestId("video-editor-toolbar-hint");
+    expect(hint).toHaveTextContent("Abspielkopf setzen und mit „Teilen“ einen neuen Clip erzeugen");
+    expect(toolbar).not.toContainElement(hint);
+    expect(toolbar.nextElementSibling).toBe(hint);
+    for (const name of ["Trimmen", "Teilen", "Video einfügen"]) {
+      expect(within(clip).getByRole("button", { name })).toBeInTheDocument();
+    }
+    for (const name of ["+ Abdeckung", "Pfeil hinzufügen", "Kreis hinzufügen", "Symbol hinzufügen", "Linie hinzufügen", "Text hinzufügen"]) {
+      expect(within(insert).getByRole("button", { name })).toBeInTheDocument();
+    }
+    expect(within(audio).getByRole("button", { name: "Voice-over aufnehmen" })).toBeInTheDocument();
+    expect(within(audio).getByRole("checkbox", { name: "Originalton bei Voice-over absenken" })).toBeInTheDocument();
+    expect(within(history).getByRole("button", { name: "↶ Rückgängig" })).toBeInTheDocument();
+    expect(toolbar.querySelector("[hidden]")).toBeNull();
+    fireEvent.click(screen.getAllByTestId(/^video-editor-clip-/)[0]);
+    expect(within(clip).getByRole("combobox", { name: "Geschwindigkeit" })).toBeInTheDocument();
+    expect(within(clip).getByRole("button", { name: "Clip löschen" })).toBeInTheDocument();
+  });
+
   it.each(["unknown"])("blocks stored %s annotations without arrow fallback or saving", async type => {
     const original = mockApiFetch.getMockImplementation()!;
     mockApiFetch.mockImplementation((path: string, options?: RequestInit) => {
@@ -5573,12 +5602,12 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getAllByRole("tooltip", { hidden: true }).map((tooltip) => tooltip.textContent?.trim())).toEqual([
       "Trimmen",
       "Teilen",
+      "Video einfügen",
       "Abdeckung hinzufügen",
       "Pfeil hinzufügen",
       "Kreis hinzufügen",
       "Symbol hinzufügen",
       "Linie hinzufügen",
-      "Video einfügen",
       "Rückgängig",
       "Ansicht einpassen",
       "Verkleinern",
