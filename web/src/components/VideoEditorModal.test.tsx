@@ -13,6 +13,33 @@ vi.mock("./editorAudioWaveform", async importOriginal => ({
 
 const mockApiFetch = vi.fn();
 
+describe("existing blur overlay data contract (Editor 37a)", () => {
+  const clips = [{ id: "c", sourceVideoId: "original", start: 0, end: 10 }];
+  it.each([
+    { x: 0, y: 0, width: 100, height: 100, start: 0, end: 10 },
+    { x: 12.5, y: 20.25, width: 30.5, height: 40.75, start: 1.125, end: 8.875 },
+    { x: 95, y: 95, width: 5, height: 5, start: 9.5, end: 10 },
+  ])("roundtrips blur geometry and timeline seconds without adding a second model: %j", geometry => {
+    const blur = { id: "blur", mode: "blur" as const, ...geometry };
+    const restored = JSON.parse(serializeTimeline(clips, [blur]));
+    expect(restored.overlays).toEqual([blur]);
+    expect(JSON.parse(serializeTimeline(clips, restored.overlays)).overlays).toEqual([blur]);
+    expect(restored).not.toHaveProperty("blurRegions");
+    expect(restored.overlays[0]).not.toHaveProperty("kind");
+  });
+  it("preserves legacy cover fields and mixed overlay order without mutating input", () => {
+    const legacy = { id: "legacy", x: 1, y: 2, width: 20, height: 30, start: 0, end: 5 };
+    const blur = { ...legacy, id: "blur", mode: "blur" as const };
+    const overlays = [legacy, blur];
+    const before = JSON.stringify(overlays);
+    const restored = JSON.parse(serializeTimeline(clips, overlays));
+    expect(restored.overlays).toEqual(overlays);
+    expect(restored.overlays[0]).not.toHaveProperty("mode");
+    expect(JSON.stringify(overlays)).toBe(before);
+    expect(JSON.parse(serializeTimeline(clips, [])).overlays).toEqual([]);
+  });
+});
+
 describe("timeline ducking serialization", () => {
   it.each([undefined, false, true])("serializes duckOriginalAudio=%s without changing legacy fields", value => {
     const clips = [{ id: "c", sourceVideoId: "original", start: 0, end: 10 }];
@@ -509,6 +536,10 @@ describe("VideoEditorModal multi-source preview", () => {
     await screen.findByTestId("video-editor-clip-c");
     const video = view.container.querySelector("video")!;
     const loaded = () => [...new Set(vi.mocked(HTMLMediaElement.prototype.load).mock.contexts as HTMLMediaElement[])].filter(el => el.tagName === "AUDIO" && el.src);
+    // A visible clip does not mean the async restored source is ready. Its
+    // initial seek to zero must finish before this test starts seeking/playing.
+    await waitFor(() => expect(video.src).toBe("https://media.example/original.mp4"));
+    await act(async () => { fireEvent.loadedMetadata(video); });
     async function seek(time: number) {
       video.currentTime = time; fireEvent.play(video); fireEvent.seeked(video);
       await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
@@ -4732,7 +4763,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getByTestId("video-editor-text-content-small")).toHaveStyle({ visibility: "hidden" });
   });
 
-  it("keeps overlay dragging and resizing within the measured video frame", async () => {
+  it.each(["cover", "blur"] as const)("keeps %s dragging and resizing within the measured video frame", async (mode) => {
     editorState = {
       timeline: {
         version: 1,
@@ -4740,7 +4771,7 @@ describe("VideoEditorModal multi-source preview", () => {
           { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
         ],
         overlays: [
-          { id: "cover-bounds", x: 60, y: 60, width: 20, height: 20, start: 0, end: 20 },
+          { id: "cover-bounds", mode, x: 60, y: 60, width: 20, height: 20, start: 0, end: 20 },
         ],
       },
       renderStatus: "none",
@@ -4769,6 +4800,15 @@ describe("VideoEditorModal multi-source preview", () => {
     fireEvent.pointerMove(document, { clientX: 1800, clientY: 900 });
     fireEvent.pointerUp(document);
     expect(overlay).toHaveStyle({ width: "20%", height: "20%" });
+    fireEvent.pointerDown(resizeHandle, { clientX: 800, clientY: 400 });
+    fireEvent.pointerMove(document, { clientX: -1800, clientY: -900 });
+    fireEvent.pointerUp(document);
+    expect(overlay).toHaveStyle({ width: "5%", height: "5%" });
+
+    fireEvent.pointerDown(overlay, { clientX: 800, clientY: 400 });
+    fireEvent.pointerMove(document, { clientX: -1800, clientY: -900 });
+    fireEvent.pointerUp(document);
+    expect(overlay).toHaveStyle({ left: "0%", top: "0%", width: "5%", height: "5%" });
   });
 
   it("renders identical cover overlays in stable separate selectable rows", async () => {
@@ -5202,7 +5242,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getByTestId("video-editor-cover-overlay-cover-a")).toBeInTheDocument();
   });
 
-  it("undoes overlay position, size, start and end changes independently", async () => {
+  it.each(["cover", "blur"] as const)("undoes %s position, size, start and end changes independently", async (mode) => {
     const user = userEvent.setup();
     editorState = {
       timeline: {
@@ -5211,7 +5251,7 @@ describe("VideoEditorModal multi-source preview", () => {
           { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
         ],
         overlays: [
-          { id: "cover-a", x: 10, y: 10, width: 20, height: 20, start: 0, end: 20 },
+          { id: "cover-a", mode, x: 10, y: 10, width: 20, height: 20, start: 0, end: 20 },
         ],
       },
       renderStatus: "none",
@@ -5270,6 +5310,24 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(timelineOverlay).toHaveStyle({ width: "25%" });
     await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
     expect(timelineOverlay).toHaveStyle({ width: "16.666666666666664%" });
+
+    for (const [title, clientX] of [
+      ["Start der Abdeckung ziehen", -1000],
+      ["Start der Abdeckung ziehen", 2000],
+      ["Ende der Abdeckung ziehen", -1000],
+      ["Ende der Abdeckung ziehen", 2000],
+    ] as const) {
+      fireEvent.pointerDown(screen.getByTitle(title), { clientX: 0 });
+      fireEvent.pointerMove(document, { clientX });
+      fireEvent.pointerUp(document);
+      const start = parseFloat(timelineOverlay.style.left) * 1.2;
+      const duration = parseFloat(timelineOverlay.style.width) * 1.2;
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(duration).toBeGreaterThanOrEqual(0.1 - 1e-9);
+      expect(start + duration).toBeLessThanOrEqual(120 + 1e-9);
+      await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+      expect(timelineOverlay).toHaveStyle({ left: "0%", width: "16.666666666666664%" });
+    }
   });
 
   it.each([false, true])("loads stored audio exactly, including explicitly empty arrays (%s)", async (empty) => {
