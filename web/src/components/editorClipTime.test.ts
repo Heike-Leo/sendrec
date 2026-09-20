@@ -31,11 +31,22 @@ describe("clip speed preparation", () => {
     expect(() => timelineDuration(0, 10, speed)).toThrow(RangeError);
     expect(() => requireSupportedClipSpeed(speed)).toThrow(RangeError);
   });
-  it.each([undefined, 1, 1.5])("retains stored speed %s with timeline duration", speed => {
+  it.each([undefined, 0.5, 0.75, 1, 1.25, 1.5, 2])("retains stored speed %s with timeline duration", speed => {
     const stored = JSON.parse(JSON.stringify({ id: "c", sourceId: "source", sourceStart: 3, sourceEnd: 13, duration: 10 / (speed ?? 1), speed }));
     const restored = clipFromStored(stored);
     expect(JSON.parse(JSON.stringify(clipToStored(restored)))).toEqual(stored);
     expect({ ...restored }.speed).toBe(speed);
+  });
+  it("keeps legacy JSON fieldless and restores source geometry independently of cached duration", () => {
+    const legacy = { id: "c", sourceId: "source", sourceStart: 3, sourceEnd: 13, duration: 10 };
+    const restored = clipFromStored(legacy);
+    expect(readClipSpeed(restored.speed)).toBe(1);
+    expect(JSON.parse(JSON.stringify(clipToStored(restored)))).toEqual(legacy);
+    expect(JSON.parse(JSON.stringify(clipToStored(restored)))).not.toHaveProperty("speed");
+    expect(JSON.parse(JSON.stringify(clipToStored(restored)))).not.toHaveProperty("playbackRate");
+    const faster = clipFromStored({ ...legacy, speed: 2 });
+    expect(clipToStored(faster)).toMatchObject({ sourceStart: 3, sourceEnd: 13, duration: 5, speed: 2 });
+    expect(legacy).toEqual({ id: "c", sourceId: "source", sourceStart: 3, sourceEnd: 13, duration: 10 });
   });
   it("retains arbitrary finite speeds within the planned range", () => {
     expect(readClipSpeed(1.1)).toBe(1.1);
