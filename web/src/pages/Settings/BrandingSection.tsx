@@ -123,7 +123,7 @@ export function BrandingSection({ initialBranding, limits }: BrandingSectionProp
           className="form-input"
           value={branding.companyName ?? ""}
           onChange={(e) => setBranding({ ...branding, companyName: e.target.value || null })}
-          placeholder="99tools Record"
+          placeholder="99tools Studio"
           maxLength={limits?.fieldLimits?.companyName ?? 200}
         />
       </div>
@@ -239,7 +239,7 @@ export function BrandingSection({ initialBranding, limits }: BrandingSectionProp
       >
         <p className="branding-preview-label">Vorschau</p>
         <div className="branding-preview-title" style={{ color: branding.colorAccent ?? "#E6467A" }}>
-          {branding.companyName || "99tools Record"}
+          {branding.companyName || "99tools Studio"}
         </div>
         <div className="branding-preview-card" style={{ background: branding.colorSurface ?? "#1e293b" }}>
           <span style={{ color: branding.colorText ?? "#ffffff", fontSize: 14 }}>Beispiel-Videotitel</span>
@@ -281,7 +281,7 @@ body                /* Background, font, text color */
 /* Header & Footer */
 .logo               /* Logo + name link */
 .logo img           /* Logo image */
-.branding           /* "Geteilt mit 99tools Record" footer */
+.branding           /* "Geteilt mit 99tools Studio" footer */
 .branding a         /* Footer link */
 
 /* Video Player */

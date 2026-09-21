@@ -52,7 +52,7 @@ export function CheckEmail() {
       <div className="auth-brand">
         <span className="auth-logo">
           <span className="auth-logo-send">99tools</span>
-          <span className="auth-logo-rec"> Record</span>
+          <span className="auth-logo-rec"> Studio</span>
         </span>
       </div>
       <div className="auth-card auth-centered">

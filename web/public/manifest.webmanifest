@@ -1,6 +1,6 @@
 {
-  "name": "99tools Record",
-  "short_name": "99tools Record",
+  "name": "99tools Studio",
+  "short_name": "99tools Studio",
   "description": "Bildschirm, Kamera und Ton aufnehmen, teilen und transkribieren.",
   "start_url": "/",
   "scope": "/",
@@ -9,17 +9,17 @@
   "theme_color": "#0F172A",
   "icons": [
     {
-      "src": "/pwa-192x192.png",
+      "src": "/pwa-192x192.png?v=studio",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/pwa-512x512.png",
+      "src": "/pwa-512x512.png?v=studio",
       "sizes": "512x512",
       "type": "image/png"
     },
     {
-      "src": "/pwa-maskable-512x512.png",
+      "src": "/pwa-maskable-512x512.png?v=studio",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

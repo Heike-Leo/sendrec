@@ -220,7 +220,7 @@ const PAIRS: Array<[de: string, en: string]> = [
   ["Das Logo muss PNG oder SVG sein", "The logo must be PNG or SVG"], ["Das Logo darf maximal 512 KB groß sein", "The logo may be at most 512 KB"],
   ["Upload-URL konnte nicht erstellt werden", "Upload URL could not be created"], ["Logo konnte nicht hochgeladen werden", "Logo could not be uploaded"],
   ["Logo konnte nicht entfernt werden", "Logo could not be removed"], ["Logo hochladen (PNG oder SVG, max. 512 KB)", "Upload logo (PNG or SVG, max. 512 KB)"],
-  ["Geteilt mit 99tools Record", "Shared with 99tools Record"], ["Kommentar veröffentlichen", "Post comment"],
+  ["Geteilt mit 99tools Studio", "Shared with 99tools Studio"], ["Kommentar veröffentlichen", "Post comment"],
   ["Branding speichern", "Save branding"], ["Passe das Erscheinungsbild deiner freigegebenen Videoseiten an.", "Customize the appearance of your shared video pages."],
   ["Standardlogo anzeigen", "Show default logo"], ["Vorschau", "Preview"],
   ["Wird in das <style>-Tag der Wiedergabeseite eingefügt. Max. 10 KB. Kein @import url() und keine schließenden style-Tags.", "Inserted into the watch page <style> tag. Max. 10 KB. No @import url() or closing style tags."],
@@ -245,7 +245,7 @@ const PAIRS: Array<[de: string, en: string]> = [
   ["API-Schlüssel konnte nicht erstellt werden", "API key could not be created"], ["API-Schlüssel konnte nicht gelöscht werden", "API key could not be deleted"],
   ["Konto wirklich löschen? Dies kann nicht rückgängig gemacht werden. Alle Videos und Daten werden dauerhaft gelöscht.", "Really delete the account? This cannot be undone. All videos and data will be permanently deleted."],
   ["Konto konnte nicht gelöscht werden", "Account could not be deleted"],
-  ["Externe Konten, die mit deinem 99tools-Record-Konto verknüpft sind.", "External accounts linked to your 99tools Record account."],
+  ["Externe Konten, die mit deinem 99tools-Studio-Konto verknüpft sind.", "External accounts linked to your 99tools Studio account."],
   ["Erstelle API-Schlüssel für Integrationen wie Nextcloud. Schlüssel werden nur einmal direkt nach der Erstellung angezeigt.", "Create API keys for integrations such as Nextcloud. Keys are shown only once immediately after creation."],
   ["z. B. Mein Nextcloud", "e.g. My Nextcloud"],
 

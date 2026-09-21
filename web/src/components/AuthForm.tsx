@@ -82,11 +82,7 @@ export function AuthForm({
       </button>
       <div className="auth-language-select"><LanguageSelect compact /></div>
       <div className="auth-brand">
-        <img src="/images/logo-99tools.png" alt="" width="48" height="48" className="auth-logo-img" />
-        <span className="auth-logo">
-          <span className="auth-logo-send">99tools</span>
-          <span className="auth-logo-rec"> Record</span>
-        </span>
+        <img src="/images/wordmark-99tools.png?v=studio" alt="99tools Studio" width="131" height="48" className="auth-logo-img" />
       </div>
 
       <form onSubmit={handleSubmit} className="auth-card">

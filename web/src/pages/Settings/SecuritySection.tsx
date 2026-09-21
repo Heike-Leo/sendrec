@@ -161,7 +161,7 @@ function ConnectedAccounts({ initialIdentities, initialIdentityHasPassword }: Co
     <div className="card settings-section">
       <h2>Verknüpfte Konten</h2>
       <p className="card-description">
-        Externe Konten, die mit deinem 99tools-Record-Konto verknüpft sind.
+        Externe Konten, die mit deinem 99tools-Studio-Konto verknüpft sind.
       </p>
 
       {identityError && (

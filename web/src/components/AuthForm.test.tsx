@@ -3,6 +3,7 @@ import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { AuthForm } from "./AuthForm";
+import { I18nProvider } from "../i18n/I18nContext";
 import { expectNoA11yViolations } from "../test-utils/a11y";
 
 function renderAuthForm(props: Partial<Parameters<typeof AuthForm>[0]> = {}) {
@@ -13,9 +14,9 @@ function renderAuthForm(props: Partial<Parameters<typeof AuthForm>[0]> = {}) {
     footer: <span>footer content</span>,
   };
   return render(
-    <MemoryRouter>
+    <I18nProvider><MemoryRouter>
       <AuthForm {...defaults} {...props} />
-    </MemoryRouter>
+    </MemoryRouter></I18nProvider>
   );
 }
 
@@ -115,10 +116,9 @@ describe("AuthForm", () => {
     expect(screen.getByText("Go to register")).toBeInTheDocument();
   });
 
-  it("renders SendRec brand logo", () => {
+  it("renders the Studio brand wordmark", () => {
     renderAuthForm();
-    expect(screen.getByText("Send")).toBeInTheDocument();
-    expect(screen.getByText("Rec")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "99tools Studio" })).toHaveAttribute("src", "/images/wordmark-99tools.png?v=studio");
   });
 
   it("has no accessibility violations", async () => {

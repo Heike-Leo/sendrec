@@ -78,7 +78,7 @@ describe("Layout", () => {
 
   it("renders navigation links", () => {
     renderLayout();
-    expect(screen.getByRole("link", { name: /^99toolsRecord/ })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: "99tools Studio" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Record" })).toHaveAttribute("href", "/");
     expect(screen.getByRole("link", { name: "Library" })).toHaveAttribute("href", "/library");
     expect(screen.getByRole("link", { name: "Playlists" })).toHaveAttribute("href", "/playlists");
@@ -89,9 +89,9 @@ describe("Layout", () => {
 
   it("renders logo image in nav", () => {
     renderLayout();
-    const logo = document.querySelector('img[src="/images/logo-99tools.png"]') as HTMLImageElement;
+    const logo = screen.getByRole("img", { name: "99tools Studio" });
     expect(logo).toBeInTheDocument();
-    expect(logo).toHaveAttribute("alt", "");
+    expect(logo).toHaveAttribute("src", "/images/wordmark-99tools.png?v=studio");
   });
 
   it("renders children in main element", () => {

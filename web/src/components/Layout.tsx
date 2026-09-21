@@ -138,8 +138,7 @@ export function Layout({ children }: LayoutProps) {
     <>
       <nav className="nav-bar">
         <Link to="/" className="nav-logo" onClick={handleNavClick}>
-          <img src="/images/logo-99tools.png" alt="" width="48" height="48" />
-          <span className="logo-send">99tools</span><span className="logo-rec"> Record</span>
+          <img src="/images/wordmark-99tools.png?v=studio" alt="99tools Studio" width="131" height="48" />
           {plan && planBadgeEnabled && (
             <span className={`plan-badge${plan !== "free" ? " plan-badge--pro" : ""}`}>
               {plan === "business" ? "Business" : plan === "pro" ? "Pro" : t("common.free")}

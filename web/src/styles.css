@@ -210,9 +210,9 @@ input:focus-visible {
 }
 
 .nav-logo img {
-  width: 48px;
+  width: auto;
   height: 48px;
-  margin-right: 6px;
+  object-fit: contain;
 }
 
 .logo-send {
