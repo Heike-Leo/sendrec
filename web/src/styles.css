@@ -5434,3 +5434,46 @@ textarea.form-input {
     margin-top: 2px;
   }
 }
+
+
+/* Studio editor 40b.1: lazy video-frame filmstrip inside the existing clip track. */
+.video-editor-timeline-clip {
+  isolation: isolate;
+}
+
+.video-editor-filmstrip {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  overflow: hidden;
+  background: #34465e;
+  pointer-events: none;
+}
+
+.video-editor-filmstrip img {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.9;
+  user-select: none;
+}
+
+.video-editor-timeline-clip::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.48), rgba(15, 23, 42, 0.12) 55%, rgba(15, 23, 42, 0.28));
+  pointer-events: none;
+}
+
+.video-editor-timeline-clip-label {
+  position: relative;
+  z-index: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.85);
+  pointer-events: none;
+}
