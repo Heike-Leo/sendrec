@@ -5334,14 +5334,51 @@ textarea.form-input {
   }
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1180px) and (min-width: 761px) {
   .video-editor-studio-workspace {
-    grid-template-columns: 170px minmax(0, 1fr);
+    grid-template-columns: 150px minmax(0, 1fr);
     grid-template-areas:
       "tools stage"
       "hint stage"
       "context context"
       "warning warning";
+    column-gap: 10px;
+  }
+
+  .video-editor-studio-workspace > .video-editor-studio-toolbar {
+    padding: 6px;
+  }
+
+  .video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-toolbar-group {
+    gap: 5px;
+    padding: 3px;
+  }
+
+  .video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-tool-button {
+    width: 30px;
+    height: 30px;
+  }
+
+  .video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-voiceover-button {
+    font-size: 12px;
+    padding: 6px;
+  }
+
+  .video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-toolbar-ducking {
+    font-size: 11px;
+    padding: 4px 6px;
+  }
+
+  .video-editor-studio-workspace > .video-editor-studio-stage {
+    min-width: 0;
+  }
+
+  .video-editor-studio-workspace .video-editor-studio-preview {
+    padding: 6px;
+  }
+
+  .video-editor-studio-workspace .video-editor-studio-preview > video {
+    max-height: min(62dvh, 760px) !important;
   }
 
   .video-editor-studio-workspace > .video-editor-cover-actions {
@@ -5352,7 +5389,16 @@ textarea.form-input {
   }
 
   .video-editor-studio-workspace > .video-editor-cover-actions--empty {
-    min-height: 50px;
+    display: none;
+    min-height: 0;
+    height: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .video-editor-studio-workspace > .video-editor-toolbar-hint {
+    padding-inline: 6px;
+    font-size: 11px;
   }
 }
 
@@ -5379,5 +5425,12 @@ textarea.form-input {
 
   .video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-toolbar-group--audio {
     width: 100%;
+  }
+}
+
+/* Studio editor 40a.2: tablet prioritizes preview; empty context no longer steals width. */
+@media (max-width: 1180px) and (min-width: 761px) {
+  .video-editor-studio-workspace > .video-editor-cover-actions:not(.video-editor-cover-actions--empty) {
+    margin-top: 2px;
   }
 }
