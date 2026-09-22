@@ -5198,15 +5198,15 @@ textarea.form-input {
 }
 
 
-/* Studio editor 40a: three-column workspace shell. */
+/* Studio editor 40a.1: balanced Studio workspace with preview-first proportions. */
 .video-editor-studio-workspace {
   display: grid;
-  grid-template-columns: 224px minmax(0, 1fr) 304px;
+  grid-template-columns: 180px minmax(0, 1fr) 260px;
   grid-template-areas:
     "tools stage context"
     "hint stage context"
     ". warning .";
-  column-gap: 12px;
+  column-gap: 10px;
   row-gap: 6px;
   align-items: start;
   margin-bottom: 12px;
@@ -5216,8 +5216,26 @@ textarea.form-input {
   grid-area: stage;
   width: 100%;
   min-width: 0;
+  min-height: 0;
   margin: 0;
+  padding: 0;
   align-self: stretch;
+  border: 0;
+  background: transparent;
+}
+
+.video-editor-studio-workspace .video-editor-studio-preview {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 8px;
+  border-radius: 10px;
+  background: #172336;
+}
+
+.video-editor-studio-workspace .video-editor-studio-preview > video {
+  max-height: min(58dvh, 820px) !important;
+  border-radius: 6px !important;
 }
 
 .video-editor-studio-workspace > .video-editor-studio-toolbar {
@@ -5235,12 +5253,40 @@ textarea.form-input {
   width: 100%;
   box-sizing: border-box;
   justify-content: flex-start;
+  gap: 6px;
+  padding: 4px;
+  background: transparent;
+}
+
+.video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-toolbar-group--audio {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-voiceover-button,
+.video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-toolbar-ducking {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-voiceover-button {
+  padding-inline: 8px;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-toolbar-ducking {
+  align-items: flex-start;
+  white-space: normal;
+  line-height: 1.25;
+  font-size: 12px;
 }
 
 .video-editor-studio-workspace > .video-editor-toolbar-hint {
   grid-area: hint;
   margin: 0;
   padding: 0 8px 8px;
+  line-height: 1.35;
 }
 
 .video-editor-studio-workspace > .video-editor-cover-actions {
@@ -5260,6 +5306,14 @@ textarea.form-input {
   background: var(--color-surface);
 }
 
+.video-editor-studio-workspace > .video-editor-cover-actions label,
+.video-editor-studio-workspace > .video-editor-cover-actions textarea,
+.video-editor-studio-workspace > .video-editor-cover-actions input,
+.video-editor-studio-workspace > .video-editor-cover-actions select {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .video-editor-studio-workspace > .video-editor-cover-actions--empty {
   min-height: 100%;
   height: auto;
@@ -5274,9 +5328,15 @@ textarea.form-input {
   margin: 0;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1180px) {
   .video-editor-studio-workspace {
-    grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-columns: 170px minmax(0, 1fr) 230px;
+  }
+}
+
+@media (max-width: 980px) {
+  .video-editor-studio-workspace {
+    grid-template-columns: 170px minmax(0, 1fr);
     grid-template-areas:
       "tools stage"
       "hint stage"
@@ -5315,5 +5375,9 @@ textarea.form-input {
 
   .video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-toolbar-group {
     width: auto;
+  }
+
+  .video-editor-studio-workspace > .video-editor-studio-toolbar .video-editor-toolbar-group--audio {
+    width: 100%;
   }
 }
