@@ -10,7 +10,7 @@ import { EditorVoiceoverSession } from "./editorVoiceoverSession";
 import { finishVoiceoverToTimeline } from "./editorVoiceoverTimeline";
 import { audioSourceKey, createAudioSourceResolver } from "./editorAudioSources";
 import { audioSource, groupAudioSegments, validateAudioSegments } from "./editorAudioGeometry";
-import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";
+import { AudioSegmentWaveform, type AudioWaveformCache } from "./AudioSegmentWaveform";\nimport { VideoClipFilmstrip } from "./VideoClipFilmstrip";
 import { clipFromStored, clipToStored, requireSupportedClipSpeed, layoutEditorClips, timelineClipPosition, clipSourceToTimelineTime, splitEditorClip, timelineDuration as clipTimelineDuration, type EditorClip, type StoredEditorClip } from "./editorClipTime";
 import { applyMediaPlaybackSpeed } from "./editorMediaPlayback";
 import { canContinueClipSource, EDITOR_CLIP_SPEEDS, readClipSpeed } from "./editorClipTime";
@@ -3857,11 +3857,19 @@ export function VideoEditorModal({
                   zIndex: selectedClipId === clip.id ? 2 : 1,
                 }}
               >
-                {clip.sourceVideoId === videoId
-                  ? t("editor.clipNumber", { number: index + 1 })
-                  : clip.sourceTitle
-                    ? t("editor.insertedTitle", { title: clip.sourceTitle === "Unbenanntes Video" ? t("editor.untitledVideo") : clip.sourceTitle })
-                    : t("editor.insertedVideo")}
+                <VideoClipFilmstrip
+                  sourceKey={clip.sourceVideoId}
+                  sourceStart={clip.start}
+                  sourceEnd={clip.end}
+                  loadUrl={() => loadVideoUrl(clip.sourceVideoId)}
+                />
+                <span className="video-editor-timeline-clip-label">
+                  {clip.sourceVideoId === videoId
+                    ? t("editor.clipNumber", { number: index + 1 })
+                    : clip.sourceTitle
+                      ? t("editor.insertedTitle", { title: clip.sourceTitle === "Unbenanntes Video" ? t("editor.untitledVideo") : clip.sourceTitle })
+                      : t("editor.insertedVideo")}
+                </span>
               </div>
             );
           })}
