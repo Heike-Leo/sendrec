@@ -4138,10 +4138,10 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(blur?.style.backdropFilter).toBe("blur(20px)");
     fireEvent.change(screen.getByLabelText("Tint-Farbe"), { target: { value: "#e6467a" } });
     fireEvent.change(screen.getByRole("slider", { name: "Tint-Deckkraft" }), { target: { value: "30" } });
-    expect(blur?.style.background).toContain("color-mix");
+    expect(blur).toHaveStyle({ background: "rgba(230, 70, 122, 0.3)" });
   });
 
-  it("persists, restores and copies blur mode through the existing overlay timeline", async () => {
+  it("persists, restores and copies blur strength and tint through the existing overlay timeline", async () => {
     vi.useFakeTimers();
     try {
       editorState = {
@@ -4151,7 +4151,7 @@ describe("VideoEditorModal multi-source preview", () => {
             { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
           ],
           overlays: [
-            { id: "blur-saved", x: 8, y: 9, width: 30, height: 25, start: 0, end: 20, mode: "blur" },
+            { id: "blur-saved", x: 8, y: 9, width: 30, height: 25, start: 0, end: 20, mode: "blur", blurStrength: 18, color: "#123456", opacity: 0.25 },
           ],
         },
         renderStatus: "none",
@@ -4163,10 +4163,15 @@ describe("VideoEditorModal multi-source preview", () => {
         <VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />,
       );
       await vi.waitFor(() => expect(screen.getByTestId("video-editor-cover-overlay-blur-saved")).toBeInTheDocument());
-      expect(screen.getByTestId("video-editor-cover-overlay-blur-saved").style.backdropFilter).toBe("blur(12px)");
+      const original = screen.getByTestId("video-editor-cover-overlay-blur-saved");
+      expect(original.style.backdropFilter).toBe("blur(18px)");
+      expect(original).toHaveStyle({ background: "rgba(18, 52, 86, 0.25)" });
+
       fireEvent.click(screen.getByTestId("video-editor-cover-badge-blur-saved"));
-      fireEvent.click(screen.getByRole("button", { name: "Abdeckung kopieren" }));
-      fireEvent.click(screen.getByRole("button", { name: "Abdeckung einfügen" }));
+      expect(screen.getByRole("slider", { name: "Blur-Stärke" })).toHaveValue("18");
+      expect(screen.getByRole("slider", { name: "Tint-Deckkraft" })).toHaveValue("25");
+      fireEvent.click(screen.getByRole("button", { name: "Blur kopieren" }));
+      fireEvent.click(screen.getByRole("button", { name: "Blur einfügen" }));
       await vi.advanceTimersByTimeAsync(400);
 
       const saveCall = mockApiFetch.mock.calls.filter(
@@ -4174,7 +4179,14 @@ describe("VideoEditorModal multi-source preview", () => {
       ).at(-1);
       const savedTimeline = JSON.parse((saveCall?.[1] as RequestInit).body as string);
       expect(savedTimeline.overlays).toHaveLength(2);
-      expect(savedTimeline.overlays.map((overlay: { mode: string }) => overlay.mode)).toEqual(["blur", "blur"]);
+      for (const overlay of savedTimeline.overlays) {
+        expect(overlay).toMatchObject({
+          mode: "blur",
+          blurStrength: 18,
+          color: "#123456",
+          opacity: 0.25,
+        });
+      }
 
       firstRender.unmount();
       editorState = {
@@ -4186,7 +4198,8 @@ describe("VideoEditorModal multi-source preview", () => {
       render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
       await vi.waitFor(() => expect(screen.getAllByTestId(/video-editor-cover-overlay-/)).toHaveLength(2));
       for (const restoredOverlay of screen.getAllByTestId(/video-editor-cover-overlay-/)) {
-        expect(restoredOverlay.style.backdropFilter).toBe("blur(12px)");
+        expect(restoredOverlay.style.backdropFilter).toBe("blur(18px)");
+        expect(restoredOverlay).toHaveStyle({ background: "rgba(18, 52, 86, 0.25)" });
       }
     } finally {
       vi.useRealTimers();
