@@ -5825,3 +5825,24 @@ textarea.form-input {
     justify-content: space-between;
   }
 }
+
+
+/* Studio editor 40c.4b: voice-over stop follows the visible playhead lane. */
+.video-editor-timeline-recording-lane {
+  height: 42px;
+  margin-bottom: 2px;
+}
+
+.video-editor-timeline-recording-menu--lane {
+  top: 4px;
+}
+
+.video-editor-timeline-recording-anchor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(225, 29, 72, 0.55);
+  transform: translateX(-1px);
+  pointer-events: none;
+}
