@@ -1119,6 +1119,8 @@ export function VideoEditorModal({
 
   const selectedCoverOverlay =
     coverOverlays.find((overlay) => overlay.id === selectedCoverOverlayId) ?? null;
+  const selectedClip =
+    clips.find((clip) => clip.id === selectedClipId) ?? null;
 
   const visibleTimelineDuration =
     timelineDuration / Math.max(1, timelineZoom);
@@ -2943,25 +2945,6 @@ export function VideoEditorModal({
             <span id="video-editor-tooltip-split" role="tooltip" className="video-editor-tool-tooltip">{t("editor.split")}</span>
           </span>
 
-          {selectedClipId && (
-            <label className="video-editor-toolbar-speed">
-              {t("editor.speed")}
-              <select aria-label={t("editor.speed")} value={readClipSpeed(clips.find(clip => clip.id === selectedClipId)?.speed)}
-                disabled={audioGestureActive || audioVolumeDraft !== null}
-                onChange={event => handleClipSpeed(Number(event.target.value))}
-                style={{ border: "1px solid var(--color-border)", borderRadius: 8, padding: "6px 8px", background: "var(--color-surface)", color: "var(--color-text)" }}>
-                {EDITOR_CLIP_SPEEDS.map(speed => <option key={speed} value={speed}>{speed.toLocaleString(language)}×</option>)}
-              </select>
-            </label>
-          )}
-
-          {selectedClipId && (
-            <button type="button" onClick={handleDeleteSelectedClip} disabled={clips.length <= 1}
-              className="video-editor-toolbar-delete">
-              {t("editor.deleteClip")}
-            </button>
-          )}
-
           <span className="video-editor-tool">
             <button type="button" onClick={handleOpenInsertPicker} className="video-editor-tool-button"
               aria-label={t("editor.insertVideo")} aria-describedby="video-editor-tooltip-insert">
@@ -3013,7 +2996,7 @@ export function VideoEditorModal({
               onClick={() => setShowSymbolPicker((previous) => !previous)}><EditorToolIcon name="symbol" /></button>
             {!showSymbolPicker && <span id="video-editor-tooltip-symbol" role="tooltip" className="video-editor-tool-tooltip">{t("editor.addSymbol")}</span>}
             {showSymbolPicker && <div role="dialog" aria-label={t("editor.chooseSymbol")}
-              style={{ position: "absolute", left: 0, top: "100%", zIndex: 50, display: "grid", gridTemplateColumns: "repeat(4, 32px)", gap: 4, padding: 8, background: "white", border: "1px solid var(--color-border)", borderRadius: 8 }}>
+              style={{ position: "absolute", left: "calc(100% + 8px)", top: 0, zIndex: 50, display: "grid", gridTemplateColumns: "repeat(4, 32px)", gap: 4, padding: 8, background: "white", border: "1px solid var(--color-border)", borderRadius: 8 }}>
               {annotationSymbols.map((symbol, index) => <button key={symbol} autoFocus={index === 0} type="button"
                 className="video-editor-tool-button" aria-label={t(symbolLabelKeys[symbol])} title={t(symbolLabelKeys[symbol])}
                 onClick={() => { addAnnotation(undefined, "symbol", symbol); setShowSymbolPicker(false); symbolPickerButtonRef.current?.focus(); }}>
@@ -3031,7 +3014,7 @@ export function VideoEditorModal({
           </span>
 
           <button type="button" className="video-editor-tool-button" aria-label={t("editor.addText")} title={t("editor.addText")}
-            onClick={() => addAnnotation(undefined, "text")}>{t("editor.text")}</button>
+            onClick={() => addAnnotation(undefined, "text")}><span aria-hidden="true" className="video-editor-tool-letter">T</span></button>
           </div>
 
           <div className="video-editor-toolbar-group video-editor-toolbar-group--audio" role="group" aria-label={t("editor.audioTools")} data-testid="video-editor-toolbar-audio">
@@ -3040,27 +3023,16 @@ export function VideoEditorModal({
               aria-label={t("editor.recordVoiceover")} title={t("editor.recordVoiceover")}
               disabled={clipSpeedBlocked || !!audioPreviewError || timelinePlayheadTime >= timelineDuration}
               onClick={() => void startVoiceover()}>
-              <EditorToolIcon name="microphone" /> {t("editor.recordVoiceover")}
+              <EditorToolIcon name="microphone" />
             </button>
           ) : (
             <button type="button" data-voiceover-control className="video-editor-voiceover-button video-editor-voiceover-button--recording"
               aria-label={t("editor.stopRecording")} title={t("editor.stopRecording")}
               disabled={voiceoverState !== "recording"} onClick={() => void stopVoiceover()}>
-              <EditorToolIcon name="stop" /> {t("editor.stopRecording")}
+              <EditorToolIcon name="stop" />
             </button>
           )}
 
-          <label className="video-editor-toolbar-ducking">
-            <input type="checkbox" checked={duckOriginalAudio}
-              disabled={voiceoverBusy || audioGestureActive || audioVolumeDraft !== null}
-              onChange={event => {
-                const enabled = event.target.checked;
-                if (enabled === duckOriginalAudio) return;
-                rememberEditorState();
-                setDuckOriginalAudio(enabled);
-              }} />
-            {t("editor.duckOriginal")}
-          </label>
           </div>
 
           <div className="video-editor-toolbar-group" role="group" aria-label={t("editor.history")} data-testid="video-editor-toolbar-history">
@@ -3086,9 +3058,38 @@ export function VideoEditorModal({
           {t("editor.splitHint")}
         </p>
 
-        <div className={`video-editor-cover-actions${selectedAnnotation || selectedCoverOverlay || copiedAnnotation || copiedCoverOverlay ? "" : " video-editor-cover-actions--empty"}`}
+        <div className={`video-editor-cover-actions${selectedAnnotation || selectedCoverOverlay || copiedAnnotation || copiedCoverOverlay || selectedClip ? "" : " video-editor-cover-actions--empty"}`}
           data-testid="video-editor-cover-actions"
-          data-empty={selectedAnnotation || selectedCoverOverlay || copiedAnnotation || copiedCoverOverlay ? "false" : "true"}>
+          data-empty={selectedAnnotation || selectedCoverOverlay || copiedAnnotation || copiedCoverOverlay || selectedClip ? "false" : "true"}>
+        {selectedClip && <>
+          <strong className="video-editor-context-heading">{t("editor.clipTools")}</strong>
+          <label className="video-editor-context-field">
+            <span>{t("editor.speed")}</span>
+            <select aria-label={t("editor.speed")} value={readClipSpeed(selectedClip.speed)}
+              disabled={audioGestureActive || audioVolumeDraft !== null}
+              onChange={event => handleClipSpeed(Number(event.target.value))}>
+              {EDITOR_CLIP_SPEEDS.map(speed => <option key={speed} value={speed}>{speed.toLocaleString(language)}×</option>)}
+            </select>
+          </label>
+          <button type="button" onClick={handleDeleteSelectedClip} disabled={clips.length <= 1}
+            className="video-editor-context-delete">
+            <EditorToolIcon name="delete" /> {t("editor.deleteClip")}
+          </button>
+          <div className="video-editor-context-divider" />
+          <strong className="video-editor-context-heading">{t("editor.audioTools")}</strong>
+          <label className="video-editor-context-check">
+            <input type="checkbox" checked={duckOriginalAudio}
+              disabled={voiceoverBusy || audioGestureActive || audioVolumeDraft !== null}
+              onChange={event => {
+                const enabled = event.target.checked;
+                if (enabled === duckOriginalAudio) return;
+                rememberEditorState();
+                setDuckOriginalAudio(enabled);
+              }} />
+            <span>{t("editor.duckOriginal")}</span>
+          </label>
+          <div className="video-editor-context-divider" />
+        </>}
         {selectedAnnotation && <>
           <span>{annotationName(selectedAnnotation)}:</span>
           {selectedAnnotation.type === "text" && <>
