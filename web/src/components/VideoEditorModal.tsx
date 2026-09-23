@@ -3156,7 +3156,39 @@ export function VideoEditorModal({
           onClick={() => addAnnotation(copiedAnnotation)}><EditorToolIcon name="paste" /></button>}
         {selectedCoverOverlay && (
           <>
-          <strong className="video-editor-cover-actions-label">{t("editor.cover")}:</strong>
+          <div className="video-editor-context-header">
+            <strong className="video-editor-cover-actions-label">{t("editor.cover")}:</strong>
+            <div className="video-editor-context-actions">
+              <span className="video-editor-tool">
+                <button
+                  type="button"
+                  onClick={handleCopyCoverOverlay}
+                  className="video-editor-tool-button"
+                  aria-label={t("editor.coverCopy")}
+                  aria-describedby="video-editor-tooltip-copy-cover"
+                >
+                  <EditorToolIcon name="copy" />
+                </button>
+                <span id="video-editor-tooltip-copy-cover" role="tooltip" className="video-editor-tool-tooltip">
+                  {t("editor.coverCopy")}
+                </span>
+              </span>
+              <span className="video-editor-tool">
+                <button
+                  type="button"
+                  onClick={handleDeleteSelectedCoverOverlay}
+                  className="video-editor-tool-button video-editor-tool-button--destructive"
+                  aria-label={t("editor.coverDelete")}
+                  aria-describedby="video-editor-tooltip-delete-cover"
+                >
+                  <EditorToolIcon name="delete" />
+                </button>
+                <span id="video-editor-tooltip-delete-cover" role="tooltip" className="video-editor-tool-tooltip">
+                  {t("editor.coverDelete")}
+                </span>
+              </span>
+            </div>
+          </div>
 
           <label className="video-editor-cover-time-label">
             {t("editor.type")}{" "}
@@ -3286,21 +3318,6 @@ export function VideoEditorModal({
             {" s"}
           </label>
 
-          <span className="video-editor-tool">
-            <button
-              type="button"
-              onClick={handleCopyCoverOverlay}
-              className="video-editor-tool-button"
-              aria-label={t("editor.coverCopy")}
-              aria-describedby="video-editor-tooltip-copy-cover"
-            >
-              <EditorToolIcon name="copy" />
-            </button>
-            <span id="video-editor-tooltip-copy-cover" role="tooltip" className="video-editor-tool-tooltip">
-              {t("editor.coverCopy")}
-            </span>
-          </span>
-
           </>
         )}
 
@@ -3321,22 +3338,6 @@ export function VideoEditorModal({
           </span>
         )}
 
-        {selectedCoverOverlay && (
-          <span className="video-editor-tool">
-            <button
-              type="button"
-              onClick={handleDeleteSelectedCoverOverlay}
-              className="video-editor-tool-button video-editor-tool-button--destructive"
-              aria-label={t("editor.coverDelete")}
-              aria-describedby="video-editor-tooltip-delete-cover"
-            >
-              <EditorToolIcon name="delete" />
-            </button>
-            <span id="video-editor-tooltip-delete-cover" role="tooltip" className="video-editor-tool-tooltip">
-              {t("editor.coverDelete")}
-            </span>
-          </span>
-        )}
         </div>
 
         </div>
