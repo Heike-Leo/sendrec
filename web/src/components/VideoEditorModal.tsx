@@ -68,6 +68,7 @@ interface EditorCoverOverlay {
   mode?: "cover" | "blur";
   color?: string;
   opacity?: number;
+  blurStrength?: number;
   text?: string;
 }
 
@@ -209,7 +210,7 @@ export function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOver
   });
 }
 
-function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" | "circle" | "symbol" | "line" | "microphone" | "stop" | "mute" | "unmute" }) {
+function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" | "circle" | "symbol" | "line" | "microphone" | "stop" | "mute" | "unmute" | "blur" }) {
   const paths = {
     arrow: <path d="M2 13 13 2M5 2h8v8" />,
     circle: <circle cx="8" cy="8" r="5.5" />,
@@ -222,6 +223,7 @@ function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" 
     trim: <><circle cx="3.5" cy="4" r="1.5" /><circle cx="3.5" cy="12" r="1.5" /><path d="m4.8 5 7.7 6.5M4.8 11l7.7-6.5" /></>,
     split: <><rect x="1.5" y="3" width="5" height="10" rx="1" /><rect x="9.5" y="3" width="5" height="10" rx="1" /><path d="M8 2.5v11" /></>,
     cover: <rect x="2" y="3" width="12" height="10" rx="1.5" />,
+    blur: <><path d="M2 5.5c1.7-1.6 3.3 1.6 5 0s3.3-1.6 5 0 2.2.8 2.5.5" /><path d="M2 8c1.7-1.6 3.3 1.6 5 0s3.3-1.6 5 0 2.2.8 2.5.5" /><path d="M2 10.5c1.7-1.6 3.3 1.6 5 0s3.3-1.6 5 0 2.2.8 2.5.5" /></>,
     insert: <><rect x="1.5" y="3.5" width="9" height="9" rx="1.25" /><path d="m10.5 6.5 4-1.7v6.4l-4-1.7M4 8h4M6 6v4" /></>,
     undo: <><path d="M6 4 2.5 7.5 6 11" /><path d="M3 7.5h6a4 4 0 0 1 4 4" /></>,
     fit: <><path d="M6 2H2v4M10 2h4v4M14 10v4h-4M6 14H2v-4" /></>,
@@ -759,6 +761,9 @@ export function VideoEditorModal({
           restoredOverlays = (state.timeline.overlays ?? []).map((overlay) => ({
             ...overlay,
             mode: overlay.mode === "blur" ? "blur" : "cover",
+            blurStrength: overlay.mode === "blur"
+              ? Math.max(1, Math.min(30, overlay.blurStrength ?? 12))
+              : undefined,
           }));
           setCoverOverlays(restoredOverlays);
           setAnnotations(restoredAnnotations);
@@ -1939,20 +1944,8 @@ export function VideoEditorModal({
     setError(null);
   }
 
-  function handleCoverOverlayModeChange(mode: "cover" | "blur") {
-    if (!selectedCoverOverlay || selectedCoverOverlay.mode === mode) return;
-
-    rememberEditorState();
-    setCoverOverlays((previous) =>
-      previous.map((overlay) =>
-        overlay.id === selectedCoverOverlay.id ? { ...overlay, mode } : overlay,
-      ),
-    );
-    setError(null);
-  }
-
   function handleCoverOverlayColorChange(color: string) {
-    if (!selectedCoverOverlay || (selectedCoverOverlay.mode ?? "cover") !== "cover") return;
+    if (!selectedCoverOverlay) return;
 
     rememberEditorState();
     setCoverOverlays((previous) =>
@@ -1964,15 +1957,31 @@ export function VideoEditorModal({
   }
 
   function handleCoverOverlayOpacityChange(opacity: number) {
-    if (!selectedCoverOverlay || (selectedCoverOverlay.mode ?? "cover") !== "cover") return;
+    if (!selectedCoverOverlay) return;
 
-    const normalizedOpacity = Math.max(0.1, Math.min(1, opacity));
+    const minimum = (selectedCoverOverlay.mode ?? "cover") === "blur" ? 0 : 0.1;
+    const normalizedOpacity = Math.max(minimum, Math.min(1, opacity));
     if (normalizedOpacity === (selectedCoverOverlay.opacity ?? 1)) return;
 
     setCoverOverlays((previous) =>
       previous.map((overlay) =>
         overlay.id === selectedCoverOverlay.id
           ? { ...overlay, opacity: normalizedOpacity }
+          : overlay,
+      ),
+    );
+    setError(null);
+  }
+
+  function handleBlurStrengthChange(blurStrength: number) {
+    if (!selectedCoverOverlay || selectedCoverOverlay.mode !== "blur") return;
+    const normalized = Math.max(1, Math.min(30, blurStrength));
+    if (normalized === (selectedCoverOverlay.blurStrength ?? 12)) return;
+
+    setCoverOverlays((previous) =>
+      previous.map((overlay) =>
+        overlay.id === selectedCoverOverlay.id
+          ? { ...overlay, blurStrength: normalized }
           : overlay,
       ),
     );
@@ -2276,6 +2285,35 @@ export function VideoEditorModal({
       mode: "cover",
       color: "#000000",
       opacity: 1,
+    };
+
+    rememberEditorState();
+    setCoverOverlays((previous) => [...previous, overlay]);
+    setSelectedCoverOverlayId(overlay.id);
+    setError(null);
+  }
+
+  function handleAddBlurOverlay() {
+    if (timelineDuration <= 0) return;
+
+    const start = Math.min(
+      timelinePlayheadTime,
+      Math.max(0, timelineDuration - 0.1),
+    );
+    const end = Math.min(timelineDuration, start + 5);
+
+    const overlay: EditorCoverOverlay = {
+      id: `blur-${Date.now()}`,
+      x: 30,
+      y: 30,
+      width: 40,
+      height: 20,
+      start,
+      end,
+      mode: "blur",
+      color: "#000000",
+      opacity: 0,
+      blurStrength: 12,
     };
 
     rememberEditorState();
@@ -2730,13 +2768,17 @@ export function VideoEditorModal({
                     width: `${overlay.width}%`,
                     height: `${overlay.height}%`,
                     background: (overlay.mode ?? "cover") === "blur"
-                      ? "rgba(255, 255, 255, 0.01)"
+                      ? `color-mix(in srgb, ${overlay.color ?? "#000000"} ${Math.round((overlay.opacity ?? 0) * 100)}%, transparent)`
                       : (overlay.color ?? "#000000"),
                     opacity: (overlay.mode ?? "cover") === "cover"
                       ? (overlay.opacity ?? 1)
                       : undefined,
-                    backdropFilter: (overlay.mode ?? "cover") === "blur" ? "blur(12px)" : undefined,
-                    WebkitBackdropFilter: (overlay.mode ?? "cover") === "blur" ? "blur(12px)" : undefined,
+                    backdropFilter: (overlay.mode ?? "cover") === "blur"
+                      ? `blur(${overlay.blurStrength ?? 12}px)`
+                      : undefined,
+                    WebkitBackdropFilter: (overlay.mode ?? "cover") === "blur"
+                      ? `blur(${overlay.blurStrength ?? 12}px)`
+                      : undefined,
                     zIndex: 2,
                     pointerEvents: "auto",
                     cursor: "move",
@@ -2969,6 +3011,21 @@ export function VideoEditorModal({
             </button>
             <span id="video-editor-tooltip-cover" role="tooltip" className="video-editor-tool-tooltip">
               {t("editor.addCover")}
+            </span>
+          </span>
+
+          <span className="video-editor-tool">
+            <button
+              type="button"
+              onClick={handleAddBlurOverlay}
+              className="video-editor-tool-button"
+              aria-label={t("editor.addBlur")}
+              aria-describedby="video-editor-tooltip-blur"
+            >
+              <EditorToolIcon name="blur" />
+            </button>
+            <span id="video-editor-tooltip-blur" role="tooltip" className="video-editor-tool-tooltip">
+              {t("editor.addBlur")}
             </span>
           </span>
 
