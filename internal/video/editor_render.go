@@ -41,8 +41,9 @@ type editorCoverOverlay struct {
 	End     float64  `json:"end"`
 	Mode    string   `json:"mode,omitempty"`
 	Color   string   `json:"color,omitempty"`
-	Opacity *float64 `json:"opacity,omitempty"`
-	Text    string   `json:"text,omitempty"`
+	Opacity      *float64 `json:"opacity,omitempty"`
+	BlurStrength *float64 `json:"blurStrength,omitempty"`
+	Text         string   `json:"text,omitempty"`
 }
 
 // Shapes are rendered; text is persisted but explicitly render-gated for now.
@@ -273,8 +274,22 @@ func validateEditTimeline(timeline *editTimeline) error {
 		if overlay.Color != "" && !isEditorCoverColor(overlay.Color) {
 			return fmt.Errorf("overlay color must be a six-digit hex color")
 		}
-		if overlay.Opacity != nil && (*overlay.Opacity < 0.1 || *overlay.Opacity > 1) {
-			return fmt.Errorf("overlay opacity must be between 0.1 and 1")
+		if overlay.Opacity != nil {
+			minOpacity := 0.1
+			if overlay.Mode == "blur" {
+				minOpacity = 0
+			}
+			if *overlay.Opacity < minOpacity || *overlay.Opacity > 1 {
+				return fmt.Errorf("overlay opacity is out of range")
+			}
+		}
+		if overlay.BlurStrength != nil {
+			if overlay.Mode != "blur" {
+				return fmt.Errorf("blur strength is only valid for blur overlays")
+			}
+			if *overlay.BlurStrength < 1 || *overlay.BlurStrength > 30 {
+				return fmt.Errorf("blur strength must be between 1 and 30")
+			}
 		}
 
 		if strings.TrimSpace(overlay.ID) == "" {
@@ -584,18 +599,35 @@ func buildTimelineRenderArgsWithAudio(inputs []string, clips []editClip, sourceI
 			cropLabel := fmt.Sprintf("vblurcrop%d", operationIndex)
 			blurredLabel := fmt.Sprintf("vblurred%d", operationIndex)
 
+			blurStrength := float64(editorBlurSigma)
+			if overlay.BlurStrength != nil {
+				blurStrength = *overlay.BlurStrength
+			}
+			blurFilter := fmt.Sprintf(
+				"[%s]crop=w=iw*%.6f:h=ih*%.6f:x=iw*%.6f:y=ih*%.6f,gblur=sigma=%.6g:steps=2",
+				cropLabel,
+				overlay.Width/100,
+				overlay.Height/100,
+				overlay.X/100,
+				overlay.Y/100,
+				blurStrength,
+			)
+			if overlay.Opacity != nil && *overlay.Opacity > 0 {
+				tintColor := "black"
+				if overlay.Color != "" {
+					tintColor = "0x" + overlay.Color[1:]
+				}
+				blurFilter += fmt.Sprintf(
+					",drawbox=x=0:y=0:w=iw:h=ih:color=%s@%.3f:t=fill",
+					tintColor,
+					*overlay.Opacity,
+				)
+			}
+			blurFilter += fmt.Sprintf("[%s]", blurredLabel)
+
 			filters = append(filters,
 				fmt.Sprintf("[%s]split=2[%s][%s]", previousLabel, baseLabel, cropLabel),
-				fmt.Sprintf(
-					"[%s]crop=w=iw*%.6f:h=ih*%.6f:x=iw*%.6f:y=ih*%.6f,gblur=sigma=%d:steps=2[%s]",
-					cropLabel,
-					overlay.Width/100,
-					overlay.Height/100,
-					overlay.X/100,
-					overlay.Y/100,
-					editorBlurSigma,
-					blurredLabel,
-				),
+				blurFilter,
 				fmt.Sprintf(
 					"[%s][%s]overlay=x=main_w*%.6f:y=main_h*%.6f:enable='between(t,%.3f,%.3f)'[%s]",
 					baseLabel,
