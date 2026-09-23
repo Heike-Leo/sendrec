@@ -122,7 +122,7 @@ interface VideoEditorModalProps {
   onTrimStarted?: () => void;
 }
 
-const TIMELINE_ZOOM_LEVELS = [1, 2, 5, 10] as const;
+const TIMELINE_ZOOM_LEVELS = [1, 1.5, 2, 3, 4, 5, 7.5, 10] as const;
 const TIMELINE_TICK_STEPS = [0.1, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
 const OVERLAY_SAVE_DEBOUNCE_MS = 400;
 const INDEPENDENT_AUDIO_WARNING = "Die Tonspur wurde unabhängig vom Video bearbeitet. Änderungen an der Videostruktur würden diese Audiobearbeitung überschreiben.";
