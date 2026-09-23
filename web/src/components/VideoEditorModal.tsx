@@ -3369,138 +3369,181 @@ export function VideoEditorModal({
         {copiedAnnotation && <button type="button" className="video-editor-tool-button" aria-label={t("editor.pasteItem", { item: annotationName(copiedAnnotation) })} title={t("editor.pasteItem", { item: annotationName(copiedAnnotation) })}
           onClick={() => addAnnotation(copiedAnnotation)}><EditorToolIcon name="paste" /></button>}
         {selectedCoverOverlay && (
-          <>
-          <strong className="video-editor-cover-actions-label">{t("editor.cover")}:</strong>
+          <section className="video-editor-inspector-section video-editor-inspector-section--overlay">
+            <div className="video-editor-inspector-title">
+              <strong>{selectedCoverOverlay.mode === "blur" ? t("editor.blurMode") : t("editor.cover")}</strong>
+            </div>
 
-          <label className="video-editor-cover-time-label">
-            {t("editor.type")}{" "}
-            <select
-              aria-label={t("editor.coverType")}
-              value={selectedCoverOverlay.mode ?? "cover"}
-              onChange={(e) => handleCoverOverlayModeChange(e.target.value as "cover" | "blur")}
-              className="video-editor-cover-time-input"
-            >
-              <option value="cover">{t("editor.coverMode")}</option>
-              <option value="blur">{t("editor.blurMode")}</option>
-            </select>
-          </label>
+            {selectedCoverOverlay.mode === "blur" ? (
+              <>
+                <label className="video-editor-inspector-field video-editor-inspector-field--wide">
+                  <span>{t("editor.blurStrength")}</span>
+                  <div className="video-editor-inspector-range-row">
+                    <input
+                      type="range"
+                      min={1}
+                      max={30}
+                      step={1}
+                      value={selectedCoverOverlay.blurStrength ?? 12}
+                      aria-label={t("editor.blurStrength")}
+                      className="video-editor-opacity-slider"
+                      onPointerDown={rememberEditorState}
+                      onKeyDown={(e) => {
+                        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(e.key)) {
+                          rememberEditorState();
+                        }
+                      }}
+                      onChange={(e) => handleBlurStrengthChange(Number(e.target.value))}
+                    />
+                    <strong>{Math.round(selectedCoverOverlay.blurStrength ?? 12)}</strong>
+                  </div>
+                </label>
 
-          {(selectedCoverOverlay.mode ?? "cover") === "cover" && (
-            <>
-              <label className="video-editor-cover-time-label">
-                {t("editor.color")}{" "}
-                <input
-                  type="color"
-                  aria-label={t("editor.coverColor")}
-                  value={selectedCoverOverlay.color ?? "#000000"}
-                  onChange={(e) => handleCoverOverlayColorChange(e.target.value)}
-                  style={{ width: 32, height: 28, padding: 2 }}
-                />
+                <div className="video-editor-inspector-grid">
+                  <label className="video-editor-inspector-field">
+                    <span>{t("editor.tintColor")}</span>
+                    <div className="video-editor-inspector-color">
+                      <input
+                        type="color"
+                        aria-label={t("editor.tintColor")}
+                        value={selectedCoverOverlay.color ?? "#000000"}
+                        onChange={(e) => handleCoverOverlayColorChange(e.target.value)}
+                      />
+                      <span>{(selectedCoverOverlay.color ?? "#000000").toUpperCase()}</span>
+                    </div>
+                  </label>
+
+                  <label className="video-editor-inspector-field">
+                    <span>{t("editor.tintOpacity")}</span>
+                    <div className="video-editor-inspector-range-row video-editor-inspector-range-row--compact">
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={Math.round((selectedCoverOverlay.opacity ?? 0) * 100)}
+                        aria-label={t("editor.tintOpacity")}
+                        className="video-editor-opacity-slider"
+                        onPointerDown={rememberEditorState}
+                        onKeyDown={(e) => {
+                          if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(e.key)) {
+                            rememberEditorState();
+                          }
+                        }}
+                        onChange={(e) => handleCoverOverlayOpacityChange(Number(e.target.value) / 100)}
+                      />
+                      <strong>{Math.round((selectedCoverOverlay.opacity ?? 0) * 100)}%</strong>
+                    </div>
+                  </label>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="video-editor-inspector-grid">
+                  <label className="video-editor-inspector-field">
+                    <span>{t("editor.color")}</span>
+                    <div className="video-editor-inspector-color">
+                      <input
+                        type="color"
+                        aria-label={t("editor.coverColor")}
+                        value={selectedCoverOverlay.color ?? "#000000"}
+                        onChange={(e) => handleCoverOverlayColorChange(e.target.value)}
+                      />
+                      <span>{(selectedCoverOverlay.color ?? "#000000").toUpperCase()}</span>
+                    </div>
+                  </label>
+
+                  <label className="video-editor-inspector-field">
+                    <span>{t("editor.opacity")}</span>
+                    <div className="video-editor-inspector-range-row video-editor-inspector-range-row--compact">
+                      <input
+                        type="range"
+                        min={10}
+                        max={100}
+                        step={1}
+                        value={Math.round((selectedCoverOverlay.opacity ?? 1) * 100)}
+                        aria-label={t("editor.coverOpacity")}
+                        className="video-editor-opacity-slider"
+                        data-testid="video-editor-cover-opacity"
+                        onPointerDown={rememberEditorState}
+                        onKeyDown={(e) => {
+                          if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(e.key)) {
+                            rememberEditorState();
+                          }
+                        }}
+                        onChange={(e) => handleCoverOverlayOpacityChange(Number(e.target.value) / 100)}
+                      />
+                      <strong data-testid="video-editor-cover-opacity-value">{Math.round((selectedCoverOverlay.opacity ?? 1) * 100)}%</strong>
+                    </div>
+                  </label>
+                </div>
+
+                <label className="video-editor-inspector-field video-editor-inspector-field--wide">
+                  <span>{t("editor.text")}</span>
+                  <input
+                    type="text"
+                    aria-label={t("editor.coverText")}
+                    maxLength={120}
+                    value={selectedCoverOverlay.text ?? ""}
+                    onFocus={() => { textEditOverlayRef.current = null; }}
+                    onBlur={() => { textEditOverlayRef.current = null; }}
+                    onChange={(e) => handleCoverOverlayTextChange(e.target.value)}
+                    className="video-editor-inspector-input"
+                  />
+                </label>
+              </>
+            )}
+
+            <div className="video-editor-inspector-divider" />
+
+            <div className="video-editor-inspector-grid">
+              <label className="video-editor-inspector-field">
+                <span>{t("editor.start")}</span>
+                <div className="video-editor-inspector-time">
+                  <input
+                    className="video-editor-inspector-input"
+                    type="number"
+                    min={0}
+                    max={Math.max(0, selectedCoverOverlay.end - 0.1)}
+                    step={0.1}
+                    value={selectedCoverOverlay.start}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      if (!Number.isFinite(value)) return;
+                      const nextStart = Math.max(0, Math.min(value, selectedCoverOverlay.end - 0.1));
+                      setCoverOverlays((previous) => previous.map((overlay) =>
+                        overlay.id === selectedCoverOverlay.id ? { ...overlay, start: nextStart } : overlay
+                      ));
+                    }}
+                  />
+                  <span>s</span>
+                </div>
               </label>
-              <label className="video-editor-cover-time-label">
-                {t("editor.opacity")}{" "}
-                <input
-                  type="range"
-                  aria-label={t("editor.coverOpacity")}
-                  min={10}
-                  max={100}
-                  step={1}
-                  value={Math.round((selectedCoverOverlay.opacity ?? 1) * 100)}
-                  onPointerDown={rememberEditorState}
-                  onKeyDown={(e) => {
-                    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(e.key)) {
-                      rememberEditorState();
-                    }
-                  }}
-                  onChange={(e) => handleCoverOverlayOpacityChange(Number(e.target.value) / 100)}
-                  className="video-editor-opacity-slider"
-                  style={{ width: 88 }}
-                />
-                <span
-                  className="video-editor-opacity-value"
-                  data-testid="video-editor-cover-opacity-value"
-                >
-                  {Math.round((selectedCoverOverlay.opacity ?? 1) * 100)} %
-                </span>
+
+              <label className="video-editor-inspector-field">
+                <span>{t("editor.end")}</span>
+                <div className="video-editor-inspector-time">
+                  <input
+                    className="video-editor-inspector-input"
+                    type="number"
+                    min={selectedCoverOverlay.start + 0.1}
+                    max={timelineDuration}
+                    step={0.1}
+                    value={selectedCoverOverlay.end}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      if (!Number.isFinite(value)) return;
+                      const nextEnd = Math.min(timelineDuration, Math.max(value, selectedCoverOverlay.start + 0.1));
+                      setCoverOverlays((previous) => previous.map((overlay) =>
+                        overlay.id === selectedCoverOverlay.id ? { ...overlay, end: nextEnd } : overlay
+                      ));
+                    }}
+                  />
+                  <span>s</span>
+                </div>
               </label>
-              <label className="video-editor-cover-time-label">
-                {t("editor.text")}{" "}
-                <input
-                  type="text"
-                  aria-label={t("editor.coverText")}
-                  maxLength={120}
-                  value={selectedCoverOverlay.text ?? ""}
-                  onFocus={() => { textEditOverlayRef.current = null; }}
-                  onBlur={() => { textEditOverlayRef.current = null; }}
-                  onChange={(e) => handleCoverOverlayTextChange(e.target.value)}
-                  className="video-editor-cover-time-input"
-                  style={{ width: 160 }}
-                />
-              </label>
-            </>
-          )}
-
-          <label className="video-editor-cover-time-label">
-            {t("editor.start")}{" "}
-            <input
-              type="number"
-              min={0}
-              max={Math.max(0, selectedCoverOverlay.end - 0.1)}
-              step={0.1}
-              value={selectedCoverOverlay.start}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                if (!Number.isFinite(value)) return;
-
-                const start = Math.max(
-                  0,
-                  Math.min(value, selectedCoverOverlay.end - 0.1),
-                );
-
-                setCoverOverlays((previous) =>
-                  previous.map((overlay) =>
-                    overlay.id === selectedCoverOverlay.id
-                      ? { ...overlay, start }
-                      : overlay,
-                  ),
-                );
-              }}
-              className="video-editor-cover-time-input"
-            />
-            {" s"}
-          </label>
-
-          <label className="video-editor-cover-time-label">
-            {t("editor.end")}{" "}
-            <input
-              type="number"
-              min={selectedCoverOverlay.start + 0.1}
-              max={timelineDuration}
-              step={0.1}
-              value={selectedCoverOverlay.end}
-              onChange={(e) => {
-                const value = Number(e.target.value);
-                if (!Number.isFinite(value)) return;
-
-                const end = Math.min(
-                  timelineDuration,
-                  Math.max(value, selectedCoverOverlay.start + 0.1),
-                );
-
-                setCoverOverlays((previous) =>
-                  previous.map((overlay) =>
-                    overlay.id === selectedCoverOverlay.id
-                      ? { ...overlay, end }
-                      : overlay,
-                  ),
-                );
-              }}
-              className="video-editor-cover-time-input"
-            />
-            {" s"}
-          </label>
-
-          </>
+            </div>
+          </section>
         )}
 
         {copiedCoverOverlay && (
