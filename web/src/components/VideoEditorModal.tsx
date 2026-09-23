@@ -3144,13 +3144,6 @@ export function VideoEditorModal({
               const value = Number(e.target.value);
               if (Number.isFinite(value)) updateAnnotation({ end: Math.min(timelineDuration, Math.max(value, selectedAnnotation.start + 0.1)) });
             }} style={{ width: 70 }} /></label>
-          <button type="button" className="video-editor-tool-button" aria-label={t("editor.copyItem", { item: annotationName(selectedAnnotation) })} title={t("editor.copyItem", { item: annotationName(selectedAnnotation) })}
-            onClick={() => setCopiedAnnotation({ ...selectedAnnotation })}><EditorToolIcon name="copy" /></button>
-          <button type="button" className="video-editor-tool-button" aria-label={t("editor.deleteItem", { item: annotationName(selectedAnnotation) })} title={t("editor.deleteItem", { item: annotationName(selectedAnnotation) })} onClick={() => {
-            rememberEditorState();
-            setAnnotations((previous) => previous.filter((item) => item.id !== selectedAnnotation.id));
-            setSelectedAnnotationId(null);
-          }}><EditorToolIcon name="delete" /></button>
         </>}
         {copiedAnnotation && <button type="button" className="video-editor-tool-button" aria-label={t("editor.pasteItem", { item: annotationName(copiedAnnotation) })} title={t("editor.pasteItem", { item: annotationName(copiedAnnotation) })}
           onClick={() => addAnnotation(copiedAnnotation)}><EditorToolIcon name="paste" /></button>}
@@ -3819,26 +3812,73 @@ export function VideoEditorModal({
           {annotations.length > 0 && <div data-testid="video-editor-annotation-tracks"
             onClick={() => setSelectedCoverOverlayId(null)}
             style={{ width: `${timelineZoom * 100}%`, minWidth: "100%", marginBottom: 4, display: "flex", flexDirection: "column", gap: 4 }}>
-            {annotations.map((item, index) => <div key={item.id} data-testid={`video-editor-${item.type}-track-${item.id}`}
-              className="video-editor-timeline-overlay-row"
-              style={{ height: 38, position: "relative" }}>
-              <button type="button" aria-label={t("editor.annotationNumber", { item: annotationName(item), number: annotations.slice(0, index + 1).filter((a) => a.type === item.type).length })} aria-pressed={selectedAnnotationId === item.id}
-                onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, "move")}
-                onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
-                style={{ position: "absolute", left: `${item.start / timelineDuration * 100}%`, width: `${(item.end - item.start) / timelineDuration * 100}%`,
-                  top: 3, bottom: 3, overflow: "hidden", whiteSpace: "nowrap", background: selectedAnnotationId === item.id ? "#FBE3EC" : "#F5EDF1", color: "#881337", cursor: "grab", touchAction: "none",
-                  border: selectedAnnotationId === item.id ? "2px solid #FC2667" : "1px solid #F9A8C0", borderRadius: 5 }}>
-                {t("editor.annotationNumber", { item: annotationName(item), number: annotations.slice(0, index + 1).filter((a) => a.type === item.type).length })}
-                {(["start", "end"] as const).map((edge) => <span key={edge}
-                  data-testid={`video-editor-${item.type}-${edge}-${item.id}`}
-                  title={t(edge === "start" ? "editor.dragItemStart" : "editor.dragItemEnd", { item: t(item.type === "text" ? "editor.ofText" : item.type === "line" ? "editor.ofLine" : item.type === "symbol" ? "editor.ofSymbol" : item.type === "circle" ? "editor.ofCircle" : "editor.ofArrow") })}
-                  onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, edge)}
-                  onClick={(e) => e.stopPropagation()}
-                  style={{ position: "absolute", top: 0, bottom: 0, width: 8,
-                    [edge === "start" ? "left" : "right"]: 0,
-                    background: "#FC2667", cursor: "ew-resize", touchAction: "none" }} />)}
-              </button>
-            </div>)}
+            {annotations.map((item, index) => {
+              const left = timelineDuration > 0 ? item.start / timelineDuration * 100 : 0;
+              const width = timelineDuration > 0 ? (item.end - item.start) / timelineDuration * 100 : 0;
+              const selected = selectedAnnotationId === item.id;
+              const label = t("editor.annotationNumber", {
+                item: annotationName(item),
+                number: annotations.slice(0, index + 1).filter((a) => a.type === item.type).length,
+              });
+
+              return <div key={item.id} data-testid={`video-editor-${item.type}-track-${item.id}`}
+                className="video-editor-timeline-overlay-row"
+                style={{ height: 38, position: "relative", overflow: selected ? "visible" : "hidden", zIndex: selected ? 5 : 1 }}>
+                <button type="button" aria-label={label} aria-pressed={selected}
+                  onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, "move")}
+                  onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
+                  style={{ position: "absolute", left: `${left}%`, width: `${width}%`,
+                    top: 3, bottom: 3, overflow: "hidden", whiteSpace: "nowrap", background: selected ? "#FBE3EC" : "#F5EDF1", color: "#881337", cursor: "grab", touchAction: "none",
+                    border: selected ? "2px solid #FC2667" : "1px solid #F9A8C0", borderRadius: 5 }}>
+                  {label}
+                  {(["start", "end"] as const).map((edge) => <span key={edge}
+                    data-testid={`video-editor-${item.type}-${edge}-${item.id}`}
+                    title={t(edge === "start" ? "editor.dragItemStart" : "editor.dragItemEnd", { item: t(item.type === "text" ? "editor.ofText" : item.type === "line" ? "editor.ofLine" : item.type === "symbol" ? "editor.ofSymbol" : item.type === "circle" ? "editor.ofCircle" : "editor.ofArrow") })}
+                    onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, edge)}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ position: "absolute", top: 0, bottom: 0, width: 8,
+                      [edge === "start" ? "left" : "right"]: 0,
+                      background: "#FC2667", cursor: "ew-resize", touchAction: "none" }} />)}
+                </button>
+
+                {selected && (
+                  <div
+                    className="video-editor-timeline-cover-menu video-editor-timeline-annotation-menu"
+                    data-testid={`video-editor-annotation-menu-${item.id}`}
+                    style={
+                      left + width <= 86
+                        ? { left: `calc(${left + width}% + 6px)` }
+                        : { right: `calc(${100 - left}% + 6px)` }
+                    }
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      className="video-editor-timeline-cover-menu-button"
+                      aria-label={t("editor.copyItem", { item: annotationName(item) })}
+                      title={t("editor.copyItem", { item: annotationName(item) })}
+                      onClick={() => setCopiedAnnotation({ ...item })}
+                    >
+                      <EditorToolIcon name="copy" />
+                    </button>
+                    <button
+                      type="button"
+                      className="video-editor-timeline-cover-menu-button video-editor-timeline-cover-menu-button--destructive"
+                      aria-label={t("editor.deleteItem", { item: annotationName(item) })}
+                      title={t("editor.deleteItem", { item: annotationName(item) })}
+                      onClick={() => {
+                        rememberEditorState();
+                        setAnnotations((previous) => previous.filter((annotation) => annotation.id !== item.id));
+                        setSelectedAnnotationId(null);
+                      }}
+                    >
+                      <EditorToolIcon name="delete" />
+                    </button>
+                  </div>
+                )}
+              </div>;
+            })}
           </div>}
           <div
             ref={timelineRef}
