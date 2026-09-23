@@ -151,6 +151,7 @@ let editorState: typeof emptyEditorState | {
         mode?: "cover" | "blur";
         color?: string;
         opacity?: number;
+        blurStrength?: number;
         text?: string;
       }>;
       audioSegments?: EditorAudioSegment[];
