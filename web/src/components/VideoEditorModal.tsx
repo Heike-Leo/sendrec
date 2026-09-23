@@ -3536,6 +3536,28 @@ export function VideoEditorModal({
           <span className="video-editor-timeline-zoom-value">
             {timelineZoom === 1 ? "1.0" : timelineZoom}×
           </span>
+
+          {voiceoverState === "recording" && (
+            <div
+              className="video-editor-timeline-recording-toolbar"
+              data-testid="video-editor-voiceover-recording-menu"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <span className="video-editor-timeline-recording-dot" aria-hidden="true" />
+              <span className="video-editor-timeline-recording-label">{t("editor.voiceover")}</span>
+              <button
+                type="button"
+                data-voiceover-control
+                className="video-editor-timeline-recording-stop"
+                aria-label={t("editor.stopRecording")}
+                title={t("editor.stopRecording")}
+                onClick={() => void stopVoiceover()}
+              >
+                <EditorToolIcon name="stop" />
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="video-editor-timeline-time-range">
@@ -3975,33 +3997,6 @@ export function VideoEditorModal({
             }}
           />
 
-          {voiceoverState === "recording" && (
-            <div
-              className="video-editor-timeline-recording-menu"
-              data-testid="video-editor-voiceover-recording-menu"
-              style={
-                playheadPct <= 84
-                  ? { left: `calc(${playheadPct}% + 8px)` }
-                  : { right: `calc(${100 - playheadPct}% + 8px)` }
-              }
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <span className="video-editor-timeline-recording-dot" aria-hidden="true" />
-              <span className="video-editor-timeline-recording-label">{t("editor.voiceover")}</span>
-              <button
-                type="button"
-                data-voiceover-control
-                className="video-editor-timeline-recording-stop"
-                aria-label={t("editor.stopRecording")}
-                title={t("editor.stopRecording")}
-                disabled={voiceoverState !== "recording"}
-                onClick={() => void stopVoiceover()}
-              >
-                <EditorToolIcon name="stop" />
-              </button>
-            </div>
-          )}
         </div>
 
         {groupAudioSegments(audioSegments).map(({ trackId, segments }) => {
