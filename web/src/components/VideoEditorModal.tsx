@@ -3537,10 +3537,43 @@ export function VideoEditorModal({
             {timelineZoom === 1 ? "1.0" : timelineZoom}×
           </span>
 
-          {voiceoverState === "recording" && (
+        </div>
+
+        <div className="video-editor-timeline-time-range">
+          <span>{formatDuration(timelineCurrentTime)}</span>
+          <span>{formatDuration(timelineDuration)}</span>
+        </div>
+
+        <div
+          data-testid="video-editor-timeline-scroll"
+          style={{
+            overflowX: "auto",
+            overflowY: "hidden",
+            paddingBottom: 6,
+          }}
+        >
+        {voiceoverState === "recording" && (
+          <div
+            className="video-editor-timeline-recording-lane"
+            style={{
+              position: "relative",
+              width: `${timelineZoom * 100}%`,
+              minWidth: "100%",
+            }}
+          >
+            <span
+              className="video-editor-timeline-recording-anchor"
+              aria-hidden="true"
+              style={{ left: `${playheadPct}%` }}
+            />
             <div
-              className="video-editor-timeline-recording-toolbar"
+              className="video-editor-timeline-recording-menu video-editor-timeline-recording-menu--lane"
               data-testid="video-editor-voiceover-recording-menu"
+              style={
+                playheadPct <= 84
+                  ? { left: `calc(${playheadPct}% + 8px)` }
+                  : { right: `calc(${100 - playheadPct}% + 8px)` }
+              }
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
             >
@@ -3557,22 +3590,8 @@ export function VideoEditorModal({
                 <EditorToolIcon name="stop" />
               </button>
             </div>
-          )}
-        </div>
-
-        <div className="video-editor-timeline-time-range">
-          <span>{formatDuration(timelineCurrentTime)}</span>
-          <span>{formatDuration(timelineDuration)}</span>
-        </div>
-
-        <div
-          data-testid="video-editor-timeline-scroll"
-          style={{
-            overflowX: "auto",
-            overflowY: "hidden",
-            paddingBottom: 6,
-          }}
-        >
+          </div>
+        )}
         <div
           data-testid="video-editor-timeline-ruler"
           className="video-editor-timeline-ruler"
