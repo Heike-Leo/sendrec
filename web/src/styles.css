@@ -5673,3 +5673,19 @@ textarea.form-input {
       "warning";
   }
 }
+
+
+/* Studio editor 40c.2: keep cover copy/delete actions next to the context title. */
+.video-editor-context-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.video-editor-context-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
