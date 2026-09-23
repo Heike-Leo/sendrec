@@ -3092,61 +3092,223 @@ export function VideoEditorModal({
           </label>
           <div className="video-editor-context-divider" />
         </>}
-        {selectedAnnotation && <>
-          <span>{annotationName(selectedAnnotation)}:</span>
-          {selectedAnnotation.type === "text" && <>
-            <label>{t("editor.font")} <select aria-label={t("editor.textFont")} value={textTypography(selectedAnnotation).fontFamily}
-              onChange={event => updateTextTypography({ fontFamily: event.target.value })}>
-              {TEXT_FONTS.map(font => <option key={font.id} value={font.id}>{font.label}</option>)}
-            </select></label>
-            <button type="button" className="video-editor-tool-button" aria-label={t("editor.textBold")} title={t("editor.textBold")}
-              aria-pressed={selectedAnnotation.bold ?? false} onClick={() => updateTextTypography({ bold: !selectedAnnotation.bold })}><b>B</b></button>
-            <button type="button" className="video-editor-tool-button" aria-label={t("editor.textItalic")} title={t("editor.textItalic")}
-              aria-pressed={selectedAnnotation.italic ?? false} onClick={() => updateTextTypography({ italic: !selectedAnnotation.italic })}><i>I</i></button>
-            <label>{t("editor.text")} <textarea aria-label={t("editor.textContent")} rows={2} style={{ resize: "none" }}
-              value={textAnnotationDraft?.id === selectedAnnotation.id ? textAnnotationDraft.text : selectedAnnotation.text}
-              onFocus={() => { textAnnotationEditRef.current = null; }}
-              onBlur={() => { textAnnotationEditRef.current = null; setTextAnnotationDraft(null); }}
-              onChange={event => updateTextProperty("text", event.target.value)} /></label>
-            <label>{t("editor.size")} <input aria-label={t("editor.textSize")} type="number" min={TEXT_LAYOUT.minFontSize} max={TEXT_LAYOUT.maxFontSize}
-              value={selectedAnnotation.fontSize}
-              onFocus={() => { textAnnotationEditRef.current = null; }} onBlur={() => { textAnnotationEditRef.current = null; }}
-              onChange={event => updateTextProperty("fontSize", Number(event.target.value))} style={{ width: 70 }} /></label>
-          </>}
-          {selectedAnnotation.type === "arrow" && <label>{t("editor.stroke")} <select aria-label={t("editor.arrowStroke")} value={arrowShaftWidth(selectedAnnotation.shaftWidth)}
-            onChange={e => updateAnnotation({ shaftWidth: Number(e.target.value) })}>
-            {ARROW_SHAFT_WIDTHS.map(value => <option key={value} value={value}>{value === 12 ? t("editor.defaultValue", { value }) : value}</option>)}
-          </select></label>}
-          {selectedAnnotation.type === "circle" && <label>{t("editor.stroke")} <select aria-label={t("editor.circleStroke")} value={circleStrokeWidth(selectedAnnotation.strokeWidth)}
-            onChange={e => updateAnnotation({ strokeWidth: Number(e.target.value) })}>
-            {CIRCLE_STROKE_WIDTHS.map(value => <option key={value} value={value}>{value}</option>)}
-          </select></label>}
-          {selectedAnnotation.type === "line" && <label>{t("editor.stroke")} <select aria-label={t("editor.lineStroke")} value={lineStrokeWidth(selectedAnnotation.strokeWidth)}
-            onChange={e => updateAnnotation({ strokeWidth: Number(e.target.value) })}>
-            {LINE_STROKE_WIDTHS.map(value => <option key={value} value={value}>{value === 3 ? t("editor.defaultValue", { value }) : value}</option>)}
-          </select></label>}
-          <label>{t("editor.color")} <input type="color" aria-label={selectedAnnotation.type === "line" ? t("editor.lineColor") : t("editor.itemColor", { item: annotationName(selectedAnnotation) })} value={selectedAnnotation.type === "text" ? selectedAnnotation.color || TEXT_LAYOUT.color : selectedAnnotation.color ?? "#FC2667"}
-            onChange={(e) => updateAnnotation({ color: e.target.value })}
-            style={{ width: 32, height: 28, padding: 2, cursor: "pointer" }} /></label>
-          {selectedAnnotation.type !== "circle" && selectedAnnotation.type !== "text" && <>
-          <label>{t("editor.direction")} <select aria-label={selectedAnnotation.type === "line" ? t("editor.lineDirection") : t("editor.itemDirection", { item: annotationName(selectedAnnotation) })} value={selectedAnnotation.rotation}
-            onChange={(e) => updateAnnotation({ rotation: Number(e.target.value) })}>
-            {selectedAnnotation.rotation % 45 !== 0 && <option value={selectedAnnotation.rotation}>{selectedAnnotation.rotation}°</option>}
-            {["editor.right", "editor.downRight", "editor.down", "editor.downLeft", "editor.left", "editor.upLeft", "editor.up", "editor.upRight"].map((key, index) =>
-              <option key={key} value={index * 45}>{t(key)}</option>)}
-          </select></label>
-          </>}
-          <label>{t("editor.start")} <input aria-label={t("editor.itemStart", { item: annotationName(selectedAnnotation) })} type="number" min={0} max={selectedAnnotation.end - 0.1} step={0.1}
-            value={selectedAnnotation.start} onChange={(e) => {
-              const value = Number(e.target.value);
-              if (Number.isFinite(value)) updateAnnotation({ start: Math.max(0, Math.min(value, selectedAnnotation.end - 0.1)) });
-            }} style={{ width: 70 }} /></label>
-          <label>{t("editor.end")} <input aria-label={t("editor.itemEnd", { item: annotationName(selectedAnnotation) })} type="number" min={selectedAnnotation.start + 0.1} max={timelineDuration} step={0.1}
-            value={selectedAnnotation.end} onChange={(e) => {
-              const value = Number(e.target.value);
-              if (Number.isFinite(value)) updateAnnotation({ end: Math.min(timelineDuration, Math.max(value, selectedAnnotation.start + 0.1)) });
-            }} style={{ width: 70 }} /></label>
-        </>}
+        {selectedAnnotation && (
+          <section className="video-editor-inspector-section video-editor-inspector-section--annotation">
+            <div className="video-editor-inspector-title">
+              <strong>{annotationName(selectedAnnotation)}</strong>
+            </div>
+
+            {selectedAnnotation.type === "text" && <>
+              <label className="video-editor-inspector-field video-editor-inspector-field--wide">
+                <span>{t("editor.text")}</span>
+                <textarea
+                  className="video-editor-inspector-textarea"
+                  aria-label={t("editor.textContent")}
+                  rows={3}
+                  value={textAnnotationDraft?.id === selectedAnnotation.id ? textAnnotationDraft.text : selectedAnnotation.text}
+                  onFocus={() => { textAnnotationEditRef.current = null; }}
+                  onBlur={() => { textAnnotationEditRef.current = null; setTextAnnotationDraft(null); }}
+                  onChange={event => updateTextProperty("text", event.target.value)}
+                />
+              </label>
+
+              <div className="video-editor-inspector-field video-editor-inspector-field--wide">
+                <span>{t("editor.font")}</span>
+                <div className="video-editor-inspector-style-row">
+                  <select
+                    className="video-editor-inspector-select"
+                    aria-label={t("editor.textFont")}
+                    value={textTypography(selectedAnnotation).fontFamily}
+                    onChange={event => updateTextTypography({ fontFamily: event.target.value })}
+                  >
+                    {TEXT_FONTS.map(font => <option key={font.id} value={font.id}>{font.label}</option>)}
+                  </select>
+                  <button
+                    type="button"
+                    className="video-editor-inspector-toggle"
+                    aria-label={t("editor.textBold")}
+                    title={t("editor.textBold")}
+                    aria-pressed={selectedAnnotation.bold ?? false}
+                    onClick={() => updateTextTypography({ bold: !selectedAnnotation.bold })}
+                  >
+                    <b>B</b>
+                  </button>
+                  <button
+                    type="button"
+                    className="video-editor-inspector-toggle"
+                    aria-label={t("editor.textItalic")}
+                    title={t("editor.textItalic")}
+                    aria-pressed={selectedAnnotation.italic ?? false}
+                    onClick={() => updateTextTypography({ italic: !selectedAnnotation.italic })}
+                  >
+                    <i>I</i>
+                  </button>
+                </div>
+              </div>
+
+              <div className="video-editor-inspector-grid">
+                <label className="video-editor-inspector-field">
+                  <span>{t("editor.size")}</span>
+                  <input
+                    className="video-editor-inspector-input"
+                    aria-label={t("editor.textSize")}
+                    type="number"
+                    min={TEXT_LAYOUT.minFontSize}
+                    max={TEXT_LAYOUT.maxFontSize}
+                    value={selectedAnnotation.fontSize}
+                    onFocus={() => { textAnnotationEditRef.current = null; }}
+                    onBlur={() => { textAnnotationEditRef.current = null; }}
+                    onChange={event => updateTextProperty("fontSize", Number(event.target.value))}
+                  />
+                </label>
+
+                <label className="video-editor-inspector-field">
+                  <span>{t("editor.color")}</span>
+                  <div className="video-editor-inspector-color">
+                    <input
+                      type="color"
+                      aria-label={t("editor.itemColor", { item: annotationName(selectedAnnotation) })}
+                      value={selectedAnnotation.color || TEXT_LAYOUT.color}
+                      onChange={(e) => updateAnnotation({ color: e.target.value })}
+                    />
+                    <span>{(selectedAnnotation.color || TEXT_LAYOUT.color).toUpperCase()}</span>
+                  </div>
+                </label>
+              </div>
+            </>}
+
+            {selectedAnnotation.type === "arrow" && (
+              <div className="video-editor-inspector-grid">
+                <label className="video-editor-inspector-field">
+                  <span>{t("editor.stroke")}</span>
+                  <select className="video-editor-inspector-select" aria-label={t("editor.arrowStroke")} value={arrowShaftWidth(selectedAnnotation.shaftWidth)}
+                    onChange={e => updateAnnotation({ shaftWidth: Number(e.target.value) })}>
+                    {ARROW_SHAFT_WIDTHS.map(value => <option key={value} value={value}>{value === 12 ? t("editor.defaultValue", { value }) : value}</option>)}
+                  </select>
+                </label>
+                <label className="video-editor-inspector-field">
+                  <span>{t("editor.color")}</span>
+                  <div className="video-editor-inspector-color">
+                    <input type="color" aria-label={t("editor.itemColor", { item: annotationName(selectedAnnotation) })}
+                      value={selectedAnnotation.color ?? "#FC2667"} onChange={(e) => updateAnnotation({ color: e.target.value })} />
+                    <span>{(selectedAnnotation.color ?? "#FC2667").toUpperCase()}</span>
+                  </div>
+                </label>
+              </div>
+            )}
+
+            {selectedAnnotation.type === "circle" && (
+              <div className="video-editor-inspector-grid">
+                <label className="video-editor-inspector-field">
+                  <span>{t("editor.stroke")}</span>
+                  <select className="video-editor-inspector-select" aria-label={t("editor.circleStroke")} value={circleStrokeWidth(selectedAnnotation.strokeWidth)}
+                    onChange={e => updateAnnotation({ strokeWidth: Number(e.target.value) })}>
+                    {CIRCLE_STROKE_WIDTHS.map(value => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+                <label className="video-editor-inspector-field">
+                  <span>{t("editor.color")}</span>
+                  <div className="video-editor-inspector-color">
+                    <input type="color" aria-label={t("editor.itemColor", { item: annotationName(selectedAnnotation) })}
+                      value={selectedAnnotation.color ?? "#FC2667"} onChange={(e) => updateAnnotation({ color: e.target.value })} />
+                    <span>{(selectedAnnotation.color ?? "#FC2667").toUpperCase()}</span>
+                  </div>
+                </label>
+              </div>
+            )}
+
+            {selectedAnnotation.type === "line" && (
+              <div className="video-editor-inspector-grid">
+                <label className="video-editor-inspector-field">
+                  <span>{t("editor.stroke")}</span>
+                  <select className="video-editor-inspector-select" aria-label={t("editor.lineStroke")} value={lineStrokeWidth(selectedAnnotation.strokeWidth)}
+                    onChange={e => updateAnnotation({ strokeWidth: Number(e.target.value) })}>
+                    {LINE_STROKE_WIDTHS.map(value => <option key={value} value={value}>{value === 3 ? t("editor.defaultValue", { value }) : value}</option>)}
+                  </select>
+                </label>
+                <label className="video-editor-inspector-field">
+                  <span>{t("editor.color")}</span>
+                  <div className="video-editor-inspector-color">
+                    <input type="color" aria-label={t("editor.lineColor")}
+                      value={selectedAnnotation.color ?? "#FC2667"} onChange={(e) => updateAnnotation({ color: e.target.value })} />
+                    <span>{(selectedAnnotation.color ?? "#FC2667").toUpperCase()}</span>
+                  </div>
+                </label>
+              </div>
+            )}
+
+            {selectedAnnotation.type === "symbol" && (
+              <label className="video-editor-inspector-field video-editor-inspector-field--wide">
+                <span>{t("editor.color")}</span>
+                <div className="video-editor-inspector-color">
+                  <input type="color" aria-label={t("editor.itemColor", { item: annotationName(selectedAnnotation) })}
+                    value={selectedAnnotation.color ?? "#FC2667"} onChange={(e) => updateAnnotation({ color: e.target.value })} />
+                  <span>{(selectedAnnotation.color ?? "#FC2667").toUpperCase()}</span>
+                </div>
+              </label>
+            )}
+
+            {selectedAnnotation.type !== "circle" && selectedAnnotation.type !== "text" && (
+              <label className="video-editor-inspector-field video-editor-inspector-field--wide">
+                <span>{t("editor.direction")}</span>
+                <select
+                  className="video-editor-inspector-select"
+                  aria-label={selectedAnnotation.type === "line" ? t("editor.lineDirection") : t("editor.itemDirection", { item: annotationName(selectedAnnotation) })}
+                  value={selectedAnnotation.rotation}
+                  onChange={(e) => updateAnnotation({ rotation: Number(e.target.value) })}
+                >
+                  {selectedAnnotation.rotation % 45 !== 0 && <option value={selectedAnnotation.rotation}>{selectedAnnotation.rotation}°</option>}
+                  {["editor.right", "editor.downRight", "editor.down", "editor.downLeft", "editor.left", "editor.upLeft", "editor.up", "editor.upRight"].map((key, index) =>
+                    <option key={key} value={index * 45}>{t(key)}</option>)}
+                </select>
+              </label>
+            )}
+
+            <div className="video-editor-inspector-divider" />
+
+            <div className="video-editor-inspector-grid">
+              <label className="video-editor-inspector-field">
+                <span>{t("editor.start")}</span>
+                <div className="video-editor-inspector-time">
+                  <input
+                    className="video-editor-inspector-input"
+                    aria-label={t("editor.itemStart", { item: annotationName(selectedAnnotation) })}
+                    type="number"
+                    min={0}
+                    max={selectedAnnotation.end - 0.1}
+                    step={0.1}
+                    value={selectedAnnotation.start}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      if (Number.isFinite(value)) updateAnnotation({ start: Math.max(0, Math.min(value, selectedAnnotation.end - 0.1)) });
+                    }}
+                  />
+                  <span>s</span>
+                </div>
+              </label>
+
+              <label className="video-editor-inspector-field">
+                <span>{t("editor.end")}</span>
+                <div className="video-editor-inspector-time">
+                  <input
+                    className="video-editor-inspector-input"
+                    aria-label={t("editor.itemEnd", { item: annotationName(selectedAnnotation) })}
+                    type="number"
+                    min={selectedAnnotation.start + 0.1}
+                    max={timelineDuration}
+                    step={0.1}
+                    value={selectedAnnotation.end}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      if (Number.isFinite(value)) updateAnnotation({ end: Math.min(timelineDuration, Math.max(value, selectedAnnotation.start + 0.1)) });
+                    }}
+                  />
+                  <span>s</span>
+                </div>
+              </label>
+            </div>
+          </section>
+        )}
         {copiedAnnotation && <button type="button" className="video-editor-tool-button" aria-label={t("editor.pasteItem", { item: annotationName(copiedAnnotation) })} title={t("editor.pasteItem", { item: annotationName(copiedAnnotation) })}
           onClick={() => addAnnotation(copiedAnnotation)}><EditorToolIcon name="paste" /></button>}
         {selectedCoverOverlay && (
