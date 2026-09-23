@@ -393,11 +393,39 @@ func TestValidateEditTimelineNormalizesAndValidatesOverlayMode(t *testing.T) {
 	blur.Overlays[0].Color = ""
 	blur.Overlays[0].Opacity = &opacity
 	if err := validateEditTimeline(&blur); err != nil {
-		t.Fatalf("valid cover opacity rejected: %v", err)
+		t.Fatalf("valid blur tint opacity rejected: %v", err)
 	}
 	opacity = 0
+	if err := validateEditTimeline(&blur); err != nil {
+		t.Fatalf("zero blur tint opacity rejected: %v", err)
+	}
+	opacity = -0.1
 	if err := validateEditTimeline(&blur); err == nil {
-		t.Fatal("invalid cover opacity was accepted")
+		t.Fatal("negative blur tint opacity was accepted")
+	}
+
+	cover := validTimeline(editClip{ID: "one", SourceID: "source-a", SourceStart: 0, SourceEnd: 10})
+	coverOpacity := 0.1
+	cover.Overlays = []editorCoverOverlay{{
+		ID: "cover", X: 10, Y: 10, Width: 20, Height: 20, Start: 0, End: 5, Mode: "cover", Opacity: &coverOpacity,
+	}}
+	if err := validateEditTimeline(&cover); err != nil {
+		t.Fatalf("valid cover opacity rejected: %v", err)
+	}
+	coverOpacity = 0
+	if err := validateEditTimeline(&cover); err == nil {
+		t.Fatal("zero cover opacity was accepted")
+	}
+
+	strength := 18.5
+	blur.Overlays[0].Opacity = nil
+	blur.Overlays[0].BlurStrength = &strength
+	if err := validateEditTimeline(&blur); err != nil {
+		t.Fatalf("valid blur strength rejected: %v", err)
+	}
+	strength = 31
+	if err := validateEditTimeline(&blur); err == nil {
+		t.Fatal("out-of-range blur strength was accepted")
 	}
 }
 
@@ -530,8 +558,10 @@ func TestBuildTimelineRenderArgsUsesCoverOpacity(t *testing.T) {
 func TestBuildTimelineRenderArgsIncludesTimedScaledBlurOverlays(t *testing.T) {
 	clips := []editClip{{ID: "clip-1", SourceID: "original", SourceStart: 0, SourceEnd: 12, Duration: 12}}
 	sources := map[string]sourceVideo{"original": {ID: "original", HasAudio: true}}
+	strength := 18.5
+	tintOpacity := 0.3
 	overlays := []editorCoverOverlay{
-		{ID: "blur-1", X: 25, Y: 10, Width: 40, Height: 20, Start: 3.5, End: 8.25, Mode: "blur"},
+		{ID: "blur-1", X: 25, Y: 10, Width: 40, Height: 20, Start: 3.5, End: 8.25, Mode: "blur", BlurStrength: &strength, Color: "#e6467a", Opacity: &tintOpacity},
 		{ID: "blur-2", X: 5, Y: 60, Width: 15, Height: 25, Start: 1, End: 11, Mode: "blur"},
 	}
 
@@ -539,7 +569,7 @@ func TestBuildTimelineRenderArgsIncludesTimedScaledBlurOverlays(t *testing.T) {
 		[]string{"original.mp4"}, clips, map[string]int{"original": 0}, sources, "output.mp4", overlays,
 	), " ")
 	want := []string{
-		"crop=w=iw*0.400000:h=ih*0.200000:x=iw*0.250000:y=ih*0.100000,gblur=sigma=12:steps=2",
+		"crop=w=iw*0.400000:h=ih*0.200000:x=iw*0.250000:y=ih*0.100000,gblur=sigma=18.5:steps=2,drawbox=x=0:y=0:w=iw:h=ih:color=0xe6467a@0.300:t=fill",
 		"overlay=x=main_w*0.250000:y=main_h*0.100000:enable='between(t,3.500,8.250)'",
 		"crop=w=iw*0.150000:h=ih*0.250000:x=iw*0.050000:y=ih*0.600000,gblur=sigma=12:steps=2",
 		"overlay=x=main_w*0.050000:y=main_h*0.600000:enable='between(t,1.000,11.000)'",
