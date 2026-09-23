@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
 import { useI18n } from "../i18n/I18nContext";
 import { PromptDialog } from "./PromptDialog";
@@ -209,7 +209,7 @@ export function serializeTimeline(clips: EditorClip[], overlays: EditorCoverOver
   });
 }
 
-function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" | "circle" | "symbol" | "line" | "microphone" | "stop" }) {
+function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" | "undo" | "fit" | "minus" | "plus" | "copy" | "paste" | "delete" | "arrow" | "circle" | "symbol" | "line" | "microphone" | "stop" | "mute" | "unmute" }) {
   const paths = {
     arrow: <path d="M2 13 13 2M5 2h8v8" />,
     circle: <circle cx="8" cy="8" r="5.5" />,
@@ -217,6 +217,8 @@ function EditorToolIcon({ name }: { name: "trim" | "split" | "cover" | "insert" 
     line: <path d="M2 12 14 4" />,
     microphone: <><rect x="6" y="2" width="4" height="8" rx="2" /><path d="M4 7a4 4 0 0 0 8 0M8 11v3M5.5 14h5" /></>,
     stop: <rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor" stroke="none" />,
+    mute: <><path d="M2 6h3l4-3v10l-4-3H2Z" /><path d="m11.5 6 3 4M14.5 6l-3 4" /></>,
+    unmute: <><path d="M2 6h3l4-3v10l-4-3H2Z" /><path d="M11 5.5a4 4 0 0 1 0 5M12.8 3.8a6.2 6.2 0 0 1 0 8.4" /></>,
     trim: <><circle cx="3.5" cy="4" r="1.5" /><circle cx="3.5" cy="12" r="1.5" /><path d="m4.8 5 7.7 6.5M4.8 11l7.7-6.5" /></>,
     split: <><rect x="1.5" y="3" width="5" height="10" rx="1" /><rect x="9.5" y="3" width="5" height="10" rx="1" /><path d="M8 2.5v11" /></>,
     cover: <rect x="2" y="3" width="12" height="10" rx="1.5" />,
@@ -4067,8 +4069,13 @@ export function VideoEditorModal({
             borderRadius: 8, overflow: "hidden", userSelect: "none" }}>
           {segments.map((segment, index) => {
             const visual = audioResizeDraft?.id === segment.id ? audioResizeDraft : segment;
+            const left = timelineDuration > 0 ? visual.timelineStart / timelineDuration * 100 : 0;
+            const width = timelineDuration > 0 ? audioSegmentTimelineDuration(visual, clips) / timelineDuration * 100 : 0;
+            const end = left + width;
+            const selected = selectedAudioId === segment.id;
             return (
-            <div key={segment.id} data-testid={`video-editor-audio-${videoAudioSource(segment)?.clipId ?? segment.id}`}
+            <Fragment key={segment.id}>
+            <div data-testid={`video-editor-audio-${videoAudioSource(segment)?.clipId ?? segment.id}`}
               className="video-editor-timeline-audio-segment"
               onPointerDown={e => handleAudioResize(e, segment, "move")}
               onClick={e => { e.stopPropagation(); setSelectedAudioId(segment.id); }}
@@ -4077,10 +4084,10 @@ export function VideoEditorModal({
               data-timeline-start={segment.timelineStart}
               title={t("editor.audioSegment", { track: label, number: index + 1 })}
               style={{ position: "absolute", top: 4, bottom: 4,
-                left: `${timelineDuration > 0 ? visual.timelineStart / timelineDuration * 100 : 0}%`,
-                width: `${timelineDuration > 0 ? audioSegmentTimelineDuration(visual, clips) / timelineDuration * 100 : 0}%`,
+                left: `${left}%`,
+                width: `${width}%`,
                 cursor: movingAudioId === segment.id ? "grabbing" : "grab", touchAction: "none",
-                outline: selectedAudioId === segment.id ? "2px solid #FC2667" : undefined,
+                outline: selected ? "2px solid #FC2667" : undefined,
                 outlineOffset: -1,
                 boxSizing: "border-box", border: "1px solid rgba(255,255,255,0.45)", background: "#34465e",
                 color: "#fff", fontSize: 12, padding: "0 12px", display: "flex", alignItems: "center",
@@ -4093,7 +4100,7 @@ export function VideoEditorModal({
                 <path d="M2 6h3l4-3v10l-4-3H2ZM12 5a5 5 0 0 1 0 6" />
               </svg>
               <span className="video-editor-timeline-audio-label" style={{ position: "relative", background: "#34465e" }}>{t("editor.audioNumber", { track: label, number: index + 1 })}{segment.muted === true ? t("editor.mutedSuffix") : ""}</span>
-              {selectedAudioId === segment.id && (["start", "end"] as const).map(edge => (
+              {selected && (["start", "end"] as const).map(edge => (
                 <button key={edge} type="button" data-audio-resize-handle={edge} aria-label={t(edge === "start" ? "editor.audioTrimStart" : "editor.audioTrimEnd")}
                   disabled={audioSegmentTimelineDuration(segment, clips) < 0.1}
                   onPointerDown={e => handleAudioResize(e, segment, edge)}
@@ -4103,6 +4110,42 @@ export function VideoEditorModal({
                     background: "rgba(255,255,255,0.78)", cursor: "ew-resize", touchAction: "none" }} />
               ))}
             </div>
+
+            {selected && (
+              <div
+                className="video-editor-timeline-cover-menu video-editor-timeline-audio-menu"
+                data-testid={`video-editor-audio-menu-${segment.id}`}
+                style={
+                  end >= 14
+                    ? { left: `calc(${end}% - 6px)`, transform: "translateX(-100%)" }
+                    : { left: `calc(${left}% + 6px)` }
+                }
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className="video-editor-timeline-cover-menu-button"
+                  aria-label={t(segment.muted === true ? "editor.unmute" : "editor.mute")}
+                  title={t(segment.muted === true ? "editor.unmute" : "editor.mute")}
+                  disabled={audioGestureActive || audioVolumeDraft !== null}
+                  onClick={handleToggleAudioMute}
+                >
+                  <EditorToolIcon name={segment.muted === true ? "unmute" : "mute"} />
+                </button>
+                <button
+                  type="button"
+                  className="video-editor-timeline-cover-menu-button video-editor-timeline-cover-menu-button--destructive"
+                  aria-label={t("editor.deleteAudio")}
+                  title={t("editor.deleteAudio")}
+                  disabled={audioGestureActive || audioVolumeDraft !== null}
+                  onClick={handleDeleteAudio}
+                >
+                  <EditorToolIcon name="delete" />
+                </button>
+              </div>
+            )}
+            </Fragment>
           ); })}
           <div data-testid={`audio-playhead-${trackId}`} aria-hidden="true"
             style={{ position: "absolute", top: 0, bottom: 0, left: `${playheadPct}%`, width: 2,
@@ -4113,21 +4156,6 @@ export function VideoEditorModal({
         </div>
 
         <div style={{ minHeight: 36, display: "flex", alignItems: "center", gap: 6 }}>
-          {audioSegments.some(segment => segment.id === selectedAudioId) && (
-            <button type="button" className="video-editor-tool-button" onClick={handleToggleAudioMute}
-              disabled={audioGestureActive || audioVolumeDraft !== null}
-              style={{ width: "auto", padding: "0 8px" }}>
-              {t(audioSegments.find(segment => segment.id === selectedAudioId)?.muted === true ? "editor.unmute" : "editor.mute")}
-            </button>
-          )}
-          {audioSegments.some(segment => segment.id === selectedAudioId) && (
-            <button type="button" className="video-editor-tool-button" onClick={handleDeleteAudio}
-              disabled={audioGestureActive || audioVolumeDraft !== null}
-              style={{ width: "auto", gap: 6, padding: "0 8px" }}>
-              <EditorToolIcon name="delete" />
-              {t("editor.deleteAudio")}
-            </button>
-          )}
           {audioSegments.some(segment => segment.id === selectedAudioId) && (
             <label className="video-editor-cover-time-label">
               {t("editor.volume")}{" "}
