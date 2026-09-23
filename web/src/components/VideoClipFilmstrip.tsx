@@ -32,7 +32,19 @@ export function VideoClipFilmstrip({ sourceKey, sourceStart, sourceEnd, loadUrl 
     return () => observer.disconnect();
   }, []);
 
-  const count = useMemo(() => width > 40 ? Math.max(2, Math.min(14, Math.ceil(width / 96))) : 0, [width]);
+  const count = useMemo(() => {
+    if (width <= 40) return 0;
+    // Keep each visible thumbnail reasonably narrow at high timeline zoom.
+    // The cap avoids excessive browser-side seeking on long clips.
+    return Math.max(2, Math.min(40, Math.ceil(width / 240)));
+  }, [width]);
+
+  const frameSize = useMemo(() => {
+    if (width >= 4800) return { width: 320, height: 180, quality: 0.82 };
+    if (width >= 2400) return { width: 280, height: 158, quality: 0.8 };
+    if (width >= 1200) return { width: 240, height: 135, quality: 0.78 };
+    return { width: 180, height: 101, quality: 0.74 };
+  }, [width]);
   const times = useMemo(() => filmstripSampleTimes(sourceStart, sourceEnd, count), [sourceStart, sourceEnd, count]);
   const timeKey = times.map(value => value.toFixed(3)).join(",");
 
@@ -42,7 +54,7 @@ export function VideoClipFilmstrip({ sourceKey, sourceStart, sourceEnd, loadUrl 
       return;
     }
     let cancelled = false;
-    const keys = times.map(time => `${sourceKey}:${time.toFixed(3)}`);
+    const keys = times.map(time => `${sourceKey}:${time.toFixed(3)}:${frameSize.width}x${frameSize.height}:q${frameSize.quality}`);
     const cached = keys.map(key => frameCache.get(key));
     if (cached.every(Boolean)) {
       setFrames(cached as string[]);
@@ -71,8 +83,8 @@ export function VideoClipFilmstrip({ sourceKey, sourceStart, sourceEnd, loadUrl 
         video.src = await loadUrl();
         if (video.readyState < 1) await waitFor("loadedmetadata");
         const canvas = document.createElement("canvas");
-        canvas.width = 160;
-        canvas.height = 90;
+        canvas.width = frameSize.width;
+        canvas.height = frameSize.height;
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
 
@@ -97,7 +109,7 @@ export function VideoClipFilmstrip({ sourceKey, sourceStart, sourceEnd, loadUrl 
           const dw = vw * scale, dh = vh * scale;
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           ctx.drawImage(video, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
-          const data = canvas.toDataURL("image/jpeg", 0.62);
+          const data = canvas.toDataURL("image/jpeg", frameSize.quality);
           frameCache.set(key, data);
           next.push(data);
         }
@@ -111,7 +123,7 @@ export function VideoClipFilmstrip({ sourceKey, sourceStart, sourceEnd, loadUrl 
     })();
 
     return () => { cancelled = true; };
-  }, [sourceKey, sourceStart, sourceEnd, timeKey]);
+  }, [sourceKey, sourceStart, sourceEnd, timeKey, frameSize]);
 
   return (
     <div ref={rootRef} className="video-editor-filmstrip" data-testid="video-editor-filmstrip" aria-hidden="true">
