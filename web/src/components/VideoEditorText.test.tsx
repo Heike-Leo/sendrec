@@ -12,7 +12,7 @@ vi.mock("./editorAudioWaveform", async original => ({
   ...await original<typeof import("./editorAudioWaveform")>(), loadAudioWaveformPeaks: vi.fn().mockRejectedValue(new Error("unused")),
 }));
 const text = (patch: Partial<TextAnnotation> = {}): TextAnnotation => ({ id: "text-a", type: "text", text: "Hinweis", x: 10, y: 20, width: 40, height: 10, fontSize: 32, start: 0, end: 5, ...patch });
-type Timeline = { version: number; clips: { id: string; sourceId: string; sourceStart: number; sourceEnd: number; duration: number }[]; annotations: EditorAnnotation[]; audioSegments: never[] };
+type Timeline = { overlays?: { id: string; mode?: "cover" | "blur"; blurStrength?: number; x: number; y: number; width: number; height: number; start: number; end: number }[]; version: number; clips: { id: string; sourceId: string; sourceStart: number; sourceEnd: number; duration: number }[]; annotations: EditorAnnotation[]; audioSegments: never[] };
 let timeline: Timeline;
 const callbacks = new Set<ResizeObserverCallback>();
 const rect = (width: number, height: number, left = 0, top = 0): DOMRect => ({ x: left, y: top, left, top, width, height, right: left + width, bottom: top + height, toJSON: () => ({}) });
@@ -354,7 +354,8 @@ describe("text annotation preview", () => {
     drag(content().parentElement!,-100,-100);
     expect(screen.getByRole("button",{name:"↶ Rückgängig"})).toBeDisabled();
     fireEvent.click(screen.getByRole("button",{name:"Vergrößern"}));
-    expect(screen.getByTestId("video-editor-annotation-tracks")).toHaveStyle({width:"200%"});
+    fireEvent.click(screen.getByRole("button",{name:"Vergrößern"}));
+    expect(screen.getByTestId("video-editor-overlay-scroll")).toHaveStyle({width:"200%"});
     vi.spyOn(screen.getByTestId("video-editor-text-track-text-a"),"getBoundingClientRect").mockReturnValue(rect(2000,38));
     drag(screen.getByRole("button",{name:"Text 1"}),200);
     expect(screen.getByLabelText("Text Start")).toHaveValue(1);
@@ -362,5 +363,61 @@ describe("text annotation preview", () => {
     undo();
     expect(screen.getByRole("button",{name:"Text 1"})).toHaveStyle({left:"0%",width:"50%"});
     expect(screen.getByRole("button",{name:"↶ Rückgängig"})).toBeDisabled();
+  });
+});
+
+
+describe("shared visual timeline lanes", () => {
+  function mixedTimeline() {
+    timeline.overlays = [
+      { id: "cover", mode: "cover", x: 10, y: 10, width: 20, height: 20, start: 0, end: 2 },
+      { id: "blur", mode: "blur", blurStrength: 12, x: 10, y: 10, width: 20, height: 20, start: 4, end: 6 },
+    ];
+    timeline.annotations = [text({ start: 2, end: 4 }), ...(["arrow", "circle", "line", "symbol"] as const).map((type, i) => ({
+      id: type, type, symbol: "check" as const, rotation: 0, x: 10, y: 10, width: 20, height: 20, start: 6 + i, end: 7 + i,
+    }))];
+  }
+
+  it.each(["move", "start", "end"] as const)("keeps mixed-type wrappers and selection stable while %s repacks, then undo restores one lane", async edge => {
+    mixedTimeline();
+    await open();
+    const track = screen.getByTestId("video-editor-overlay-track");
+    expect(track).toHaveAttribute("data-lane-count", "1");
+    expect(screen.getAllByTestId("video-editor-visual-lane")).toHaveLength(1);
+    expect(track).not.toContainElement(screen.getByTestId("video-editor-timeline"));
+    const wrapper = screen.getByTestId("video-editor-text-track-text-a");
+    vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue(rect(1000, 38));
+    const bar = screen.getByRole("button", { name: "Text 1" });
+    drag(edge === "move" ? bar : screen.getByTestId(`video-editor-text-${edge}-text-a`), edge === "end" ? 100 : -100);
+    expect(track).toHaveAttribute("data-lane-count", "2");
+    expect(screen.getByTestId("video-editor-text-track-text-a")).toBe(wrapper);
+    expect(screen.getByRole("button", { name: "Text 1" })).toBe(bar);
+    expect(bar).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("video-editor-annotation-menu-text-a")).toBeInTheDocument();
+    undo();
+    expect(track).toHaveAttribute("data-lane-count", "1");
+    expect(wrapper).toHaveAttribute("data-lane", "0");
+    expect(bar).toHaveStyle({ left: "20%", width: "20%" });
+  });
+
+  it("keeps many sequential items unscrolled and preserves packed data through save/reload", async () => {
+    mixedTimeline();
+    const expected = structuredClone(timeline);
+    let view = await open();
+    expect(screen.getByTestId("video-editor-overlay-scroll")).toHaveStyle({ overflowY: "visible" });
+    select();
+    fireEvent.change(screen.getByLabelText("Textinhalt"), { target: { value: "Gespeichert" } });
+    await waitFor(() => expect(timeline.annotations[0]).toMatchObject({ text: "Gespeichert" }));
+    expect(timeline.overlays).toEqual(expected.overlays);
+    expect(timeline.annotations).toEqual([text({ start: 2, end: 4, text: "Gespeichert" }), ...expected.annotations.slice(1)]);
+    view.unmount(); view = await open();
+    expect(screen.getByTestId("video-editor-overlay-track")).toHaveAttribute("data-lane-count", "1");
+    select();
+    fireEvent.click(screen.getByRole("button", { name: "Text kopieren" }));
+    expect(screen.getByTestId("video-editor-overlay-track")).toHaveAttribute("data-lane-count", "1");
+    fireEvent.click(screen.getByRole("button", { name: "Text löschen" }));
+    expect(screen.queryByTestId("video-editor-text-track-text-a")).not.toBeInTheDocument();
+    undo();
+    expect(screen.getByTestId("video-editor-text-track-text-a")).toHaveAttribute("data-lane", "0");
   });
 });

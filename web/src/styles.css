@@ -6060,3 +6060,13 @@ textarea.form-input {
 .video-editor-inspector-range-row--compact {
   padding: 0 2px;
 }
+
+/* Stable full-width gesture coordinates, with hit testing only on bars/menus. */
+.video-editor-timeline-annotation-items,
+.video-editor-timeline-visual-item {
+  pointer-events: none;
+}
+
+.video-editor-timeline-visual-item > * {
+  pointer-events: auto;
+}

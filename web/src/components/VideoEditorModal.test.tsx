@@ -4923,7 +4923,7 @@ describe("VideoEditorModal multi-source preview", () => {
     render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
 
     const track = await screen.findByTestId("video-editor-overlay-track");
-    expect(Array.from(track.children).map((row) => row.getAttribute("data-testid"))).toEqual([
+    expect(Array.from(track.querySelectorAll("[data-selected]")).map((row) => row.getAttribute("data-testid"))).toEqual([
       "video-editor-overlay-row-cover-first",
       "video-editor-overlay-row-cover-second",
     ]);
@@ -4972,7 +4972,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getAllByTestId(/video-editor-overlay-row-/)).toHaveLength(4);
   });
 
-  it("scrolls only the cover overlay rows from the fifth overlay onward", async () => {
+  it("scrolls visual lanes only when five intervals overlap", async () => {
     editorState = {
       timeline: {
         version: 1,
@@ -4985,8 +4985,8 @@ describe("VideoEditorModal multi-source preview", () => {
           y: 10,
           width: 20,
           height: 20,
-          start: index * 5,
-          end: index * 5 + 10,
+          start: 0,
+          end: 10,
         })),
       },
       renderStatus: "none",

@@ -1,3 +1,4 @@
+import { packTimelineLanes } from "./editorTimelineLanes";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../api/client";
 import { useI18n } from "../i18n/I18nContext";
@@ -297,6 +298,10 @@ export function VideoEditorModal({
   const [coverOverlays, setCoverOverlays] = useState<EditorCoverOverlay[]>([]);
   const [selectedCoverOverlayId, setCoverSelection] = useState<string | null>(null);
   const [annotations, setAnnotations] = useState<EditorAnnotation[]>([]);
+  const visualLanes = useMemo(() => packTimelineLanes([
+    ...coverOverlays.map(item => ({ key: `overlay:${item.id}`, start: item.start, end: item.end })),
+    ...annotations.map(item => ({ key: `annotation:${item.id}`, start: item.start, end: item.end })),
+  ]), [coverOverlays, annotations]);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [copiedAnnotation, setCopiedAnnotation] = useState<EditorAnnotation | null>(null);
   const [showSymbolPicker, setShowSymbolPicker] = useState(false);
@@ -3914,41 +3919,24 @@ export function VideoEditorModal({
             maxHeight:
               VISIBLE_OVERLAY_TRACKS * OVERLAY_TRACK_HEIGHT +
               (VISIBLE_OVERLAY_TRACKS - 1) * OVERLAY_TRACK_GAP,
-            overflowY: coverOverlays.length > VISIBLE_OVERLAY_TRACKS ? "auto" : "visible",
-            marginBottom: 4,
+            overflowY: visualLanes.laneCount > VISIBLE_OVERLAY_TRACKS ? "auto" : "visible",
+            marginBottom: visualLanes.laneCount > 0 ? 4 : 0,
           }}
         >
         <div
           data-testid="video-editor-overlay-track"
+          data-lane-count={visualLanes.laneCount}
           style={{
             width: "100%",
-            display: "flex",
-            flexDirection: "column",
-            gap: OVERLAY_TRACK_GAP,
+            position: "relative",
+            height: visualLanes.laneCount * (OVERLAY_TRACK_HEIGHT + OVERLAY_TRACK_GAP) - (visualLanes.laneCount > 0 ? OVERLAY_TRACK_GAP : 0),
           }}
         >
-          {coverOverlays.length === 0 && (
-            <div
-              className="video-editor-timeline-overlay-row"
-              style={{
-                position: "relative",
-                height: 38,
-                overflow: "hidden",
-              }}
-            >
-              <span
-                style={{
-                  position: "absolute",
-                  left: 10,
-                  top: 9,
-                  fontSize: 12,
-                  color: "var(--color-text-secondary)",
-                }}
-              >
-                {t("editor.covers")}
-              </span>
-            </div>
-          )}
+          {Array.from({ length: visualLanes.laneCount }, (_, lane) => (
+            <div key={`lane-${lane}`} aria-hidden="true" className="video-editor-timeline-overlay-row"
+              data-testid="video-editor-visual-lane"
+              style={{ position: "absolute", top: lane * (OVERLAY_TRACK_HEIGHT + OVERLAY_TRACK_GAP), width: "100%", height: OVERLAY_TRACK_HEIGHT, pointerEvents: "none" }} />
+          ))}
 
           {coverOverlays.map((overlay, index) => {
             const isBlur = overlay.mode === "blur";
@@ -3971,12 +3959,15 @@ export function VideoEditorModal({
             return (
               <div
                 key={overlay.id}
-                className="video-editor-timeline-overlay-row"
+                className="video-editor-timeline-visual-item"
+                data-lane={visualLanes.laneByKey.get(`overlay:${overlay.id}`)}
                 data-testid={`video-editor-overlay-row-${overlay.id}`}
                 data-selected={selected ? "true" : "false"}
                 style={{
-                  position: "relative",
-                  height: 38,
+                  position: "absolute",
+                  top: visualLanes.laneByKey.get(`overlay:${overlay.id}`)! * (OVERLAY_TRACK_HEIGHT + OVERLAY_TRACK_GAP),
+                  width: "100%",
+                  height: OVERLAY_TRACK_HEIGHT,
                   overflow: selected ? "visible" : "hidden",
                   zIndex: selected ? 5 : 1,
                 }}
@@ -4085,12 +4076,11 @@ export function VideoEditorModal({
               </div>
             );
           })}
-        </div>
-        </div>
 
           {annotations.length > 0 && <div data-testid="video-editor-annotation-tracks"
+            className="video-editor-timeline-annotation-items"
             onClick={() => setSelectedCoverOverlayId(null)}
-            style={{ width: `${timelineZoom * 100}%`, minWidth: "100%", marginBottom: 4, display: "flex", flexDirection: "column", gap: 4 }}>
+            style={{ position: "absolute", inset: 0, width: "100%" }}>
             {annotations.map((item, index) => {
               const left = timelineDuration > 0 ? item.start / timelineDuration * 100 : 0;
               const width = timelineDuration > 0 ? (item.end - item.start) / timelineDuration * 100 : 0;
@@ -4101,8 +4091,9 @@ export function VideoEditorModal({
               });
 
               return <div key={item.id} data-testid={`video-editor-${item.type}-track-${item.id}`}
-                className="video-editor-timeline-overlay-row"
-                style={{ height: 38, position: "relative", overflow: selected ? "visible" : "hidden", zIndex: selected ? 5 : 1 }}>
+                className="video-editor-timeline-visual-item"
+                data-lane={visualLanes.laneByKey.get(`annotation:${item.id}`)}
+                style={{ height: OVERLAY_TRACK_HEIGHT, position: "absolute", width: "100%", top: visualLanes.laneByKey.get(`annotation:${item.id}`)! * (OVERLAY_TRACK_HEIGHT + OVERLAY_TRACK_GAP), overflow: selected ? "visible" : "hidden", zIndex: selected ? 5 : 1 }}>
                 <button type="button" aria-label={label} aria-pressed={selected}
                   onPointerDown={(e) => handleAnnotationTimelinePointerDown(e, item, "move")}
                   onClick={(e) => { e.stopPropagation(); selectAnnotation(item.id); }}
@@ -4159,6 +4150,8 @@ export function VideoEditorModal({
               </div>;
             })}
           </div>}
+        </div>
+        </div>
           <div
             ref={timelineRef}
             data-testid="video-editor-timeline"
