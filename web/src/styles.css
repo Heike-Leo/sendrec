@@ -5732,3 +5732,71 @@ textarea.form-input {
 .video-editor-timeline-cover-menu-button--destructive:hover {
   background: #fff1f2;
 }
+
+
+/* Studio editor 40c.4: floating voice-over recording control follows the playhead. */
+.video-editor-timeline-recording-menu {
+  position: absolute;
+  top: 8px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 3px 4px 3px 9px;
+  border: 1px solid #fda4af;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.18);
+  color: #9f1239;
+  white-space: nowrap;
+}
+
+.video-editor-timeline-recording-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: #e11d48;
+  box-shadow: 0 0 0 3px rgba(225, 29, 72, 0.12);
+  animation: video-editor-recording-pulse 1.25s ease-in-out infinite;
+}
+
+.video-editor-timeline-recording-label {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.video-editor-timeline-recording-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: #fff1f2;
+  color: #be123c;
+  cursor: pointer;
+}
+
+.video-editor-timeline-recording-stop:hover:not(:disabled) {
+  background: #ffe4e6;
+}
+
+.video-editor-timeline-recording-stop:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@keyframes video-editor-recording-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.82); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .video-editor-timeline-recording-dot {
+    animation: none;
+  }
+}
