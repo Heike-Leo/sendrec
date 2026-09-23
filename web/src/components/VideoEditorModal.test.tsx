@@ -4099,7 +4099,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.queryByTestId("video-editor-cover-overlay-cover-saved-2")).not.toBeInTheDocument();
   });
 
-  it("treats legacy overlays as cover and toggles mode without changing identity or geometry", async () => {
+  it("treats legacy overlays as cover and creates blur with the dedicated tool", async () => {
     const user = userEvent.setup();
     editorState = {
       timeline: {
@@ -4117,43 +4117,28 @@ describe("VideoEditorModal multi-source preview", () => {
     };
 
     render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
-    const overlay = await screen.findByTestId("video-editor-cover-overlay-legacy-cover");
+    const cover = await screen.findByTestId("video-editor-cover-overlay-legacy-cover");
     await user.click(screen.getByTestId("video-editor-cover-badge-legacy-cover"));
-    const mode = screen.getByRole("combobox", { name: "Abdeckungstyp" });
-    const originalGeometry = {
-      left: overlay.style.left,
-      top: overlay.style.top,
-      width: overlay.style.width,
-      height: overlay.style.height,
-    };
 
-    expect(mode).toHaveValue("cover");
-    expect(overlay).toHaveStyle({ background: "#000" });
+    expect(screen.queryByRole("combobox", { name: "Abdeckungstyp" })).not.toBeInTheDocument();
+    expect(cover).toHaveStyle({ background: "#000" });
     expect(screen.getByText("Abdeckung 1")).toBeInTheDocument();
-    expect(screen.getByTestId("video-editor-cover-badge-legacy-cover")).toHaveTextContent("1");
 
-    await user.selectOptions(mode, "blur");
-    expect(mode).toHaveValue("blur");
-    expect(overlay.style.backdropFilter).toBe("blur(12px)");
-    expect({
-      left: overlay.style.left,
-      top: overlay.style.top,
-      width: overlay.style.width,
-      height: overlay.style.height,
-    }).toEqual(originalGeometry);
-    expect(screen.getByRole("spinbutton", { name: /Start/ })).toHaveValue(0);
-    expect(screen.getByRole("spinbutton", { name: /Ende/ })).toHaveValue(19);
-    expect(screen.getByTestId("video-editor-overlay-row-legacy-cover")).toHaveAttribute("data-selected", "true");
+    await user.click(screen.getByRole("button", { name: "Blur hinzufügen" }));
+    const blur = screen.getAllByTestId(/video-editor-cover-overlay-/).find(
+      element => element.getAttribute("data-testid")?.includes("blur-"),
+    );
+    expect(blur).toBeTruthy();
+    expect(blur?.style.backdropFilter).toBe("blur(12px)");
+    expect(screen.getByRole("slider", { name: "Blur-Stärke" })).toHaveValue("12");
+    expect(screen.getByRole("slider", { name: "Tint-Deckkraft" })).toHaveValue("0");
+    expect(screen.getByLabelText("Tint-Farbe")).toHaveValue("#000000");
 
-    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
-    await user.click(screen.getByTestId("video-editor-cover-badge-legacy-cover"));
-    expect(screen.getByRole("combobox", { name: "Abdeckungstyp" })).toHaveValue("cover");
-
-    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "blur");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "cover");
-    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
-    await user.click(screen.getByTestId("video-editor-cover-badge-legacy-cover"));
-    expect(screen.getByRole("combobox", { name: "Abdeckungstyp" })).toHaveValue("blur");
+    fireEvent.change(screen.getByRole("slider", { name: "Blur-Stärke" }), { target: { value: "20" } });
+    expect(blur?.style.backdropFilter).toBe("blur(20px)");
+    fireEvent.change(screen.getByLabelText("Tint-Farbe"), { target: { value: "#e6467a" } });
+    fireEvent.change(screen.getByRole("slider", { name: "Tint-Deckkraft" }), { target: { value: "30" } });
+    expect(blur?.style.background).toContain("color-mix");
   });
 
   it("persists, restores and copies blur mode through the existing overlay timeline", async () => {
@@ -4208,7 +4193,7 @@ describe("VideoEditorModal multi-source preview", () => {
     }
   });
 
-  it("uses black for legacy covers and preserves a custom color across blur and undo", async () => {
+  it("uses black for legacy covers and preserves a custom cover color across undo", async () => {
     const user = userEvent.setup();
     editorState = {
       timeline: {
@@ -4237,19 +4222,9 @@ describe("VideoEditorModal multi-source preview", () => {
     await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
     await user.click(screen.getByTestId("video-editor-cover-badge-colored-cover"));
     expect(screen.getByLabelText("Cover-Farbe")).toHaveValue("#000000");
-
-    fireEvent.change(screen.getByLabelText("Cover-Farbe"), {
-      target: { value: "#123456" },
-    });
-    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "blur");
-    expect(screen.queryByLabelText("Cover-Farbe")).not.toBeInTheDocument();
-    expect(overlay.style.backdropFilter).toBe("blur(12px)");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "cover");
-    expect(screen.getByLabelText("Cover-Farbe")).toHaveValue("#123456");
-    expect(overlay).toHaveStyle({ background: "#123456" });
   });
 
-  it("edits cover text as one undo step and hides it only in blur mode", async () => {
+  it("edits cover text as one undo step while blur remains a separate tool", async () => {
     const user = userEvent.setup();
     editorState = {
       renderStatus: "none", renderError: null, renderedVideoId: null,
@@ -4270,14 +4245,10 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getByTestId("video-editor-cover-overlay-text-cover")).toHaveStyle({ opacity: "0.4" });
     await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
     expect(screen.queryByTestId("video-editor-cover-text-text-cover")).not.toBeInTheDocument();
-    await user.click(screen.getByTestId("video-editor-cover-badge-text-cover"));
-    await user.type(screen.getByLabelText("Cover-Text"), "Nur intern");
-    await user.selectOptions(screen.getByLabelText("Abdeckungstyp"), "blur");
+
+    await user.click(screen.getByRole("button", { name: "Blur hinzufügen" }));
     expect(screen.queryByLabelText("Cover-Text")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("video-editor-cover-text-text-cover")).not.toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Abdeckungstyp"), "cover");
-    expect(screen.getByLabelText("Cover-Text")).toHaveValue("Nur intern");
-    expect(screen.getByTestId("video-editor-cover-text-text-cover")).toHaveTextContent("Nur intern");
+    expect(screen.getByRole("slider", { name: "Blur-Stärke" })).toBeInTheDocument();
   });
 
   it("saves edited text, copies it after deselection and restores both independent covers", async () => {
@@ -4321,7 +4292,7 @@ describe("VideoEditorModal multi-source preview", () => {
     expect(screen.getByTestId("video-editor-cover-text-text-cover")).toHaveStyle({ width: "30%", height: "30%" });
   });
 
-  it("defaults legacy covers to full opacity and preserves opacity across blur and undo", async () => {
+  it("defaults legacy covers to full opacity and preserves cover opacity across undo", async () => {
     const user = userEvent.setup();
     editorState = {
       timeline: {
@@ -4330,7 +4301,7 @@ describe("VideoEditorModal multi-source preview", () => {
           { id: "clip-1", sourceId: "original", sourceStart: 0, sourceEnd: 120, duration: 120 },
         ],
         overlays: [
-          { id: "opacity-cover", x: 8, y: 9, width: 30, height: 25, start: 0, end: 20, color: "#e6467a" },
+          { id: "opacity-cover", x: 8, y: 9, width: 30, height: 25, start: 0, end: 20, mode: "cover", color: "#e6467a" },
         ],
       },
       renderStatus: "none",
@@ -4341,50 +4312,22 @@ describe("VideoEditorModal multi-source preview", () => {
     render(<VideoEditorModal videoId="original" duration={120} onClose={vi.fn()} />);
     const overlay = await screen.findByTestId("video-editor-cover-overlay-opacity-cover");
     await user.click(screen.getByTestId("video-editor-cover-badge-opacity-cover"));
-    const opacityInput = screen.getByRole("slider", { name: "Cover-Deckkraft" });
-    expect(opacityInput).toHaveValue("100");
-    expect(screen.getByTestId("video-editor-cover-opacity-value")).toHaveTextContent("100 %");
-    expect(overlay).toHaveStyle({ background: "#e6467a", opacity: "1" });
-
-    fireEvent.pointerDown(opacityInput);
-    fireEvent.change(opacityInput, { target: { value: "90" } });
-    fireEvent.change(opacityInput, { target: { value: "70" } });
-    fireEvent.change(opacityInput, { target: { value: "50" } });
-    fireEvent.pointerUp(opacityInput);
-    expect(overlay).toHaveStyle({ background: "#e6467a", opacity: "0.5" });
-    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
-    await user.click(screen.getByTestId("video-editor-cover-badge-opacity-cover"));
     expect(screen.getByRole("slider", { name: "Cover-Deckkraft" })).toHaveValue("100");
 
     fireEvent.pointerDown(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
-    fireEvent.change(screen.getByRole("slider", { name: "Cover-Deckkraft" }), {
-      target: { value: "50" },
-    });
+    fireEvent.change(screen.getByRole("slider", { name: "Cover-Deckkraft" }), { target: { value: "50" } });
     fireEvent.pointerUp(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
-
-    fireEvent.pointerDown(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
-    fireEvent.change(screen.getByRole("slider", { name: "Cover-Deckkraft" }), {
-      target: { value: "70" },
-    });
-    fireEvent.pointerUp(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
-    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
-    await user.click(screen.getByTestId("video-editor-cover-badge-opacity-cover"));
-    expect(screen.getByRole("slider", { name: "Cover-Deckkraft" })).toHaveValue("50");
-    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
-    await user.click(screen.getByTestId("video-editor-cover-badge-opacity-cover"));
-    expect(screen.getByRole("slider", { name: "Cover-Deckkraft" })).toHaveValue("100");
-
-    fireEvent.pointerDown(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
-    fireEvent.change(screen.getByRole("slider", { name: "Cover-Deckkraft" }), {
-      target: { value: "50" },
-    });
-    fireEvent.pointerUp(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
-    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "blur");
-    expect(screen.queryByRole("slider", { name: "Cover-Deckkraft" })).not.toBeInTheDocument();
-    expect(overlay.style.opacity).toBe("");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Abdeckungstyp" }), "cover");
-    expect(screen.getByRole("slider", { name: "Cover-Deckkraft" })).toHaveValue("50");
     expect(overlay).toHaveStyle({ opacity: "0.5" });
+
+    fireEvent.pointerDown(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
+    fireEvent.change(screen.getByRole("slider", { name: "Cover-Deckkraft" }), { target: { value: "70" } });
+    fireEvent.pointerUp(screen.getByRole("slider", { name: "Cover-Deckkraft" }));
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    await user.click(screen.getByTestId("video-editor-cover-badge-opacity-cover"));
+    expect(screen.getByRole("slider", { name: "Cover-Deckkraft" })).toHaveValue("50");
+    await user.click(screen.getByRole("button", { name: "↶ Rückgängig" }));
+    await user.click(screen.getByTestId("video-editor-cover-badge-opacity-cover"));
+    expect(screen.getByRole("slider", { name: "Cover-Deckkraft" })).toHaveValue("100");
   });
 
   it("persists, reloads and copies cover opacity through the existing overlay timeline", async () => {
