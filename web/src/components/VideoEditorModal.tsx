@@ -72,6 +72,16 @@ interface EditorCoverOverlay {
   text?: string;
 }
 
+function overlayTintBackground(color: string, opacity: number): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match || opacity <= 0) return "rgba(0, 0, 0, 0)";
+  const value = Number.parseInt(match[1], 16);
+  const red = (value >> 16) & 255;
+  const green = (value >> 8) & 255;
+  const blue = value & 255;
+  return `rgba(${red}, ${green}, ${blue}, ${Math.max(0, Math.min(1, opacity))})`;
+}
+
 const annotationSymbols = ["check", "cross", "warning", "info", "star", "pointer", "plus", "question"] as const;
 type AnnotationSymbol = typeof annotationSymbols[number];
 const symbolLabelKeys: Record<AnnotationSymbol, string> = {
@@ -2768,7 +2778,7 @@ export function VideoEditorModal({
                     width: `${overlay.width}%`,
                     height: `${overlay.height}%`,
                     background: (overlay.mode ?? "cover") === "blur"
-                      ? `color-mix(in srgb, ${overlay.color ?? "#000000"} ${Math.round((overlay.opacity ?? 0) * 100)}%, transparent)`
+                      ? overlayTintBackground(overlay.color ?? "#000000", overlay.opacity ?? 0)
                       : (overlay.color ?? "#000000"),
                     opacity: (overlay.mode ?? "cover") === "cover"
                       ? (overlay.opacity ?? 1)
@@ -3552,13 +3562,13 @@ export function VideoEditorModal({
               type="button"
               onClick={handlePasteCoverOverlay}
               className="video-editor-tool-button"
-              aria-label={t("editor.coverPaste")}
+              aria-label={t(copiedCoverOverlay.mode === "blur" ? "editor.blurPaste" : "editor.coverPaste")}
               aria-describedby="video-editor-tooltip-paste-cover"
             >
               <EditorToolIcon name="paste" />
             </button>
             <span id="video-editor-tooltip-paste-cover" role="tooltip" className="video-editor-tool-tooltip">
-              {t("editor.coverPaste")}
+              {t(copiedCoverOverlay.mode === "blur" ? "editor.blurPaste" : "editor.coverPaste")}
             </span>
           </span>
         )}
@@ -3941,6 +3951,11 @@ export function VideoEditorModal({
           )}
 
           {coverOverlays.map((overlay, index) => {
+            const isBlur = overlay.mode === "blur";
+            const overlayNumber = coverOverlays
+              .slice(0, index + 1)
+              .filter((candidate) => (candidate.mode === "blur") === isBlur)
+              .length;
             const left =
               timelineDuration > 0
                 ? (overlay.start / timelineDuration) * 100
@@ -3996,7 +4011,7 @@ export function VideoEditorModal({
                     cursor: "pointer",
                   }}
                 >
-                  {t("editor.coverNumber", { number: index + 1 })}
+                  {t(isBlur ? "editor.blurNumber" : "editor.coverNumber", { number: overlayNumber })}
 
                   <div
                     onPointerDown={(e) =>
@@ -4050,8 +4065,8 @@ export function VideoEditorModal({
                     <button
                       type="button"
                       className="video-editor-timeline-cover-menu-button"
-                      aria-label={t("editor.coverCopy")}
-                      title={t("editor.coverCopy")}
+                      aria-label={t(isBlur ? "editor.blurCopy" : "editor.coverCopy")}
+                      title={t(isBlur ? "editor.blurCopy" : "editor.coverCopy")}
                       onClick={handleCopyCoverOverlay}
                     >
                       <EditorToolIcon name="copy" />
@@ -4059,8 +4074,8 @@ export function VideoEditorModal({
                     <button
                       type="button"
                       className="video-editor-timeline-cover-menu-button video-editor-timeline-cover-menu-button--destructive"
-                      aria-label={t("editor.coverDelete")}
-                      title={t("editor.coverDelete")}
+                      aria-label={t(isBlur ? "editor.blurDelete" : "editor.coverDelete")}
+                      title={t(isBlur ? "editor.blurDelete" : "editor.coverDelete")}
                       onClick={handleDeleteSelectedCoverOverlay}
                     >
                       <EditorToolIcon name="delete" />
