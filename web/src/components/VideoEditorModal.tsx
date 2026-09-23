@@ -2537,7 +2537,7 @@ export function VideoEditorModal({
             }}>{t("editor.playWithAudio")}</button>
           </div>
         )}
-        <div className="video-editor-studio-workspace" data-testid="video-editor-studio-workspace">
+        <div className={`video-editor-studio-workspace${selectedAnnotation || selectedCoverOverlay || copiedAnnotation || copiedCoverOverlay || selectedClip ? "" : " video-editor-studio-workspace--context-empty"}`} data-testid="video-editor-studio-workspace">
         {videoUrl && (
           <div className="video-editor-studio-stage" data-testid="video-editor-studio-stage">
           <div
