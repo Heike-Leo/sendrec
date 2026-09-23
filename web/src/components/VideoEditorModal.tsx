@@ -3156,39 +3156,7 @@ export function VideoEditorModal({
           onClick={() => addAnnotation(copiedAnnotation)}><EditorToolIcon name="paste" /></button>}
         {selectedCoverOverlay && (
           <>
-          <div className="video-editor-context-header">
-            <strong className="video-editor-cover-actions-label">{t("editor.cover")}:</strong>
-            <div className="video-editor-context-actions">
-              <span className="video-editor-tool">
-                <button
-                  type="button"
-                  onClick={handleCopyCoverOverlay}
-                  className="video-editor-tool-button"
-                  aria-label={t("editor.coverCopy")}
-                  aria-describedby="video-editor-tooltip-copy-cover"
-                >
-                  <EditorToolIcon name="copy" />
-                </button>
-                <span id="video-editor-tooltip-copy-cover" role="tooltip" className="video-editor-tool-tooltip">
-                  {t("editor.coverCopy")}
-                </span>
-              </span>
-              <span className="video-editor-tool">
-                <button
-                  type="button"
-                  onClick={handleDeleteSelectedCoverOverlay}
-                  className="video-editor-tool-button video-editor-tool-button--destructive"
-                  aria-label={t("editor.coverDelete")}
-                  aria-describedby="video-editor-tooltip-delete-cover"
-                >
-                  <EditorToolIcon name="delete" />
-                </button>
-                <span id="video-editor-tooltip-delete-cover" role="tooltip" className="video-editor-tool-tooltip">
-                  {t("editor.coverDelete")}
-                </span>
-              </span>
-            </div>
-          </div>
+          <strong className="video-editor-cover-actions-label">{t("editor.cover")}:</strong>
 
           <label className="video-editor-cover-time-label">
             {t("editor.type")}{" "}
@@ -3696,7 +3664,8 @@ export function VideoEditorModal({
                 style={{
                   position: "relative",
                   height: 38,
-                  overflow: "hidden",
+                  overflow: selected ? "visible" : "hidden",
+                  zIndex: selected ? 5 : 1,
                 }}
               >
                 <div
@@ -3767,6 +3736,39 @@ export function VideoEditorModal({
                     title={t("editor.coverEndDrag")}
                   />
                 </div>
+
+                {selected && (
+                  <div
+                    className="video-editor-timeline-cover-menu"
+                    data-testid={`video-editor-cover-menu-${overlay.id}`}
+                    style={
+                      left + width <= 86
+                        ? { left: `calc(${left + width}% + 6px)` }
+                        : { right: `calc(${100 - left}% + 6px)` }
+                    }
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      className="video-editor-timeline-cover-menu-button"
+                      aria-label={t("editor.coverCopy")}
+                      title={t("editor.coverCopy")}
+                      onClick={handleCopyCoverOverlay}
+                    >
+                      <EditorToolIcon name="copy" />
+                    </button>
+                    <button
+                      type="button"
+                      className="video-editor-timeline-cover-menu-button video-editor-timeline-cover-menu-button--destructive"
+                      aria-label={t("editor.coverDelete")}
+                      title={t("editor.coverDelete")}
+                      onClick={handleDeleteSelectedCoverOverlay}
+                    >
+                      <EditorToolIcon name="delete" />
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
