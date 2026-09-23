@@ -6033,3 +6033,30 @@ textarea.form-input {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+
+/* Studio editor 40e.1: modern cover/blur inspector controls. */
+.video-editor-inspector-range-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+}
+
+.video-editor-inspector-range-row .video-editor-opacity-slider {
+  width: 100%;
+  min-width: 0;
+}
+
+.video-editor-inspector-range-row > strong {
+  min-width: 34px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.video-editor-inspector-range-row--compact {
+  padding: 0 2px;
+}
