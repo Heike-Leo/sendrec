@@ -5638,3 +5638,38 @@ textarea.form-input {
     border-left: 1px solid var(--color-border);
   }
 }
+
+
+/* Studio editor 40c.1: collapse unused context column. */
+.video-editor-studio-workspace--context-empty {
+  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-areas:
+    "tools stage"
+    "hint stage"
+    ". warning";
+}
+
+.video-editor-studio-workspace--context-empty > .video-editor-cover-actions--empty {
+  display: none;
+}
+
+@media (max-width: 1180px) and (min-width: 761px) {
+  .video-editor-studio-workspace--context-empty {
+    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-areas:
+      "tools stage"
+      "hint stage"
+      "warning warning";
+  }
+}
+
+@media (max-width: 760px) {
+  .video-editor-studio-workspace--context-empty {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "stage"
+      "tools"
+      "hint"
+      "warning";
+  }
+}
