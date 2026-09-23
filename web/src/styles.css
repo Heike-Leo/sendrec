@@ -5846,3 +5846,190 @@ textarea.form-input {
   transform: translateX(-1px);
   pointer-events: none;
 }
+
+
+/* Studio editor 40e: modern annotation inspector. */
+.video-editor-inspector-section {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+}
+
+.video-editor-inspector-title {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 15px;
+}
+
+.video-editor-inspector-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.video-editor-inspector-field > span {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.video-editor-inspector-field--wide {
+  width: 100%;
+}
+
+.video-editor-inspector-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  width: 100%;
+}
+
+.video-editor-inspector-input,
+.video-editor-inspector-select,
+.video-editor-inspector-textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #fff;
+  color: var(--color-text);
+  font: inherit;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.video-editor-inspector-input,
+.video-editor-inspector-select {
+  height: 36px;
+  padding: 6px 9px;
+}
+
+.video-editor-inspector-textarea {
+  min-height: 78px;
+  padding: 9px 10px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.video-editor-inspector-input:hover,
+.video-editor-inspector-select:hover,
+.video-editor-inspector-textarea:hover {
+  border-color: #94a3b8;
+}
+
+.video-editor-inspector-input:focus,
+.video-editor-inspector-select:focus,
+.video-editor-inspector-textarea:focus {
+  border-color: #fc2667;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(252, 38, 103, 0.12);
+}
+
+.video-editor-inspector-style-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px 36px;
+  gap: 7px;
+  align-items: center;
+}
+
+.video-editor-inspector-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #fff;
+  color: var(--color-text);
+  font-size: 15px;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.video-editor-inspector-toggle:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.video-editor-inspector-toggle[aria-pressed="true"] {
+  border-color: #fc2667;
+  background: #fff1f5;
+  color: #be123c;
+  box-shadow: 0 0 0 2px rgba(252, 38, 103, 0.08);
+}
+
+.video-editor-inspector-color {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 3px 8px 3px 4px;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.video-editor-inspector-color input[type="color"] {
+  width: 30px;
+  height: 28px;
+  padding: 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.video-editor-inspector-color span {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-editor-inspector-time {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.video-editor-inspector-time > span {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.video-editor-inspector-divider {
+  width: 100%;
+  height: 1px;
+  background: var(--color-border);
+}
+
+@media (max-width: 1180px) and (min-width: 761px) {
+  .video-editor-inspector-section {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 14px;
+  }
+
+  .video-editor-inspector-title,
+  .video-editor-inspector-field--wide,
+  .video-editor-inspector-divider {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .video-editor-inspector-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
