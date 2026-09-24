@@ -24,7 +24,7 @@ const (
 	defaultColorSurface    = "#1E293B"
 	defaultColorText       = "#F8FAFC"
 	defaultColorAccent     = "#E6467A"
-	defaultCompanyName     = "99tools Record"
+	defaultCompanyName     = "99tools Studio"
 	defaultLogoPath        = "/images/logo-99tools.png"
 	defaultFooterText      = ""
 
