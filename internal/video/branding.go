@@ -25,7 +25,7 @@ const (
 	defaultColorText       = "#F8FAFC"
 	defaultColorAccent     = "#E6467A"
 	defaultCompanyName     = "99tools Studio"
-	defaultLogoPath        = "/images/logo-99tools.png"
+	defaultLogoPath        = "/pwa-192x192.png?v=studio"
 	defaultFooterText      = ""
 
 	maxLogoUploadBytes = 512 * 1024
