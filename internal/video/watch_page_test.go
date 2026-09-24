@@ -178,6 +178,17 @@ func TestWatchPage_Success_RendersVideoPlayer(t *testing.T) {
 	}
 	body := rec.Body.String()
 
+	shareMeta := []string{
+		`<title>My Demo — 99tools Studio</title>`,
+		`<meta property="og:site_name" content="99tools Studio">`,
+		`<link rel="icon" type="image/png" sizes="32x32" href="` + testBaseURL + `/favicon-32x32.png">`,
+	}
+	for _, want := range shareMeta {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected share metadata %q in response", want)
+		}
+	}
+
 	checks := map[string]string{
 		"video element":   "<video",
 		"video source":    `src="https://s3.example.com/video.webm"`,
@@ -185,7 +196,7 @@ func TestWatchPage_Success_RendersVideoPlayer(t *testing.T) {
 		"creator":         "Bob Smith",
 		"date":            "05/02/2026",
 		"download button": `id="download-btn"`,
-		"branding":        "SendRec",
+		"branding":        "99tools Studio",
 		"spinner":         "player-spinner",
 		"error overlay":   "player-error",
 		"seek tooltip":    "seek-time-tooltip",
