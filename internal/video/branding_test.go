@@ -731,7 +731,7 @@ func TestResolveBranding_DefaultsOnly(t *testing.T) {
 	if cfg.HasCustomLogo {
 		t.Error("expected no custom logo")
 	}
-	if cfg.LogoURL != "/images/logo-99tools.png" {
+	if cfg.LogoURL != "/pwa-192x192.png?v=studio" {
 		t.Errorf("expected default logo URL, got %q", cfg.LogoURL)
 	}
 }
