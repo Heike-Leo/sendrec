@@ -719,19 +719,19 @@ func TestResolveBranding_DefaultsOnly(t *testing.T) {
 		brandingSettingsResponse{},
 	)
 
-	if cfg.CompanyName != "SendRec" {
-		t.Errorf("expected company name %q, got %q", "SendRec", cfg.CompanyName)
+	if cfg.CompanyName != "99tools Studio" {
+		t.Errorf("expected company name %q, got %q", "99tools Studio", cfg.CompanyName)
 	}
-	if cfg.ColorBackground != "#0a1628" {
-		t.Errorf("expected background %q, got %q", "#0a1628", cfg.ColorBackground)
+	if cfg.ColorBackground != "#0F172A" {
+		t.Errorf("expected background %q, got %q", "#0F172A", cfg.ColorBackground)
 	}
-	if cfg.ColorAccent != "#00b67a" {
-		t.Errorf("expected accent %q, got %q", "#00b67a", cfg.ColorAccent)
+	if cfg.ColorAccent != "#E6467A" {
+		t.Errorf("expected accent %q, got %q", "#E6467A", cfg.ColorAccent)
 	}
 	if cfg.HasCustomLogo {
 		t.Error("expected no custom logo")
 	}
-	if cfg.LogoURL != "/images/logo.png" {
+	if cfg.LogoURL != "/images/logo-99tools.png" {
 		t.Errorf("expected default logo URL, got %q", cfg.LogoURL)
 	}
 }
@@ -757,8 +757,8 @@ func TestResolveBranding_UserOverrides(t *testing.T) {
 	if cfg.ColorBackground != "#111111" {
 		t.Errorf("expected background %q, got %q", "#111111", cfg.ColorBackground)
 	}
-	if cfg.ColorAccent != "#00b67a" {
-		t.Errorf("expected default accent %q, got %q", "#00b67a", cfg.ColorAccent)
+	if cfg.ColorAccent != "#E6467A" {
+		t.Errorf("expected default accent %q, got %q", "#E6467A", cfg.ColorAccent)
 	}
 }
 
